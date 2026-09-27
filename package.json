@@ -1,0 +1,61 @@
+{
+  "name": "silvernote",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev -H 127.0.0.1 -p 3000",
+    "build": "next build",
+    "start": "next start -H 127.0.0.1 -p 3000",
+    "lint": "eslint",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "db:migrate": "tsx --conditions=react-server scripts/migrate.ts"
+  },
+  "dependencies": {
+    "@electric-sql/pglite": "^0.5.8",
+    "@react-pdf/renderer": "^4.9.0",
+    "@supabase/ssr": "^0.12.7",
+    "@supabase/supabase-js": "^2.117.2",
+    "@tanstack/react-virtual": "^3.14.13",
+    "clsx": "^2.1.1",
+    "cmdk": "^1.1.1",
+    "d3": "^7.9.0",
+    "diff": "^9.0.0",
+    "fast-xml-parser": "^5.11.1",
+    "geist": "^1.7.2",
+    "gsap": "^3.15.0",
+    "lightweight-charts": "^5.2.1",
+    "lucide-react": "^1.48.0",
+    "marked": "^18.0.14",
+    "motion": "^13.4.4",
+    "next": "16.3.6",
+    "postgres": "^3.4.9",
+    "pptxgenjs": "^4.0.1",
+    "react": "19.2.8",
+    "react-dom": "19.2.8",
+    "server-only": "^0.0.1",
+    "sonner": "^2.0.8",
+    "swr": "^2.5.1",
+    "tailwind-merge": "^3.7.0",
+    "three": "^0.186.1",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4",
+    "@types/d3": "^7.4.3",
+    "@types/node": "^24.19.0",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "@types/three": "^0.186.0",
+    "eslint": "^9",
+    "eslint-config-next": "16.3.6",
+    "tailwindcss": "^4",
+    "tsx": "^4.23.15",
+    "typescript": "^5",
+    "vitest": "^5.0.2"
+  },
+  "engines": {
+    "node": ">=20.9"
+  }
+}

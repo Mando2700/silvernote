@@ -1,0 +1,213 @@
+import 'server-only';
+
+import { q, q1 } from '@/lib/db';
+
+export class ProviderError extends Error {
+  constructor(
+    public provider: string,
+    public status: number,
+    message: string,
+  ) {
+    super(`${provider}: ${message}`);
+  }
+}
+
+/** Spaces out requests to one provider and caps how many run at once. */
+export class RateLimiter {
+  private nextSlot = 0;
+  private active = 0;
+  private waiting: Array<() => void> = [];
+
+  constructor(
+    private readonly minIntervalMs: number,
+    private readonly concurrency: number,
+  ) {}
+
+  async run<T>(task: () => Promise<T>): Promise<T> {
+    if (this.active >= this.concurrency) {
+      await new Promise<void>((resolve) => this.waiting.push(resolve));
+    }
+    this.active += 1;
+    try {
+      const now = Date.now();
+      const wait = Math.max(0, this.nextSlot - now);
+      this.nextSlot = Math.max(now, this.nextSlot) + this.minIntervalMs;
+      if (wait > 0) await sleep(wait);
+      return await task();
+    } finally {
+      this.active -= 1;
+      this.waiting.shift()?.();
+    }
+  }
+}
+
+export const limiters = {
+  sec: new RateLimiter(125, 4), // SEC fair-access: max 10 requests/second
+  nasdaq: new RateLimiter(220, 3),
+  finnhub: new RateLimiter(1050, 2), // free tier: 60/min
+  fmp: new RateLimiter(250, 2),
+  fred: new RateLimiter(300, 2),
+  xai: new RateLimiter(0, 4),
+  news: new RateLimiter(250, 3),
+};
+
+export function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+export const BROWSER_UA =
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36';
+
+type FetchOptions = {
+  provider: string;
+  limiter?: RateLimiter;
+  headers?: Record<string, string>;
+  timeoutMs?: number;
+  retries?: number;
+};
+
+export async function fetchText(url: string, options: FetchOptions): Promise<string> {
+  const { provider, limiter, headers, timeoutMs = 20_000, retries = 2 } = options;
+  let attempt = 0;
+  for (;;) {
+    try {
+      const run = async () => {
+        const response = await fetch(url, {
+          headers,
+          signal: AbortSignal.timeout(timeoutMs),
+          cache: 'no-store',
+        });
+        if (!response.ok) {
+          const retryAfter = Number(response.headers.get('retry-after'));
+          const body = (await response.text().catch(() => '')).slice(0, 240);
+          const error = new ProviderError(provider, response.status, `HTTP ${response.status} ${body}`.trim());
+          (error as ProviderError & { retryAfterMs?: number }).retryAfterMs = Number.isFinite(retryAfter)
+            ? retryAfter * 1000
+            : undefined;
+          throw error;
+        }
+        return response.text();
+      };
+      return limiter ? await limiter.run(run) : await run();
+    } catch (error) {
+      const status = error instanceof ProviderError ? error.status : 0;
+      const retryable = status === 0 || status === 429 || status >= 500;
+      if (!retryable || attempt >= retries) {
+        if (error instanceof ProviderError) throw error;
+        throw new ProviderError(provider, 0, (error as Error).message || 'network error');
+      }
+      attempt += 1;
+      const hinted = (error as { retryAfterMs?: number }).retryAfterMs;
+      await sleep(hinted ?? 600 * 2 ** attempt + Math.random() * 250);
+    }
+  }
+}
+
+export async function fetchJson<T>(url: string, options: FetchOptions): Promise<T> {
+  const text = await fetchText(url, {
+    ...options,
+    headers: { Accept: 'application/json', ...options.headers },
+  });
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    throw new ProviderError(options.provider, 0, 'invalid JSON response');
+  }
+}
+
+// ─── Caching ────────────────────────────────────────────────────────────────
+
+type MemoEntry = { expires: number; value: unknown };
+const globalForMemo = globalThis as unknown as {
+  __silvernoteMemo?: Map<string, MemoEntry>;
+  __silvernoteInflight?: Map<string, Promise<unknown>>;
+};
+const memoStore = (globalForMemo.__silvernoteMemo ??= new Map());
+const inflight = (globalForMemo.__silvernoteInflight ??= new Map());
+
+/** In-process cache with request de-duplication. */
+export async function memo<T>(key: string, ttlMs: number, load: () => Promise<T>): Promise<T> {
+  const hit = memoStore.get(key);
+  if (hit && hit.expires > Date.now()) return hit.value as T;
+  const pending = inflight.get(key);
+  if (pending) return pending as Promise<T>;
+  const promise = load()
+    .then((value) => {
+      memoStore.set(key, { value, expires: Date.now() + ttlMs });
+      if (memoStore.size > 5000) {
+        const oldest = memoStore.keys().next().value;
+        if (oldest) memoStore.delete(oldest);
+      }
+      return value;
+    })
+    .finally(() => inflight.delete(key));
+  inflight.set(key, promise);
+  return promise;
+}
+
+export function forget(prefix: string) {
+  for (const key of memoStore.keys()) if (key.startsWith(prefix)) memoStore.delete(key);
+}
+
+/**
+ * Database-backed cache for provider payloads. Fresh rows are returned directly; when a refresh
+ * fails, a stale row is served instead of an error so the UI keeps working offline or rate-limited.
+ */
+export async function cached<T>(key: string, ttlSeconds: number, load: () => Promise<T>): Promise<T> {
+  return memo(`db:${key}`, Math.min(ttlSeconds * 1000, 60_000), async () => {
+    const row = await q1<{ payload: T; fresh: boolean }>(
+      'select payload, expires_at > now() as fresh from public.api_cache where key = $1',
+      [key],
+    );
+    if (row?.fresh) return row.payload;
+    try {
+      const value = await load();
+      await q(
+        `insert into public.api_cache (key, payload, fetched_at, expires_at)
+         values ($1, $2::jsonb, now(), now() + make_interval(secs => $3))
+         on conflict (key) do update set payload = excluded.payload, fetched_at = now(), expires_at = excluded.expires_at`,
+        [key, JSON.stringify(value ?? null), ttlSeconds],
+      );
+      return value;
+    } catch (error) {
+      if (row) return row.payload;
+      throw error;
+    }
+  });
+}
+
+export async function purgeExpiredCache() {
+  await q("delete from public.api_cache where expires_at < now() - interval '7 days'");
+}
+
+// ─── Daily budgets (FMP free tier = 250 calls/day) ──────────────────────────
+
+export async function takeDailyBudget(provider: string, limit: number): Promise<boolean> {
+  const row = await q1<{ calls: number }>(
+    `insert into public.provider_usage (provider, day, calls) values ($1, current_date, 1)
+     on conflict (provider, day) do update set calls = public.provider_usage.calls + 1
+     returning calls`,
+    [provider],
+  );
+  return (row?.calls ?? 0) <= limit;
+}
+
+export async function getDailyUsage(provider: string) {
+  const row = await q1<{ calls: number }>(
+    'select calls from public.provider_usage where provider = $1 and day = current_date',
+    [provider],
+  );
+  return row?.calls ?? 0;
+}
+
+// ─── Parsing helpers shared by providers ────────────────────────────────────
+
+/** "$1,234.50" / "4.55%" / "N/A" → number | null */
+export function parseLooseNumber(value: unknown): number | null {
+  if (typeof value === 'number') return Number.isFinite(value) ? value : null;
+  if (typeof value !== 'string') return null;
+  const cleaned = value.replace(/[$,%\s+]/g, '').replace(/^\((.*)\)$/, '-$1');
+  if (!cleaned || cleaned === 'N/A' || cleaned === 'NA' || cleaned === '--') return null;
+  const parsed = Number(cleaned);
+  return Number.isFinite(parsed) ? parsed : null;
+}
