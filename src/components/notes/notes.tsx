@@ -1,6 +1,6 @@
 'use client';
 
-import { Eye, FilePlus2, GitCompareArrows, History, Pencil, Pin, PinOff, Search, Trash2 } from 'lucide-react';
+import { Eye, FilePlus2, GitCompareArrows, History, Maximize2, Minimize2, Pencil, Pin, PinOff, Search, Trash2 } from 'lucide-react';
 import { motion } from 'motion/react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
@@ -38,9 +38,19 @@ function NoteEditor({ id, onChanged, onDeleted }: { id: string; onChanged: () =>
   const [status, setStatus] = useState<'saved' | 'saving' | 'dirty'>('saved');
   const [history, setHistory] = useState(false);
   const [compare, setCompare] = useState<string | null>(null);
+  const [fullscreen, setFullscreen] = useState(false);
   const loadedId = useRef<string | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+
+  useEffect(() => {
+    if (!fullscreen) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setFullscreen(false);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [fullscreen]);
 
   useEffect(() => {
     if (!data || loadedId.current === data.id) return;
@@ -94,7 +104,9 @@ function NoteEditor({ id, onChanged, onDeleted }: { id: string; onChanged: () =>
   const previous = selectedVersion ? versions[versions.indexOf(selectedVersion) + 1] : null;
 
   return (
-    <Panel className="flex min-h-[70vh] flex-col">
+    <>
+      {fullscreen ? <div className="fixed inset-0 z-[84] bg-black/60 backdrop-blur-sm" onClick={() => setFullscreen(false)} /> : null}
+      <Panel className={cn('flex flex-col', fullscreen ? 'fixed inset-4 z-[85]' : 'min-h-[70vh]')}>
       <div className="flex flex-wrap items-center gap-2 border-b border-line px-4 py-2.5">
         <Segmented
           size="xs"
@@ -110,6 +122,13 @@ function NoteEditor({ id, onChanged, onDeleted }: { id: string; onChanged: () =>
           {status === 'saving' ? 'Saving…' : status === 'dirty' ? 'Unsaved changes' : `Saved · edited ${relativeTime(data.updated_at)}`}
         </span>
         <div className="ml-auto flex items-center gap-1.5">
+          <Button
+            size="sm"
+            variant="ghost"
+            icon={fullscreen ? <Minimize2 className="size-3.5" /> : <Maximize2 className="size-3.5" />}
+            onClick={() => setFullscreen((value) => !value)}
+            aria-label={fullscreen ? 'Exit full screen' : 'Full screen'}
+          />
           <Button size="sm" variant="ghost" icon={<History className="size-3.5" />} onClick={() => setHistory(true)}>
             {versions.length} versions
           </Button>
@@ -191,11 +210,11 @@ function NoteEditor({ id, onChanged, onDeleted }: { id: string; onChanged: () =>
               touch();
             }}
             placeholder={'Write in markdown.\n\n## Observation\n- …\n\n## So what\n- …'}
-            className="min-h-[55vh] resize-none bg-transparent p-4 font-mono text-[12.5px] leading-relaxed text-ink-2 outline-none placeholder:text-faint"
+            className={cn('resize-none bg-transparent p-4 font-mono text-[12.5px] leading-relaxed text-ink-2 outline-none placeholder:text-faint', fullscreen ? 'h-full' : 'min-h-[55vh]')}
           />
         ) : null}
         {mode !== 'write' ? (
-          <div className="prose-rn min-h-[55vh] overflow-y-auto p-4" dangerouslySetInnerHTML={{ __html: renderMarkdown(content || '*Nothing written yet.*') }} />
+          <div className={cn('prose-rn overflow-y-auto p-4', fullscreen ? 'h-full' : 'min-h-[55vh]')} dangerouslySetInnerHTML={{ __html: renderMarkdown(content || '*Nothing written yet.*') }} />
         ) : null}
       </div>
       <Drawer open={history} onClose={() => { setHistory(false); setCompare(null); }} title={selectedVersion ? `Version · ${dateTime(selectedVersion.created_at)}` : 'Version history'} width={620}>
@@ -242,7 +261,8 @@ function NoteEditor({ id, onChanged, onDeleted }: { id: string; onChanged: () =>
           </ol>
         )}
       </Drawer>
-    </Panel>
+      </Panel>
+    </>
   );
 }
 

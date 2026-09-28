@@ -5,6 +5,8 @@ import {
   Eye,
   FileDown,
   GripVertical,
+  Maximize2,
+  Minimize2,
   MoreHorizontal,
   Pencil,
   Plus,
@@ -519,12 +521,24 @@ function SectionEditor({
   const [mode, setMode] = useState<'write' | 'split' | 'preview'>('split');
   const [instruction, setInstruction] = useState('');
   const [askOpen, setAskOpen] = useState(false);
+  const [fullscreen, setFullscreen] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const html = useMemo(() => renderMarkdown(section.content), [section.content]);
   const words = section.content.trim() ? section.content.trim().split(/\s+/).length : 0;
 
+  useEffect(() => {
+    if (!fullscreen) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setFullscreen(false);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [fullscreen]);
+
   return (
-    <Panel className={cn('flex min-h-[62vh] flex-col', drafting && 'light-trail')}>
+    <>
+      {fullscreen ? <div className="fixed inset-0 z-[84] bg-black/60 backdrop-blur-sm" onClick={() => setFullscreen(false)} /> : null}
+      <Panel className={cn('flex flex-col', drafting && 'light-trail', fullscreen ? 'fixed inset-4 z-[85]' : 'min-h-[62vh]')}>
       <div className="flex flex-wrap items-center gap-2 border-b border-line px-4 py-2.5">
         <input
           value={section.title}
@@ -541,6 +555,13 @@ function SectionEditor({
             { value: 'split', label: 'Split' },
             { value: 'preview', label: <Eye className="size-3" /> },
           ]}
+        />
+        <Button
+          size="sm"
+          variant="ghost"
+          icon={fullscreen ? <Minimize2 className="size-3.5" /> : <Maximize2 className="size-3.5" />}
+          onClick={() => setFullscreen((value) => !value)}
+          aria-label={fullscreen ? 'Exit full screen' : 'Full screen'}
         />
       </div>
       <div className="flex flex-wrap items-center gap-2 border-b border-line bg-surface-1/50 px-4 py-2">
@@ -610,18 +631,20 @@ function SectionEditor({
             spellCheck
             placeholder="Write in Markdown: **bold**, - bullets, | tables |…"
             className={cn(
-              'min-h-[52vh] w-full resize-none bg-transparent px-4 py-3.5 font-mono text-[12.5px] leading-relaxed text-ink-2 outline-none placeholder:text-faint',
+              'w-full resize-none bg-transparent px-4 py-3.5 font-mono text-[12.5px] leading-relaxed text-ink-2 outline-none placeholder:text-faint',
+              fullscreen ? 'h-full' : 'min-h-[52vh]',
               mode === 'split' && 'md:border-r md:border-line',
             )}
           />
         ) : null}
         {mode !== 'write' ? (
-          <div className="min-h-[52vh] overflow-y-auto px-5 py-3.5">
+          <div className={cn('overflow-y-auto px-5 py-3.5', fullscreen ? 'h-full' : 'min-h-[52vh]')}>
             {section.content.trim() ? <div className="prose-rn" dangerouslySetInnerHTML={{ __html: html }} /> : <div className="text-[12.5px] text-faint">Nothing here yet.</div>}
           </div>
         ) : null}
       </div>
-    </Panel>
+      </Panel>
+    </>
   );
 }
 

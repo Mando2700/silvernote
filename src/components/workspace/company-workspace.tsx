@@ -1,7 +1,7 @@
 'use client';
 
 import { diffWords } from 'diff';
-import { GitCompareArrows, History, Pencil, Presentation, Sparkles } from 'lucide-react';
+import { GitCompareArrows, History, Maximize2, Minimize2, Pencil, Presentation, Sparkles } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
 import { useRouter } from 'next/navigation';
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -55,7 +55,17 @@ function SectionCard({ symbol, section, version, count, onCommitted, onHistory }
   const [draft, setDraft] = useState('');
   const [note, setNote] = useState('');
   const [saving, setSaving] = useState(false);
+  const [fullscreen, setFullscreen] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+
+  useEffect(() => {
+    if (!fullscreen) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setFullscreen(false);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [fullscreen]);
 
   const startEditing = () => {
     let initial = version?.content ?? '';
@@ -91,6 +101,7 @@ function SectionCard({ symbol, section, version, count, onCommitted, onHistory }
       }
       toast.success(`${meta.title} committed`);
       setEditing(false);
+      setFullscreen(false);
       setNote('');
       onCommitted();
     } catch (error) {
@@ -101,7 +112,16 @@ function SectionCard({ symbol, section, version, count, onCommitted, onHistory }
   };
 
   return (
-    <motion.div layout className={cn('rounded-sm border bg-surface-1', section === 'disconfirming' ? 'border-loss/25' : 'border-line')}>
+    <>
+      {editing && fullscreen ? <div className="fixed inset-0 z-[84] bg-black/60 backdrop-blur-sm" onClick={() => setFullscreen(false)} /> : null}
+      <motion.div
+        layout
+        className={cn(
+          'rounded-sm border bg-surface-1',
+          section === 'disconfirming' ? 'border-loss/25' : 'border-line',
+          editing && fullscreen ? 'fixed inset-4 z-[85] flex flex-col overflow-y-auto' : '',
+        )}
+      >
       <div className="flex items-start justify-between gap-2 px-3.5 pt-3">
         <div>
           <div className={cn('text-[13px] font-semibold', section === 'disconfirming' ? 'text-loss' : 'text-ink')}>{meta.title}</div>
@@ -114,21 +134,36 @@ function SectionCard({ symbol, section, version, count, onCommitted, onHistory }
               {count}
             </button>
           ) : null}
-          {!editing ? (
+          {editing ? (
+            <button
+              onClick={() => setFullscreen((value) => !value)}
+              className="rounded-xs p-1 text-muted hover:bg-white/5 hover:text-ink"
+              aria-label={fullscreen ? 'Exit full screen' : 'Full screen'}
+            >
+              {fullscreen ? <Minimize2 className="size-3.5" /> : <Maximize2 className="size-3.5" />}
+            </button>
+          ) : (
             <button onClick={startEditing} className="rounded-xs p-1 text-muted hover:bg-white/5 hover:text-ink" aria-label={`Edit ${meta.title}`}>
               <Pencil className="size-3.5" />
             </button>
-          ) : null}
+          )}
         </div>
       </div>
-      <div className="px-3.5 pt-2 pb-3.5">
+      <div className={cn('px-3.5 pt-2 pb-3.5', editing && fullscreen ? 'flex flex-1 flex-col' : '')}>
         {editing ? (
-          <div className="flex flex-col gap-2">
+          <div className={cn('flex flex-col gap-2', fullscreen ? 'flex-1' : '')}>
             <MarkdownToolbar textareaRef={textareaRef} value={draft} onChange={setDraft} />
-            <Textarea ref={textareaRef} autoFocus value={draft} onChange={(event) => setDraft(event.target.value)} className="min-h-40 font-mono text-[12.5px]" placeholder="Markdown supported. Be specific: numbers, dates, what you expect to see." />
+            <Textarea
+              ref={textareaRef}
+              autoFocus
+              value={draft}
+              onChange={(event) => setDraft(event.target.value)}
+              className={cn('font-mono text-[12.5px]', fullscreen ? 'flex-1' : 'min-h-40')}
+              placeholder="Markdown supported. Be specific: numbers, dates, what you expect to see."
+            />
             <div className="flex items-center gap-2">
               <Input value={note} onChange={(event) => setNote(event.target.value)} placeholder="What changed in your view? (optional)" className="h-7.5 flex-1 text-[12px]" />
-              <Button size="sm" variant="ghost" onClick={() => setEditing(false)}>
+              <Button size="sm" variant="ghost" onClick={() => { setEditing(false); setFullscreen(false); }}>
                 Cancel
               </Button>
               <Button size="sm" variant="primary" loading={saving} onClick={() => void commit()}>
@@ -152,7 +187,8 @@ function SectionCard({ symbol, section, version, count, onCommitted, onHistory }
           </button>
         )}
       </div>
-    </motion.div>
+      </motion.div>
+    </>
   );
 }
 
