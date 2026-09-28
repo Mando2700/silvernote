@@ -13,6 +13,7 @@ import { ScoreRing } from '@/components/motion/score-ring';
 import { Page } from '@/components/shell/page';
 import { Button } from '@/components/ui/button';
 import { CompanyLogo } from '@/components/ui/company-logo';
+import { FullscreenOverlay } from '@/components/ui/fullscreen-overlay';
 import { MarkdownToolbar } from '@/components/ui/markdown-toolbar';
 import { Drawer } from '@/components/ui/overlay';
 import { Badge, EmptyState, Input, Panel, PanelHeader, Segmented, Skeleton } from '@/components/ui/primitives';
@@ -42,15 +43,6 @@ function NoteEditor({ id, onChanged, onDeleted }: { id: string; onChanged: () =>
   const loadedId = useRef<string | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
-
-  useEffect(() => {
-    if (!fullscreen) return;
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setFullscreen(false);
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [fullscreen]);
 
   useEffect(() => {
     if (!data || loadedId.current === data.id) return;
@@ -103,10 +95,8 @@ function NoteEditor({ id, onChanged, onDeleted }: { id: string; onChanged: () =>
   const selectedVersion = versions.find((version) => version.id === compare);
   const previous = selectedVersion ? versions[versions.indexOf(selectedVersion) + 1] : null;
 
-  return (
+  const body = (
     <>
-      {fullscreen ? <div className="fixed inset-0 z-[84] bg-black/60 backdrop-blur-sm" onClick={() => setFullscreen(false)} /> : null}
-      <Panel className={cn('flex flex-col', fullscreen ? 'fixed inset-4 z-[85]' : 'min-h-[70vh]')}>
       <div className="flex flex-wrap items-center gap-2 border-b border-line px-4 py-2.5">
         <Segmented
           size="xs"
@@ -217,7 +207,11 @@ function NoteEditor({ id, onChanged, onDeleted }: { id: string; onChanged: () =>
           <div className={cn('prose-rn overflow-y-auto p-4', fullscreen ? 'h-full' : 'min-h-[55vh]')} dangerouslySetInnerHTML={{ __html: renderMarkdown(content || '*Nothing written yet.*') }} />
         ) : null}
       </div>
-      <Drawer open={history} onClose={() => { setHistory(false); setCompare(null); }} title={selectedVersion ? `Version · ${dateTime(selectedVersion.created_at)}` : 'Version history'} width={620}>
+    </>
+  );
+
+  const drawer = (
+    <Drawer open={history} onClose={() => { setHistory(false); setCompare(null); }} title={selectedVersion ? `Version · ${dateTime(selectedVersion.created_at)}` : 'Version history'} width={620}>
         {selectedVersion ? (
           <div className="flex flex-col gap-3 p-4">
             <div className="flex items-center gap-2 text-[12px] text-muted">
@@ -261,7 +255,23 @@ function NoteEditor({ id, onChanged, onDeleted }: { id: string; onChanged: () =>
           </ol>
         )}
       </Drawer>
-      </Panel>
+  );
+
+  if (fullscreen) {
+    return (
+      <>
+        <FullscreenOverlay onClose={() => setFullscreen(false)}>
+          <Panel className="flex h-full flex-col">{body}</Panel>
+        </FullscreenOverlay>
+        {drawer}
+      </>
+    );
+  }
+
+  return (
+    <>
+      <Panel className="flex min-h-[70vh] flex-col">{body}</Panel>
+      {drawer}
     </>
   );
 }

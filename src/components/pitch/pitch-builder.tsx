@@ -30,6 +30,7 @@ import { exportPdf, exportSlides, type ExportPitch } from '@/components/pitch/ex
 import { Page } from '@/components/shell/page';
 import { Button, Magnetic } from '@/components/ui/button';
 import { CompanyLogo } from '@/components/ui/company-logo';
+import { FullscreenOverlay } from '@/components/ui/fullscreen-overlay';
 import { MarkdownToolbar } from '@/components/ui/markdown-toolbar';
 import { Menu } from '@/components/ui/overlay';
 import { Badge, Input, Panel, Segmented, Skeleton, Switch } from '@/components/ui/primitives';
@@ -526,19 +527,8 @@ function SectionEditor({
   const html = useMemo(() => renderMarkdown(section.content), [section.content]);
   const words = section.content.trim() ? section.content.trim().split(/\s+/).length : 0;
 
-  useEffect(() => {
-    if (!fullscreen) return;
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setFullscreen(false);
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [fullscreen]);
-
-  return (
+  const body = (
     <>
-      {fullscreen ? <div className="fixed inset-0 z-[84] bg-black/60 backdrop-blur-sm" onClick={() => setFullscreen(false)} /> : null}
-      <Panel className={cn('flex flex-col', drafting && 'light-trail', fullscreen ? 'fixed inset-4 z-[85]' : 'min-h-[62vh]')}>
       <div className="flex flex-wrap items-center gap-2 border-b border-line px-4 py-2.5">
         <input
           value={section.title}
@@ -643,9 +633,18 @@ function SectionEditor({
           </div>
         ) : null}
       </div>
-      </Panel>
     </>
   );
+
+  if (fullscreen) {
+    return (
+      <FullscreenOverlay onClose={() => setFullscreen(false)}>
+        <Panel className="flex h-full flex-col">{body}</Panel>
+      </FullscreenOverlay>
+    );
+  }
+
+  return <Panel className={cn('flex min-h-[62vh] flex-col', drafting && 'light-trail')}>{body}</Panel>;
 }
 
 function DocumentPreview({ draft, symbol, facts }: { draft: Draft; symbol: string; facts: Facts | null }) {
