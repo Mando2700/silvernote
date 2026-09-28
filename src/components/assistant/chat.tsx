@@ -1,18 +1,99 @@
 'use client';
 
-import { ArrowUp, Briefcase, Building2, Copy, Globe, Square } from 'lucide-react';
+import { ArrowUp, Brain, Briefcase, Building2, Copy, Globe, Sparkles, Square, Zap } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { toast } from 'sonner';
 import { mutate as globalMutate } from 'swr';
 
+import { ActionCard, type ActionView } from '@/components/assistant/action-card';
+import { ThinkingOrb } from '@/components/assistant/thinking-orb';
+import { formatCost, formatTokens, USAGE_SEPARATOR, type ChatMode } from '@/lib/ai/pricing';
 import { renderMarkdown } from '@/lib/markdown';
 import { cn } from '@/lib/utils';
 
 export type ChatContext = { type: 'company'; symbol: string; name?: string } | { type: 'portfolio'; id: string; name?: string } | { type: 'general' };
-export type Message = { id: string; role: 'user' | 'assistant'; content: string; pending?: boolean };
+export type MessageUsage = { input: number; output: number; cost: number | null };
+export type Message = { id: string; role: 'user' | 'assistant'; content: string; pending?: boolean; usage?: MessageUsage; actions?: ActionView[] };
+
+/** The trailer after the answer: token usage (when metered) and any changes Grok proposed. */
+function parseTrailer(raw: string): { usage?: MessageUsage; actions?: ActionView[] } {
+  try {
+    const { actions, ...usage } = JSON.parse(raw) as Partial<MessageUsage> & { actions?: ActionView[] };
+    return { usage: typeof usage.input === 'number' ? (usage as MessageUsage) : undefined, actions: actions?.length ? actions : undefined };
+  } catch {
+    return {};
+  }
+}
 
 const FILING_DIRECTIVE = /\n?\[filing:[^\]]+\]/g;
+
+const MODE_KEY = 'silvernote.grokMode';
+const modeListeners = new Set<() => void>();
+let modeFallback: ChatMode = 'standard'; // used when localStorage is unavailable
+
+function subscribeMode(listener: () => void) {
+  modeListeners.add(listener);
+  window.addEventListener('storage', listener);
+  return () => {
+    modeListeners.delete(listener);
+    window.removeEventListener('storage', listener);
+  };
+}
+
+function readMode(): ChatMode {
+  try {
+    const value = localStorage.getItem(MODE_KEY);
+    return value === 'fast' || value === 'thinking' || value === 'standard' ? value : 'standard';
+  } catch {
+    return modeFallback;
+  }
+}
+
+/** The chat mode, shared by the Grok page and the side panel and remembered across visits. */
+export function useChatMode() {
+  const mode = useSyncExternalStore(subscribeMode, readMode, () => 'standard' as ChatMode);
+  const setMode = useCallback((next: ChatMode) => {
+    modeFallback = next;
+    try {
+      localStorage.setItem(MODE_KEY, next);
+    } catch {
+      // storage unavailable: the in-memory fallback carries the value
+    }
+    for (const listener of modeListeners) listener();
+  }, []);
+  return [mode, setMode] as const;
+}
+
+const MODES: Array<{ value: ChatMode; label: string; icon: typeof Zap; hint: string }> = [
+  { value: 'fast', label: 'Fast', icon: Zap, hint: 'Fast: grok-4-fast with trimmed context. Cheapest.' },
+  { value: 'standard', label: 'Standard', icon: Sparkles, hint: 'Standard: grok-4-fast with full context.' },
+  { value: 'thinking', label: 'Thinking', icon: Brain, hint: 'Thinking: grok-4 with full context. Deepest, ~15× the cost.' },
+];
+
+function ModeSwitch({ mode, onChange, compact }: { mode: ChatMode; onChange: (mode: ChatMode) => void; compact?: boolean }) {
+  return (
+    <div className="flex shrink-0 items-center gap-0.5 rounded-sm border border-line bg-surface-2/60 p-0.5" role="radiogroup" aria-label="Grok mode">
+      {MODES.map(({ value, label, icon: Icon, hint }) => (
+        <button
+          key={value}
+          type="button"
+          role="radio"
+          aria-checked={mode === value}
+          title={hint}
+          onClick={() => onChange(value)}
+          className={cn(
+            'flex h-6 items-center gap-1 rounded-xs px-1.5 font-mono text-[10px] tracking-[0.06em] transition-colors',
+            mode === value ? 'bg-white/[0.08] text-ink shadow-[inset_0_1px_0_rgba(255,255,255,0.06)]' : 'text-faint hover:text-ink-2',
+          )}
+        >
+          <Icon className={cn('size-3', mode === value && value === 'thinking' && 'text-ion')} />
+          <span className={compact ? 'sr-only' : 'hidden sm:inline'}>{label}</span>
+        </button>
+      ))}
+    </div>
+  );
+}
 
 export function useChat(initialThreadId: string | null = null) {
   const [threadId, setThreadId] = useState<string | null>(initialThreadId);
@@ -38,7 +119,7 @@ export function useChat(initialThreadId: string | null = null) {
   }, []);
 
   const send = useCallback(
-    async (text: string, context: ChatContext, options: { fresh?: boolean } = {}) => {
+    async (text: string, context: ChatContext, options: { fresh?: boolean; mode?: ChatMode } = {}) => {
       if (!text.trim() || streaming) return;
       const targetThread = options.fresh ? null : threadId;
       const controller = new AbortController();
@@ -52,7 +133,7 @@ export function useChat(initialThreadId: string | null = null) {
         const response = await fetch('/api/ai/chat', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ threadId: targetThread, message: text, context: payloadContext }),
+          body: JSON.stringify({ threadId: targetThread, message: text, context: payloadContext, mode: options.mode ?? 'standard' }),
           signal: controller.signal,
         });
         if (!response.ok || !response.body) {
@@ -66,11 +147,19 @@ export function useChat(initialThreadId: string | null = null) {
         }
         const reader = response.body.getReader();
         const decoder = new TextDecoder();
+        let raw = '';
         for (;;) {
           const { value, done } = await reader.read();
           if (done) break;
-          const chunk = decoder.decode(value, { stream: true });
-          setMessages((current) => current.map((message) => (message.id === assistantId ? { ...message, content: message.content + chunk } : message)));
+          raw += decoder.decode(value, { stream: true });
+          const cut = raw.indexOf(USAGE_SEPARATOR);
+          const content = cut === -1 ? raw : raw.slice(0, cut);
+          setMessages((current) => current.map((message) => (message.id === assistantId ? { ...message, content } : message)));
+        }
+        const cut = raw.indexOf(USAGE_SEPARATOR);
+        if (cut !== -1) {
+          const { usage, actions } = parseTrailer(raw.slice(cut + 1));
+          setMessages((current) => current.map((message) => (message.id === assistantId ? { ...message, usage, actions } : message)));
         }
         void globalMutate('/api/ai/threads');
       } catch (error) {
@@ -122,6 +211,37 @@ export function quickActions(context: ChatContext): Array<{ label: string; promp
   ];
 }
 
+const THINKING_STEPS = ['Gathering context', 'Reading the numbers', 'Reasoning', 'Drafting an answer'];
+
+/** Shown while Grok works before its first words arrive: orbiting arc, shimmering status, elapsed time. */
+function Thinking() {
+  const [elapsed, setElapsed] = useState(0);
+  useEffect(() => {
+    const started = Date.now();
+    const timer = setInterval(() => setElapsed(Math.floor((Date.now() - started) / 1000)), 250);
+    return () => clearInterval(timer);
+  }, []);
+  const step = THINKING_STEPS[Math.min(THINKING_STEPS.length - 1, Math.floor(elapsed / 3))];
+  return (
+    <div className="flex items-center gap-3 py-1.5" role="status" aria-live="polite">
+      <ThinkingOrb size={36} />
+      <AnimatePresence mode="wait">
+        <motion.span
+          key={step}
+          className="thinking-shimmer text-[12.5px] font-medium"
+          initial={{ opacity: 0, y: 4, filter: 'blur(3px)' }}
+          animate={{ opacity: 1, y: 0, filter: 'blur(0px)' }}
+          exit={{ opacity: 0, y: -4, filter: 'blur(3px)' }}
+          transition={{ duration: 0.25 }}
+        >
+          {step}…
+        </motion.span>
+      </AnimatePresence>
+      <span className="num font-mono text-[10.5px] text-faint">{elapsed}s</span>
+    </div>
+  );
+}
+
 export function MessageBubble({ message }: { message: Message }) {
   if (message.role === 'user') {
     return (
@@ -135,18 +255,37 @@ export function MessageBubble({ message }: { message: Message }) {
   return (
     <div className="group relative">
       <div className="mb-1 flex items-center gap-1.5">
-        <span className={cn('size-1.5 rounded-full bg-brand', message.pending && 'animate-pulse-dot')} />
+        <span className={cn('size-1.5 rounded-full', message.pending ? 'animate-pulse-dot bg-ion shadow-[0_0_8px_var(--color-ion)]' : 'bg-brand')} />
         <span className="font-mono text-[10px] tracking-[0.14em] text-muted">GROK</span>
+        {message.pending && message.content ? <span className="thinking-shimmer font-mono text-[9.5px] tracking-[0.14em] uppercase">· writing</span> : null}
       </div>
       {message.content ? (
-        <div className="prose-rn" dangerouslySetInnerHTML={{ __html: renderMarkdown(message.content) }} />
-      ) : (
-        <div className="flex gap-1 py-2">
-          {[0, 1, 2].map((dot) => (
-            <motion.span key={dot} className="size-1.5 rounded-full bg-brand/70" animate={{ opacity: [0.2, 1, 0.2] }} transition={{ duration: 1, repeat: Infinity, delay: dot * 0.15 }} />
-          ))}
-        </div>
-      )}
+        <div className={cn('prose-rn', message.pending && 'streaming-caret')} dangerouslySetInnerHTML={{ __html: renderMarkdown(message.content) }} />
+      ) : message.pending ? (
+        <Thinking />
+      ) : null}
+      {message.actions?.map((action) => <ActionCard key={action.id} action={action} />)}
+      <AnimatePresence>
+        {message.usage && !message.pending ? (
+          <motion.div
+            initial={{ opacity: 0, y: 3 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.3 }}
+            className="num mt-2 flex items-center gap-2 font-mono text-[10px] tracking-[0.06em] text-faint"
+            title={`${message.usage.input.toLocaleString()} input · ${message.usage.output.toLocaleString()} output tokens`}
+          >
+            <span>{formatTokens(message.usage.input)} in</span>
+            <span className="text-line-strong">·</span>
+            <span>{formatTokens(message.usage.output)} out</span>
+            {message.usage.cost !== null ? (
+              <>
+                <span className="text-line-strong">·</span>
+                <span className="text-muted">{formatCost(message.usage.cost)}</span>
+              </>
+            ) : null}
+          </motion.div>
+        ) : null}
+      </AnimatePresence>
       {!message.pending && message.content ? (
         <button
           onClick={() => {
@@ -166,7 +305,27 @@ export function MessageBubble({ message }: { message: Message }) {
 /** A prompt to place in the composer for the user to edit and send; `id` changes for each new draft. */
 export type Draft = { id: number; text: string };
 
-export function Composer({ onSend, onStop, streaming, placeholder, autoFocus, draft }: { onSend: (text: string) => void; onStop: () => void; streaming: boolean; placeholder?: string; autoFocus?: boolean; draft?: Draft | null }) {
+export function Composer({
+  onSend,
+  onStop,
+  streaming,
+  placeholder,
+  autoFocus,
+  draft,
+  mode,
+  onModeChange,
+  compactModes,
+}: {
+  onSend: (text: string) => void;
+  onStop: () => void;
+  streaming: boolean;
+  placeholder?: string;
+  autoFocus?: boolean;
+  draft?: Draft | null;
+  mode?: ChatMode;
+  onModeChange?: (mode: ChatMode) => void;
+  compactModes?: boolean;
+}) {
   const [text, setText] = useState(draft?.text ?? '');
   const [draftId, setDraftId] = useState(draft?.id ?? null);
   const ref = useRef<HTMLTextAreaElement>(null);
@@ -210,6 +369,7 @@ export function Composer({ onSend, onStop, streaming, placeholder, autoFocus, dr
           placeholder={placeholder ?? 'Ask anything about this company, your portfolio or the market…'}
           className="max-h-44 min-h-7 flex-1 resize-none bg-transparent px-1.5 py-1 text-[13px] text-ink outline-none placeholder:text-faint"
         />
+        {mode && onModeChange ? <ModeSwitch mode={mode} onChange={onModeChange} compact={compactModes} /> : null}
         {streaming ? (
           <button onClick={onStop} className="grid size-7 place-items-center rounded-sm bg-surface-4 text-ink hover:bg-white/10" aria-label="Stop">
             <Square className="size-3" />

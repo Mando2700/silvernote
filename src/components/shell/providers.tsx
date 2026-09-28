@@ -3,10 +3,10 @@
 import { MotionConfig } from 'motion/react';
 import { usePathname } from 'next/navigation';
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
-import { Toaster } from 'sonner';
+import { toast, Toaster } from 'sonner';
 import useSWR, { SWRConfig } from 'swr';
 
-import { api, fetcher } from '@/lib/client';
+import { api, ApiError, fetcher } from '@/lib/client';
 import { MARKET_PALETTES } from '@/lib/theme';
 
 export type Preferences = {
@@ -69,6 +69,18 @@ function ShellProvider({ children }: { children: ReactNode }) {
     root.dataset.motion = prefs.motion;
   }, [prefs.marketColors, prefs.motion]);
 
+  // Many buttons fire `void save()`-style handlers; when one of their API calls fails and nothing
+  // catches it, show the server's message instead of failing silently.
+  useEffect(() => {
+    const onRejection = (event: PromiseRejectionEvent) => {
+      if (!(event.reason instanceof ApiError)) return;
+      event.preventDefault();
+      if (event.reason.status !== 401) toast.error(event.reason.message || 'Request failed.');
+    };
+    window.addEventListener('unhandledrejection', onRejection);
+    return () => window.removeEventListener('unhandledrejection', onRejection);
+  }, []);
+
   const updatePrefs = useCallback(
     async (patch: Partial<Preferences>) => {
       await mutate(async (current) => ({ ...DEFAULT_PREFS, ...current, ...(await api<Preferences>('/api/settings', { method: 'PUT', body: patch })) }), {
@@ -120,8 +132,10 @@ export function Providers({ children }: { children: ReactNode }) {
           position="bottom-right"
           toastOptions={{
             style: {
-              background: '#15181d',
+              background: 'linear-gradient(180deg, rgba(255,255,255,0.03), transparent), rgba(21,24,29,0.88)',
+              backdropFilter: 'blur(14px) saturate(1.4)',
               border: '1px solid rgba(255,255,255,0.1)',
+              boxShadow: '0 20px 50px -18px rgba(0,0,0,0.9), 0 0 24px -12px rgba(159,216,255,0.45), inset 0 1px 0 rgba(255,255,255,0.05)',
               color: '#eceef1',
               fontSize: '13px',
             },

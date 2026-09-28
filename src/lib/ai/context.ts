@@ -20,13 +20,14 @@ export const SYSTEM_PROMPT = `You are Grok, the research assistant inside Silver
 How to work:
 - Company-specific figures (prices, financials, multiples, holdings, scores, headlines) come from the DATA block below. Never invent figures, quotes, or filings.
 - Derive what you can. If a metric isn't listed but follows from DATA, compute it and show the one-line math (e.g. P/FCF = 1 / FCF yield; PEG = P/E ÷ growth %; medians given as yields invert to multiples). Only say something is unavailable when it truly can't be computed, and then say what would be needed.
-- You have SilverNote data tools: get_companies, get_peers, get_financials, screen, get_price_history, and calculate. DATA is only a starting point — whenever a question needs figures it doesn't contain (another company, a peer set, more years of statements, a screen of the universe, price returns), call the tools instead of saying the data isn't available or reaching for memory. Prefer these tools over web search for any number SilverNote has.
+- You have SilverNote tools with the same read access the investor has in the app. Market data: get_companies, get_peers, get_financials, screen, get_price_history, get_score. Their workspace: get_portfolio, get_portfolio_report (performance, transactions, tax, bonds, stress), get_notes, get_research (workspaces and theses), get_pitches, get_watchlists, get_alerts, list_saved (screens, backtest strategies). Models: simulate_portfolio, run_monte_carlo, run_dcf, run_backtest, calculate. When they mention "my notes", "my thesis", "my watchlist", "my portfolio" etc., look it up rather than asking them to paste it. You can also propose changes with the propose_* tools (save or append to a note, add/remove watchlist tickers, create/delete alerts, set stance/conviction/target, commit a thesis section, save a screen or backtest strategy). Proposals are not applied until the investor presses Confirm on the card under your answer, so say they're ready to confirm, never that they're done. Propose only what they asked for or clearly agreed to; when you write a note or thesis, put the full text in the proposal and a short summary in your answer. Trades and portfolio records are theirs to enter; you can't change those. DATA is only a starting point — whenever a question needs figures it doesn't contain (another company, a peer set, more years of statements, a screen of the universe, price returns), call the tools instead of saying the data isn't available or reaching for memory. Prefer these tools over web search for any number SilverNote has.
 - Multi-step quantitative asks ("market-cap-weighted 3y revenue CAGR of X's 3 biggest peers", "median FCF margin of software names over $50B", "which of my holdings grew EPS fastest over 5 years") are expected work: gather the inputs with tools, do every non-trivial computation with calculate, and state your choices ("biggest" = largest market value; weights = market value unless told otherwise; period = last N fiscal years). Show a compact table of inputs and weights, then the formula and result. If the request is ambiguous, pick the most sensible reading, say which, and offer the alternative in one line.
+- For "what if I add / trim / swap X" or "how would these names change my portfolio", call simulate_portfolio with dollar amounts (if none are given, pick a sensible sizing such as equal dollars totalling ~10% of the portfolio, and say so). Default funding is new money; use cash or trim when the investor says so. Report before → after in a compact table (volatility, beta, Sharpe, max drawdown, top weight, effective positions, key sector weights, weighted P/E and growth, stress tests), then which names diversify (low correlation) and which add concentrated risk. Simulations are hypothetical; nothing is ever traded.
 - You can search the web and X. When DATA shows *what* changed but not *why* (a debt jump, a margin swing, a stock move, an acquisition, guidance), search for the reason — filings, press releases, earnings calls, reputable news — and cite sources. Don't say "no reason given in the data" without searching first. Skip searching when DATA already answers the question.
 - Use your own knowledge freely for everything that isn't a live number: what companies do, competitive positioning, industry structure, finance concepts, how metrics work, history. When a number you cite comes from your knowledge rather than DATA, mark it "(from memory, may be stale)".
 - Read follow-ups in light of the conversation. A bare list of tickers means "cover these"; short questions refer to what was just discussed. Answer the question asked — don't refuse because DATA is thin.
 - Be direct, quantitative and skeptical. Lead with the answer, then the evidence. Prefer numbers with units and periods (e.g. "FY25 revenue $416B, +6.4% y/y").
-- Use short markdown: a few headers, tight bullets, and tables when comparing. No filler, no hype.
+- Use short markdown: a few headers, tight bullets. Use GitHub-style markdown tables whenever you compare companies, scenarios, before/after, periods or percentiles: one row per item, units in the header, numbers rounded consistently. No filler, no hype.
 - When asked to challenge a thesis, argue the strongest opposing case and name specific, observable signals that would prove the thesis wrong.
 - When drafting pitch sections, write in a crisp sell-side style the investor can edit.
 - Money moves are the investor's decisions; when you suggest trades, frame them as considerations with risks, in one line at most.`;
@@ -80,7 +81,7 @@ const NOT_TICKERS = new Set(['A', 'I', 'AI', 'CEO', 'CFO', 'EPS', 'FCF', 'ROE', 
 const ENGLISH_TICKERS = new Set(['NOW', 'ON', 'ALL', 'ARE', 'OR', 'SO', 'BE', 'GO', 'NEW', 'ONE', 'OK']);
 
 /** Data for companies the question names by ticker (e.g. "compare with $MSFT and NVDA"), beyond the one in view. */
-export async function mentionedContext(message: string, exclude: string | null) {
+export async function mentionedContext(message: string, exclude: string | null, lite = false) {
   const listings = await getListings().catch(() => [] as UniverseEntry[]);
   const bySymbol = new Map(listings.map((entry) => [entry.symbol, entry]));
   const candidates = message.match(/\$?\b[A-Za-z]{1,5}(?:[.-][A-Za-z])?\b/g) ?? [];
@@ -104,14 +105,14 @@ export async function mentionedContext(message: string, exclude: string | null) 
   }
   if (!symbols.length) return null;
   const lines = ['COMPANIES NAMED IN THE QUESTION:', ...symbols.map((symbol) => `- ${snapshotLine(bySymbol.get(symbol)!)}`)];
-  if (/\bpeers?\b|competitor|rival|comparable|comps?\b/i.test(message)) {
+  if (!lite && /\bpeers?\b|competitor|rival|comparable|comps?\b/i.test(message)) {
     const blocks = await Promise.all(symbols.slice(0, 3).map((symbol) => peersBlock(symbol, listings)));
     lines.push(...blocks.filter((block): block is string => Boolean(block)));
   }
   return lines.join('\n');
 }
 
-export async function companyContext(userId: string, symbol: string, filingUrl?: string | null) {
+export async function companyContext(userId: string, symbol: string, filingUrl?: string | null, lite = false) {
   const [universe, profile, quote, statements, score, workspace, versions, news, filings] = await Promise.all([
     getListings(),
     getCompanyProfile(symbol).catch(() => null),
@@ -133,7 +134,7 @@ export async function companyContext(userId: string, symbol: string, filingUrl?:
   const entry = universe.find((item) => item.symbol === symbol);
   const [sector, peers] = await Promise.all([
     entry?.sector ? getGroupStats('sector', entry.sector).catch(() => null) : Promise.resolve(null),
-    peersBlock(symbol, universe),
+    lite ? Promise.resolve(null) : peersBlock(symbol, universe),
   ]);
   const lines: string[] = [];
   lines.push(`COMPANY: ${profile?.name ?? symbol} (${symbol}) · ${entry?.sector ?? profile?.sector ?? 'n/a'} / ${entry?.industry ?? profile?.industry ?? 'n/a'}`);
@@ -148,32 +149,32 @@ export async function companyContext(userId: string, symbol: string, filingUrl?:
     lines.push(`SECTOR MEDIANS (${sector.group}, ${sector.count} companies): P/E ${m.pe?.toFixed(1) ?? 'n/a'}, P/S ${m.ps?.toFixed(1) ?? 'n/a'}, revenue growth ${pct(m.revenueGrowth ?? null)}, operating margin ${pct(m.operatingMargin ?? null)}, ROE ${pct(m.roe ?? null)}, FCF yield ${pct(m.fcfYield ?? null)}`);
   }
   if (peers) lines.push(peers);
-  if (profile?.description) lines.push(`BUSINESS: ${profile.description.slice(0, 1200)}`);
+  if (profile?.description && !lite) lines.push(`BUSINESS: ${profile.description.slice(0, 1200)}`);
   if (statements) {
     lines.push(`ANNUAL STATEMENTS (${statements.currency}, source ${statements.source}):`);
-    for (const period of statements.annual.slice(0, 5)) lines.push(`- ${periodLine(period, statements.currency)}`);
-    if (statements.quarterly.length) {
+    for (const period of statements.annual.slice(0, lite ? 3 : 5)) lines.push(`- ${periodLine(period, statements.currency)}`);
+    if (statements.quarterly.length && !lite) {
       lines.push('RECENT QUARTERS:');
       for (const period of statements.quarterly.slice(0, 4)) lines.push(`- ${periodLine(period, statements.currency)}`);
     }
   }
   if (score) {
     lines.push(`SILVERNOTE SCORE: ${score.overallScore}/100 (${score.label}, ${score.confidence} confidence). Components: ${score.subScores.map((item) => `${item.name} ${item.score}`).join(', ')}.`);
-    lines.push(`SCORE NOTES: ${score.detailedDescription.replace(/\n+/g, ' ')}`);
+    if (!lite) lines.push(`SCORE NOTES: ${score.detailedDescription.replace(/\n+/g, ' ')}`);
   }
   if (workspace || versions.length) {
     lines.push(`INVESTOR'S WORKSPACE: stance ${workspace?.stance ?? 'n/a'}, conviction ${workspace?.conviction ?? 'n/a'}/5, target price ${workspace?.target_price ?? 'n/a'}, horizon ${workspace?.horizon ?? 'n/a'}`);
     for (const version of versions) {
-      lines.push(`## ${THESIS_SECTION_META[version.section].title} (last edited ${version.created_at.toISOString().slice(0, 10)})\n${version.content.slice(0, 2500)}`);
+      lines.push(`## ${THESIS_SECTION_META[version.section].title} (last edited ${version.created_at.toISOString().slice(0, 10)})\n${version.content.slice(0, lite ? 600 : 2500)}`);
     }
   }
   if (news.length) {
     lines.push('RECENT HEADLINES:');
-    for (const item of news.slice(0, 10)) lines.push(`- ${item.publishedAt.slice(0, 10)} · ${item.source}: ${item.title}${item.summary ? ` — ${item.summary.slice(0, 200)}` : ''}`);
+    for (const item of news.slice(0, lite ? 5 : 10)) lines.push(`- ${item.publishedAt.slice(0, 10)} · ${item.source}: ${item.title}${item.summary && !lite ? ` — ${item.summary.slice(0, 200)}` : ''}`);
   }
   if (filings.length) {
     lines.push('RECENT SEC FILINGS:');
-    for (const filing of filings.filter((item) => /^(10-K|10-Q|8-K|20-F|6-K|DEF 14A)/.test(item.form)).slice(0, 10)) {
+    for (const filing of filings.filter((item) => /^(10-K|10-Q|8-K|20-F|6-K|DEF 14A)/.test(item.form)).slice(0, lite ? 5 : 10)) {
       lines.push(`- ${filing.filedAt} ${filing.form}${filing.reportDate ? ` (period ${filing.reportDate})` : ''}: ${filing.description ?? filing.primaryDocument}`);
     }
   }
@@ -184,7 +185,7 @@ export async function companyContext(userId: string, symbol: string, filingUrl?:
   return lines.join('\n');
 }
 
-export async function portfolioContext(userId: string, id: string) {
+export async function portfolioContext(userId: string, id: string, lite = false) {
   const portfolio = await getPortfolio(userId, id);
   const { holdings, summary } = await getHoldings(portfolio);
   const settings = await q1<{ data: { riskFreeRate?: number | null } }>('select data from public.user_settings where user_id = $1', [userId]);
@@ -201,12 +202,12 @@ export async function portfolioContext(userId: string, id: string) {
     lines.push(
       `RISK (last ${stats.days} trading days at current weights): annualized return ${pct(stats.annualReturn)}, volatility ${pct(stats.volatility)}, beta ${stats.beta?.toFixed(2) ?? 'n/a'}, Sharpe ${stats.sharpe?.toFixed(2) ?? 'n/a'}, Sortino ${stats.sortino?.toFixed(2) ?? 'n/a'}, max drawdown ${pct(stats.maxDrawdown)}, 1-day VaR95 ${pct(stats.var95?.historical ?? null)}, benchmark volatility ${pct(stats.benchmarkVolatility)}.`,
     );
-    lines.push(`RISK CONTRIBUTIONS: ${stats.contributions.map((item) => `${item.symbol} weight ${pct(item.weight)} → ${pct(item.contribution)} of variance`).join('; ')}`);
+    if (!lite) lines.push(`RISK CONTRIBUTIONS: ${stats.contributions.map((item) => `${item.symbol} weight ${pct(item.weight)} → ${pct(item.contribution)} of variance`).join('; ')}`);
   }
   return lines.join('\n');
 }
 
-export async function generalContext(userId: string) {
+export async function generalContext(userId: string, lite = false) {
   const universe = await getUniverse();
   const priced = universe.filter((entry) => entry.changePct !== null && entry.marketCap);
   const advancers = priced.filter((entry) => (entry.changePct ?? 0) > 0).length;
@@ -223,25 +224,27 @@ export async function generalContext(userId: string) {
     `WATCHLISTS: ${lists.map((list) => `${list.name}: ${list.symbols.join(', ') || '(empty)'}`).join(' | ') || 'none'}`,
     `FOLLOWED SYMBOLS (held first): ${mine.symbols.map((entry) => `${entry.symbol}${entry.held ? ' (held)' : ''}`).join(', ') || 'none'}`,
     `TOP SILVERNOTE SCORES (>$10B): ${leaders.map((entry) => `${entry.symbol} ${entry.score}`).join(', ')}`,
-    `HEADLINES FOR FOLLOWED SYMBOLS:\n${mine.items.slice(0, 25).map(headline).join('\n') || '(none)'}`,
-    `MARKET HEADLINES:\n${marketNews.slice(0, 20).map(headline).join('\n') || '(none)'}`,
+    `HEADLINES FOR FOLLOWED SYMBOLS:\n${mine.items.slice(0, lite ? 8 : 25).map(headline).join('\n') || '(none)'}`,
+    `MARKET HEADLINES:\n${marketNews.slice(0, lite ? 8 : 20).map(headline).join('\n') || '(none)'}`,
   ].join('\n');
 }
 
-async function subjectContext(userId: string, context: AssistantContext, filingUrl?: string | null) {
+async function subjectContext(userId: string, context: AssistantContext, filingUrl: string | null | undefined, lite: boolean) {
   try {
-    if (context.type === 'company') return await companyContext(userId, context.symbol, filingUrl);
-    if (context.type === 'portfolio') return await portfolioContext(userId, context.id);
-    return await generalContext(userId);
+    if (context.type === 'company') return await companyContext(userId, context.symbol, filingUrl, lite);
+    if (context.type === 'portfolio') return await portfolioContext(userId, context.id, lite);
+    return await generalContext(userId, lite);
   } catch (error) {
     return `Context could not be fully loaded: ${(error as Error).message}`;
   }
 }
 
-export async function buildContext(userId: string, context: AssistantContext, filingUrl?: string | null, message = '') {
+/** `lite` trims the DATA block (Fast mode); Grok can still fetch anything missing through its tools. */
+export async function buildContext(userId: string, context: AssistantContext, filingUrl?: string | null, message = '', options: { lite?: boolean } = {}) {
+  const lite = options.lite ?? false;
   const [subject, mentioned] = await Promise.all([
-    subjectContext(userId, context, filingUrl),
-    mentionedContext(message, context.type === 'company' ? context.symbol : null).catch(() => null),
+    subjectContext(userId, context, filingUrl, lite),
+    mentionedContext(message, context.type === 'company' ? context.symbol : null, lite).catch(() => null),
   ]);
   return mentioned ? `${subject}\n${mentioned}` : subject;
 }

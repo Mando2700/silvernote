@@ -3,15 +3,22 @@
 import { Maximize2, Plus, Sparkles, X } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
 import Link from 'next/link';
+import { usePathname } from 'next/navigation';
 import { useEffect, useRef, useState } from 'react';
 
-import { Composer, contextLabel, MessageList, quickActions, useChat, type Draft } from '@/components/assistant/chat';
+import { Composer, contextLabel, MessageList, quickActions, useChat, useChatMode, type Draft } from '@/components/assistant/chat';
 import { useShell } from '@/components/shell/providers';
 
 /** Slide-over Grok chat that follows whatever company or portfolio is on screen. */
 export function AssistantPanel() {
   const { assistantOpen, setAssistantOpen, assistantContext, pendingPrompt } = useShell();
+  // The full Grok page is already on screen there; a second chat on top would only compete with it.
+  const onGrokPage = usePathname()?.startsWith('/assistant') ?? false;
+  useEffect(() => {
+    if (onGrokPage && assistantOpen) setAssistantOpen(false);
+  }, [onGrokPage, assistantOpen, setAssistantOpen]);
   const chat = useChat();
+  const [mode, setMode] = useChatMode();
   const [quickDraft, setQuickDraft] = useState<Draft | null>(null);
   // Whichever was prepared last: an "Ask Grok" action elsewhere in the app, or a quick action here.
   const draft = pendingPrompt && (!quickDraft || pendingPrompt.id > quickDraft.id) ? pendingPrompt : quickDraft;
@@ -46,7 +53,7 @@ export function AssistantPanel() {
 
   return (
     <AnimatePresence>
-      {assistantOpen ? (
+      {assistantOpen && !onGrokPage ? (
         <motion.aside
           initial={{ x: '100%', opacity: 0.6 }}
           animate={{ x: 0, opacity: 1 }}
@@ -97,7 +104,16 @@ export function AssistantPanel() {
             )}
           </div>
           <div className="relative border-t border-line p-3">
-            <Composer onSend={(text) => void chat.send(text, assistantContext)} onStop={chat.stop} streaming={chat.streaming} autoFocus draft={draft} />
+            <Composer
+              onSend={(text) => void chat.send(text, assistantContext, { mode })}
+              onStop={chat.stop}
+              streaming={chat.streaming}
+              autoFocus
+              draft={draft}
+              mode={mode}
+              onModeChange={setMode}
+              compactModes
+            />
             <div className="mt-1.5 text-center text-[10.5px] text-faint">Enter to send · Shift+Enter for a new line · Esc to close</div>
           </div>
         </motion.aside>

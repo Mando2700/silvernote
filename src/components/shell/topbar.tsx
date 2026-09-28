@@ -3,7 +3,8 @@
 import { Bell, Database, RefreshCw, Search, Sparkles } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
 import Link from 'next/link';
-import { useEffect, useRef, useState } from 'react';
+import { usePathname } from 'next/navigation';
+import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { toast } from 'sonner';
 import useSWR from 'swr';
 
@@ -58,19 +59,60 @@ function IndexStrip() {
               <Delta value={item.changePct} alreadyPercent className="text-[11px]" />
             </span>
           </div>
-          <Sparkline values={item.spark} width={46} height={20} area={false} strokeWidth={1.25} />
+          <Sparkline values={item.spark} width={46} height={20} area={false} strokeWidth={1.25} pulse />
         </Link>
       ))}
     </div>
   );
 }
 
+const clockListeners = new Set<() => void>();
+let clockTimer: ReturnType<typeof setInterval> | null = null;
+let clockNow = 0;
+
+function subscribeClock(listener: () => void) {
+  clockListeners.add(listener);
+  if (!clockTimer) {
+    clockNow = Date.now();
+    clockTimer = setInterval(() => {
+      clockNow = Date.now();
+      for (const each of clockListeners) each();
+    }, 1000);
+  }
+  return () => {
+    clockListeners.delete(listener);
+    if (!clockListeners.size && clockTimer) {
+      clearInterval(clockTimer);
+      clockTimer = null;
+    }
+  };
+}
+
+function readClock() {
+  if (!clockNow) clockNow = Date.now(); // stable until the next tick, as useSyncExternalStore requires
+  return clockNow;
+}
+
+const ET_TIME =new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
+
+/** New York time, ticking each second; client-only so the server render never disagrees. */
+function MarketClock() {
+  const now = useSyncExternalStore(subscribeClock, readClock, () => 0);
+  if (!now) return null;
+  return (
+    <span className="num hidden font-mono text-[10.5px] tracking-wider text-ink-2 lg:inline" title="New York time">
+      {ET_TIME.format(now)} <span className="text-faint">ET</span>
+    </span>
+  );
+}
+
 function MarketStatus({ open }: { open: boolean | undefined }) {
   if (open === undefined) return null;
   return (
-    <div className="flex items-center gap-1.5 rounded-full border border-line bg-surface-2 px-2 py-0.5">
-      <span className={cn('size-1.5 rounded-full', open ? 'animate-pulse-dot bg-brand' : 'bg-faint')} />
+    <div className={cn('flex items-center gap-2 rounded-full border bg-surface-2/80 px-2.5 py-0.5 backdrop-blur', open ? 'border-ion/25 shadow-[0_0_16px_-6px_rgba(159,216,255,0.6)]' : 'border-line')}>
+      <span className={cn('size-1.5 rounded-full', open ? 'animate-pulse-dot bg-ion' : 'bg-faint')} />
       <span className="font-mono text-[10px] tracking-wider text-muted uppercase">{open ? 'US market open' : 'Market closed'}</span>
+      <MarketClock />
     </div>
   );
 }
@@ -101,8 +143,12 @@ function JobsIndicator({ status, refresh }: { status: StatusPayload | undefined;
   }, [open]);
 
   const start = async (kind: 'universe' | 'fundamentals' | 'scores') => {
-    await api('/api/jobs', { body: { kind } });
-    toast.success(`${JOB_LABEL[kind]} started`);
+    try {
+      await api('/api/jobs', { body: { kind } });
+      toast.success(`${JOB_LABEL[kind]} started`);
+    } catch (error) {
+      toast.error(`${JOB_LABEL[kind]} could not start: ${(error as Error).message}`);
+    }
     refresh();
   };
 
@@ -229,7 +275,11 @@ function AlertsBell() {
     const next = !open;
     setOpen(next);
     if (next && data?.unread) {
-      await api('/api/alerts/events', { body: {} });
+      try {
+        await api('/api/alerts/events', { body: {} });
+      } catch {
+        // Marking as read is best-effort; the badge simply stays until the next attempt.
+      }
       void mutate();
     }
   };
@@ -292,13 +342,14 @@ function AlertsBell() {
 export function Topbar() {
   const { setPaletteOpen, setAssistantOpen } = useShell();
   const { status, refresh } = useStatus();
+  const onGrokPage = usePathname()?.startsWith('/assistant') ?? false;
   return (
-    <header className="sticky top-0 z-30 flex h-13 items-center gap-3 border-b border-line bg-bg/80 px-4 backdrop-blur-md">
+    <header className="sticky top-0 z-30 flex h-13 items-center gap-3 border-b border-line bg-bg/70 px-4 backdrop-blur-xl backdrop-saturate-150">
       <button
         onClick={() => setPaletteOpen(true)}
-        className="group flex h-8 w-full max-w-md items-center gap-2 rounded-sm border border-line bg-surface-1 px-2.5 text-left text-[12.5px] text-faint transition-colors hover:border-line-strong hover:text-muted"
+        className="group relative flex h-8 w-full max-w-md items-center gap-2 overflow-hidden rounded-sm border border-line bg-surface-1/80 px-2.5 text-left text-[12.5px] text-faint transition-[border-color,color,box-shadow] duration-300 hover:border-ion/30 hover:text-muted hover:shadow-[0_0_22px_-8px_rgba(159,216,255,0.55)]"
       >
-        <Search className="size-3.5" />
+        <Search className="size-3.5 transition-colors group-hover:text-ion" />
         <span className="flex-1 truncate">Search tickers, watchlists, notes…</span>
         <span className="flex items-center gap-0.5">
           <Kbd>⌘</Kbd>
@@ -310,7 +361,7 @@ export function Topbar() {
         <MarketStatus open={status?.marketOpen} />
         <JobsIndicator status={status} refresh={() => void refresh()} />
         <AlertsBell />
-        <IconButton label="Assistant" variant="outline" size="sm" onClick={() => setAssistantOpen(true)}>
+        <IconButton label="Assistant" variant="outline" size="sm" onClick={() => setAssistantOpen(true)} disabled={onGrokPage} className="disabled:pointer-events-none disabled:opacity-40">
           <Sparkles className="size-3.5 text-brand" />
         </IconButton>
       </div>

@@ -12,6 +12,7 @@ import { AnimatedNumber } from '@/components/motion/animated-number';
 import { Delta } from '@/components/motion/delta';
 import { ExtendedMove } from '@/components/motion/extended-move';
 import { ScoreRing } from '@/components/motion/score-ring';
+import { ScrambleText } from '@/components/motion/scramble-text';
 import { Page } from '@/components/shell/page';
 import { Button, Magnetic } from '@/components/ui/button';
 import { CompanyLogo } from '@/components/ui/company-logo';
@@ -53,21 +54,22 @@ function Hero({ data }: { data: DashboardData | undefined }) {
   const worst = sorted[sorted.length - 1];
 
   return (
-    <Panel className="relative overflow-hidden">
-      <div className="absolute inset-0 bg-[radial-gradient(ellipse_80%_120%_at_70%_120%,rgba(205,212,222,0.1),transparent_60%)]" />
+    <Panel className="hud relative overflow-hidden">
+      <div className="absolute inset-0 bg-[radial-gradient(ellipse_80%_120%_at_70%_120%,rgba(205,212,222,0.1),transparent_60%),radial-gradient(ellipse_50%_80%_at_95%_0%,rgba(159,216,255,0.08),transparent_60%)]" />
       <HeroCanvas className="absolute inset-0 opacity-90" />
       <div className="absolute inset-0 bg-gradient-to-r from-surface-2 via-surface-2/70 to-transparent" />
       <div className="relative grid gap-6 p-6 md:grid-cols-[1.25fr_1fr]">
         <div>
-          <div className="kicker">
-            {greeting()} · {today}
+          <div className="kicker flex items-center gap-2">
+            <span className="size-1.5 animate-pulse-dot rounded-full bg-ion" aria-hidden />
+            <ScrambleText text={`${greeting()} · ${today}`} duration={900} />
           </div>
           {data?.portfolio ? (
             <>
               <div className="mt-4 text-[12px] text-muted">
                 {data.portfolio.name} · {data.portfolio.positions} positions
               </div>
-              <div className="mt-1 text-[52px] leading-none font-semibold tracking-[-0.035em] text-ink">
+              <div className="mt-1 text-[52px] leading-none font-semibold tracking-[-0.035em] text-ink [text-shadow:0_0_32px_rgba(205,212,222,0.28),0_0_2px_rgba(255,255,255,0.3)]">
                 <AnimatedNumber value={data.portfolio.totalValue} format={(value) => money(value, { digits: 0 })} />
               </div>
               <div className="mt-3 flex flex-wrap items-center gap-x-5 gap-y-1 text-[13px]">
@@ -124,12 +126,33 @@ function Hero({ data }: { data: DashboardData | undefined }) {
               <span className="kicker">Market breadth</span>
               <span className="text-[11.5px] text-muted">{breadth ? `${breadth.total.toLocaleString()} stocks` : ''}</span>
             </div>
-            <div className="flex h-2.5 overflow-hidden rounded-full bg-surface-4">
-              <motion.div className="h-full bg-gain-fill" initial={{ width: '50%' }} animate={{ width: `${advancingShare * 100}%` }} transition={{ duration: 1, ease: [0.16, 1, 0.3, 1] }} />
-              <div className="w-[2px] bg-surface-2" />
-              <div className="h-full flex-1 bg-loss-fill" />
+            <div className="relative">
+              <div className="flex h-2.5 overflow-hidden rounded-full bg-surface-4 shadow-[inset_0_1px_2px_rgba(0,0,0,0.6)]">
+                <motion.div
+                  className="h-full bg-gradient-to-r from-gain-fill/70 to-gain-fill"
+                  initial={{ width: '50%' }}
+                  animate={{ width: `${advancingShare * 100}%` }}
+                  transition={{ duration: 1, ease: [0.16, 1, 0.3, 1] }}
+                />
+                <div className="w-[2px] bg-surface-2" />
+                <div className="h-full flex-1 bg-gradient-to-r from-loss-fill to-loss-fill/70" />
+              </div>
+              {/* Glowing marker riding the split between advancers and decliners. */}
+              <motion.div
+                className="absolute -top-1 -bottom-1 w-[2px] -translate-x-1/2 rounded-full bg-white shadow-[0_0_10px_2px_rgba(159,216,255,0.8)]"
+                initial={{ left: '50%' }}
+                animate={{ left: `${advancingShare * 100}%` }}
+                transition={{ duration: 1, ease: [0.16, 1, 0.3, 1] }}
+                aria-hidden
+              />
+              {/* Quarter ticks under the gauge. */}
+              <div className="pointer-events-none absolute inset-x-0 -bottom-2 flex justify-between px-px" aria-hidden>
+                {[0, 1, 2, 3, 4].map((tick) => (
+                  <span key={tick} className={cn('w-px bg-white/15', tick === 2 ? 'h-1.5' : 'h-1')} />
+                ))}
+              </div>
             </div>
-            <div className="mt-1.5 flex justify-between text-[12px]">
+            <div className="mt-3 flex justify-between text-[12px]">
               <span className="text-gain">
                 <span className="num">{breadth?.advancers.toLocaleString() ?? '—'}</span> advancing
               </span>
@@ -139,12 +162,12 @@ function Hero({ data }: { data: DashboardData | undefined }) {
             </div>
           </div>
           <div className="grid grid-cols-2 gap-3">
-            <div className="rounded-sm border border-line bg-surface-1/70 p-3 backdrop-blur">
+            <div className="rounded-sm border border-line bg-surface-1/70 p-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] backdrop-blur transition-colors hover:border-gain/30">
               <div className="text-[11px] text-muted">Leading sector</div>
               <div className="mt-1 truncate text-[13.5px] font-medium text-ink">{best?.sector ?? '—'}</div>
               <Delta value={best?.changePct ?? null} alreadyPercent className="text-[12px]" />
             </div>
-            <div className="rounded-sm border border-line bg-surface-1/70 p-3 backdrop-blur">
+            <div className="rounded-sm border border-line bg-surface-1/70 p-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] backdrop-blur transition-colors hover:border-loss/30">
               <div className="text-[11px] text-muted">Lagging sector</div>
               <div className="mt-1 truncate text-[13.5px] font-medium text-ink">{worst?.sector ?? '—'}</div>
               <Delta value={worst?.changePct ?? null} alreadyPercent className="text-[12px]" />
@@ -189,7 +212,7 @@ function MarketList({ rows, empty, extended }: { rows: MarketRow[]; empty: strin
   return (
     <div className="flex flex-col">
       {rows.map((row) => (
-        <Link key={row.symbol} href={`/company/${row.symbol}`} className="group grid grid-cols-[20px_52px_1fr_auto_64px] items-center gap-3 border-t border-line px-4 py-2 hover:bg-white/[0.025]">
+        <Link key={row.symbol} href={`/company/${row.symbol}`} className="row-glow group grid grid-cols-[20px_52px_1fr_auto_64px] items-center gap-3 border-t border-line px-4 py-2 transition-colors hover:bg-white/[0.03]">
           <CompanyLogo symbol={row.symbol} size="sm" />
           <span className="font-mono text-[12px] font-semibold text-ink group-hover:text-white">{row.symbol}</span>
           <span className="truncate text-[12px] text-muted">{row.name}</span>
@@ -252,7 +275,7 @@ export function Dashboard() {
           {data?.leaders.length ? (
             <div className="flex flex-col">
               {data.leaders.map((row) => (
-                <Link key={row.symbol} href={`/company/${row.symbol}`} className="group flex items-center gap-3 border-t border-line px-4 py-1.5 hover:bg-white/[0.025]">
+                <Link key={row.symbol} href={`/company/${row.symbol}`} className="row-glow group flex items-center gap-3 border-t border-line px-4 py-1.5 transition-colors hover:bg-white/[0.03]">
                   <ScoreRing score={row.score} size="xs" />
                   <CompanyLogo symbol={row.symbol} size="xs" />
                   <span className="w-12 font-mono text-[12px] font-semibold text-ink group-hover:text-white">{row.symbol}</span>
@@ -275,7 +298,7 @@ export function Dashboard() {
           {data?.watchlist?.items.length ? (
             <div className="flex flex-col">
               {data.watchlist.items.map((item) => (
-                <Link key={item.symbol} href={`/company/${item.symbol}`} className="group grid grid-cols-[20px_52px_1fr_64px_30px] items-center gap-3 border-t border-line px-4 py-2 hover:bg-white/[0.025]">
+                <Link key={item.symbol} href={`/company/${item.symbol}`} className="row-glow group grid grid-cols-[20px_52px_1fr_64px_30px] items-center gap-3 border-t border-line px-4 py-2 transition-colors hover:bg-white/[0.03]">
                   <CompanyLogo symbol={item.symbol} size="sm" />
                   <span className="font-mono text-[12px] font-semibold text-ink group-hover:text-white">{item.symbol}</span>
                   <span className="num flex flex-col items-end gap-0.5 text-[12px] text-ink-2">
@@ -307,7 +330,7 @@ export function Dashboard() {
                   <Link
                     key={`${note.kind}-${note.id}`}
                     href={note.kind === 'note' ? `/notes?note=${note.id}` : `/company/${note.symbol}?tab=workspace`}
-                    className="flex items-center gap-3 border-t border-line px-4 py-2 hover:bg-white/[0.025]"
+                    className="row-glow flex items-center gap-3 border-t border-line px-4 py-2 transition-colors hover:bg-white/[0.03]"
                   >
                     <NotebookPen className="size-3.5 shrink-0 text-muted" />
                     <span className="min-w-0 flex-1 truncate text-[12.5px] text-ink-2">
@@ -327,7 +350,7 @@ export function Dashboard() {
             {data?.news.length ? (
               <div className="flex flex-col pb-1">
                 {data.news.map((item) => (
-                  <a key={item.id} href={item.url} target="_blank" rel="noreferrer" className="group flex items-start gap-3 border-t border-line px-4 py-2 hover:bg-white/[0.025]">
+                  <a key={item.id} href={item.url} target="_blank" rel="noreferrer" className="row-glow group flex items-start gap-3 border-t border-line px-4 py-2 transition-colors hover:bg-white/[0.03]">
                     <Newspaper className="mt-0.5 size-3.5 shrink-0 text-muted" />
                     <span className="min-w-0 flex-1">
                       <span className="line-clamp-1 text-[12.5px] text-ink-2 group-hover:text-ink">{item.title}</span>

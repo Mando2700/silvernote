@@ -11,8 +11,10 @@ type Size = 'xs' | 'sm' | 'md';
 const VARIANTS: Record<Variant, string> = {
   primary:
     'sheen bg-silver text-[#0b0c0f] shadow-[inset_0_1px_0_rgba(255,255,255,0.7),0_0_0_1px_rgba(205,212,222,0.35),0_8px_24px_-12px_rgba(205,212,222,0.5)] hover:brightness-110 hover:shadow-[inset_0_1px_0_rgba(255,255,255,0.8),0_0_0_1px_rgba(236,241,248,0.5),0_10px_30px_-10px_rgba(205,212,222,0.65)]',
-  secondary: 'bg-surface-4 text-ink border border-line-strong hover:bg-[#232832] hover:border-white/20',
-  outline: 'border border-line-strong text-ink-2 hover:text-ink hover:border-white/25 hover:bg-white/[0.03]',
+  secondary:
+    'bg-surface-4 text-ink border border-line-strong shadow-[inset_0_1px_0_rgba(255,255,255,0.05)] hover:bg-[#232832] hover:border-white/20 hover:shadow-[inset_0_1px_0_rgba(255,255,255,0.07),0_0_18px_-8px_rgba(159,216,255,0.5)]',
+  outline:
+    'border border-line-strong text-ink-2 hover:text-ink hover:border-white/25 hover:bg-white/[0.03] hover:shadow-[0_0_18px_-8px_rgba(159,216,255,0.5)]',
   ghost: 'text-ink-2 hover:text-ink hover:bg-white/[0.05]',
   danger: 'bg-transparent border border-critical/40 text-[#ff8a8e] hover:bg-critical/10',
 };

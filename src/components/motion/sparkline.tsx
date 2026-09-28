@@ -15,6 +15,7 @@ export function Sparkline({
   area = true,
   strokeWidth = 1.5,
   baseline,
+  pulse = false,
 }: {
   values: number[];
   width?: number;
@@ -25,10 +26,13 @@ export function Sparkline({
   strokeWidth?: number;
   /** Draw a hairline at this value (e.g. previous close). */
   baseline?: number;
+  /** A radar ping on the last point, for live series (keep it to a few on screen). */
+  pulse?: boolean;
 }) {
   const reduced = useReducedMotion();
   const gradientId = useId();
-  const clean = values.filter((value) => Number.isFinite(value));
+  // Memoized so the geometry below is only rebuilt when the series itself changes.
+  const clean = useMemo(() => values.filter((value) => Number.isFinite(value)), [values]);
   const geometry = useMemo(() => {
     if (clean.length < 2) return null;
     const min = Math.min(...clean, baseline ?? Infinity);
@@ -82,11 +86,22 @@ export function Sparkline({
         animate={{ pathLength: 1 }}
         transition={{ duration: 0.9, ease: [0.16, 1, 0.3, 1] }}
       />
+      {pulse && !reduced ? (
+        <motion.circle
+          cx={geometry.lastX}
+          cy={geometry.lastY}
+          fill={stroke}
+          initial={{ r: 2, opacity: 0 }}
+          animate={{ r: [2, 6], opacity: [0.5, 0] }}
+          transition={{ delay: 1, duration: 1.8, repeat: Infinity, repeatDelay: 1.2, ease: 'easeOut' }}
+        />
+      ) : null}
       <motion.circle
         cx={geometry.lastX}
         cy={geometry.lastY}
         r={2}
         fill={stroke}
+        style={{ filter: `drop-shadow(0 0 3px ${stroke})` }}
         initial={reduced ? false : { scale: 0 }}
         animate={{ scale: 1 }}
         transition={{ delay: 0.8, type: 'spring', stiffness: 400, damping: 20 }}

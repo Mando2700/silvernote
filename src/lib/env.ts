@@ -29,8 +29,17 @@ export const env = {
   get xaiKey() {
     return read('XAI_API_KEY');
   },
+  /** Deep model: the chat's Thinking mode and long-form drafting. */
   get xaiModel() {
     return read('XAI_MODEL') || 'grok-4';
+  },
+  /** Default chat model. */
+  get xaiFastModel() {
+    return read('XAI_FAST_MODEL') || 'grok-4-fast-reasoning';
+  },
+  /** Fast mode: no reasoning pass, paired with trimmed context. */
+  get xaiFastLiteModel() {
+    return read('XAI_FAST_LITE_MODEL') || 'grok-4-fast-non-reasoning';
   },
   /** Model used to read portfolio photos; must accept image input. */
   get xaiVisionModel() {

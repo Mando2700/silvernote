@@ -2,8 +2,8 @@ import 'server-only';
 
 import { HttpError } from '@/lib/auth';
 import type { Candle } from '@/lib/data/types';
-import { betaFromCloses, concentration } from '@/lib/finance/stats';
-import { buildRiskModel, performanceHistory, riskStatistics, type Holding, type TransactionRow } from '@/lib/services/portfolio';
+import { annualizedReturn, beta, betaFromCloses, concentration, correlation } from '@/lib/finance/stats';
+import { buildRiskModel, performanceHistory, portfolioReturns, riskStatistics, type Holding, type TransactionRow } from '@/lib/services/portfolio';
 import { getCandles, getCandlesForMany, getIndexHistory } from '@/lib/services/prices';
 import { getSecuritiesBySymbols } from '@/lib/services/universe';
 
@@ -118,6 +118,167 @@ export async function runStressTests(positions: Position[]) {
   return results;
 }
 
+type SimPosition = { symbol: string; marketValue: number; sector: string | null };
+
+/** Risk, concentration, sector mix and stress results for a set of positions plus cash. */
+async function describePositions(positions: SimPosition[], cash: number, benchmark: string, riskFree: number) {
+  const live = positions.filter((position) => position.marketValue > 0);
+  const model = await buildRiskModel(live, benchmark, 252 * 2);
+  const stats = riskStatistics(model, riskFree);
+  const total = live.reduce((sum, position) => sum + position.marketValue, 0) + cash;
+  const sectors = new Map<string, number>();
+  for (const position of live) sectors.set(position.sector ?? 'Other', (sectors.get(position.sector ?? 'Other') ?? 0) + position.marketValue);
+  const stress = await runStressTests(live.map((position) => ({ symbol: position.symbol, value: position.marketValue })));
+  const summary = {
+    total,
+    stats: stats
+      ? {
+          annualReturn: stats.annualReturn,
+          volatility: stats.volatility,
+          beta: stats.beta,
+          sharpe: stats.sharpe,
+          sortino: stats.sortino,
+          maxDrawdown: stats.maxDrawdown,
+          var95: stats.var95?.historical ?? null,
+        }
+      : null,
+    concentration: concentration(live.map((position) => position.marketValue)),
+    sectors: [...sectors.entries()].map(([sector, value]) => ({ sector, weight: total ? value / total : 0 })).sort((a, b) => b.weight - a.weight),
+    stress: stress.map((scenario) => ({ id: scenario.id, name: scenario.name, portfolioReturn: scenario.portfolioReturn, maxDrawdown: scenario.maxDrawdown })),
+    excluded: model.excluded,
+  };
+  return { summary, model, contributions: stats?.contributions ?? [] };
+}
+
+/** Long-run equity risk premium over cash used for the market-implied (CAPM) expected return. */
+const EQUITY_PREMIUM = 0.05;
+/** Share of the blended expected return that comes from this portfolio's own history. */
+const HISTORY_WEIGHT = 0.25;
+
+/** Monte Carlo inputs: up to 10 years of aligned daily returns of the positions, and expected-return anchors. */
+export async function monteCarloModel(positions: Array<{ symbol: string; marketValue: number }>, benchmark: string, totalValue: number, riskFree: number) {
+  const model = await buildRiskModel(positions, benchmark, 252 * 10);
+  const returns = portfolioReturns(model);
+  const rawBeta = model.benchmark ? beta(returns, model.benchmark.returns) : null;
+  const portfolioBeta = rawBeta !== null && Number.isFinite(rawBeta) ? rawBeta : 1;
+  // Cash and bonds are held flat in the simulation, so only the invested share earns a return.
+  const invested = positions.reduce((sum, position) => sum + Math.max(0, position.marketValue), 0);
+  const investedShare = totalValue > 0 ? Math.min(1, invested / totalValue) : 1;
+  const impliedReturn = investedShare * (riskFree + portfolioBeta * EQUITY_PREMIUM);
+  const historicalReturn = investedShare * annualizedReturn(returns);
+  return {
+    symbols: model.symbols,
+    weights: model.weights,
+    returns: model.returns,
+    benchmark: model.benchmark?.symbol ?? null,
+    days: model.dates.length,
+    from: model.dates[0] ?? null,
+    excluded: model.excluded,
+    backfilled: model.backfilled,
+    riskFree,
+    beta: portfolioBeta,
+    impliedReturn,
+    historicalReturn,
+    blendedReturn: (1 - HISTORY_WEIGHT) * impliedReturn + HISTORY_WEIGHT * historicalReturn,
+  };
+}
+
+export type SimFunding = 'new_money' | 'cash' | 'trim';
+
+/**
+ * Apply several dollar buys (positive) / sells (negative) to the holdings. Funding: `new_money` adds the net buys
+ * on top, `cash` draws them from the portfolio's cash, `trim` sells the untouched holdings pro rata so the total
+ * stays the same.
+ */
+export async function applyChanges(holdings: Holding[], cash: number, changes: Array<{ symbol: string; amount: number }>, funding: SimFunding = 'new_money') {
+  const merged = new Map<string, number>();
+  for (const change of changes) merged.set(change.symbol.toUpperCase(), (merged.get(change.symbol.toUpperCase()) ?? 0) + change.amount);
+  const securities = await getSecuritiesBySymbols([...merged.keys()]);
+  const sectorOf = new Map(securities.map((security) => [security.symbol, security.sector ?? null]));
+
+  const before: SimPosition[] = holdings.map((holding) => ({ symbol: holding.symbol, marketValue: holding.marketValue, sector: holding.sector }));
+  const after = before.map((position) => ({ ...position }));
+  const notes: string[] = [];
+  for (const [symbol, amount] of merged) {
+    const existing = after.find((position) => position.symbol === symbol);
+    if (existing) {
+      if (amount < 0 && -amount > existing.marketValue) notes.push(`Sell of ${symbol} capped at the full position.`);
+      existing.marketValue = Math.max(0, existing.marketValue + amount);
+    } else if (amount > 0) {
+      after.push({ symbol, marketValue: amount, sector: sectorOf.get(symbol) ?? null });
+    } else {
+      notes.push(`${symbol} isn't held, so the sell was ignored.`);
+    }
+  }
+  const valueOf = (positions: SimPosition[]) => positions.reduce((sum, position) => sum + position.marketValue, 0);
+  const net = valueOf(after) - valueOf(before);
+  let cashAfter = cash;
+  if (funding === 'cash') {
+    cashAfter = cash - net;
+    if (cashAfter < 0) notes.push(`Needs ${Math.round(net)} but only ${Math.round(cash)} cash: cash goes negative (margin).`);
+  } else if (funding === 'trim' && net !== 0) {
+    const untouched = after.filter((position) => !merged.has(position.symbol));
+    const pool = valueOf(untouched);
+    if (net > pool) notes.push('Not enough in untouched holdings to fund the buys by trimming; the rest is treated as new money.');
+    const scale = pool > 0 ? Math.max(0, 1 - net / pool) : 1;
+    for (const position of untouched) position.marketValue *= scale;
+  }
+  return { merged, sectorOf, before, after, net, cashAfter, notes };
+}
+
+/** Apply changes (see `applyChanges`) and compare the portfolio before and after. */
+export async function simulateChanges(
+  holdings: Holding[],
+  cash: number,
+  benchmark: string,
+  riskFree: number,
+  changes: Array<{ symbol: string; amount: number }>,
+  funding: SimFunding = 'new_money',
+) {
+  const { merged, sectorOf, before, after, net, cashAfter, notes } = await applyChanges(holdings, cash, changes, funding);
+  const [baseline, proposed] = await Promise.all([describePositions(before, cash, benchmark, riskFree), describePositions(after, cashAfter, benchmark, riskFree)]);
+
+  // How each changed name moves with the rest of the portfolio as it stands today (excluding itself), and its
+  // share of risk after the change. Returns come from one model over every symbol involved.
+  const union = [...new Set([...before, ...after].map((position) => position.symbol))];
+  const model = await buildRiskModel(union.map((symbol) => ({ symbol, marketValue: 1 })), benchmark, 252 * 2);
+  const baseValue = new Map(before.map((position) => [position.symbol, position.marketValue]));
+  const restReturns = (exclude: string) => {
+    const weights = model.symbols.map((symbol) => (symbol === exclude ? 0 : (baseValue.get(symbol) ?? 0)));
+    const total = weights.reduce((sum, weight) => sum + weight, 0);
+    return total ? portfolioReturns({ weights: weights.map((weight) => weight / total), returns: model.returns }) : [];
+  };
+  const positionsAfter = new Map(after.map((position) => [position.symbol, position.marketValue]));
+  const changed = [...merged.entries()].map(([symbol, amount]) => {
+    const index = model.symbols.indexOf(symbol);
+    const rest = index >= 0 ? restReturns(symbol) : [];
+    const contribution = proposed.contributions.find((item) => item.symbol === symbol);
+    return {
+      symbol,
+      amount,
+      sector: sectorOf.get(symbol) ?? before.find((position) => position.symbol === symbol)?.sector ?? null,
+      weightBefore: baseline.summary.total ? (baseValue.get(symbol) ?? 0) / baseline.summary.total : 0,
+      weightAfter: proposed.summary.total ? (positionsAfter.get(symbol) ?? 0) / proposed.summary.total : 0,
+      correlationToPortfolio: rest.length ? correlation(model.returns[index], rest) : null,
+      volatility: contribution?.volatility ?? null,
+      beta: contribution?.beta ?? null,
+      riskContribution: contribution?.contribution ?? null,
+    };
+  });
+
+  return {
+    funding,
+    netFlow: net,
+    cashBefore: cash,
+    cashAfter,
+    changes: changed,
+    positionsAfter: after.filter((position) => position.marketValue > 0).map((position) => ({ ...position, weight: proposed.summary.total ? position.marketValue / proposed.summary.total : 0 })),
+    baseline: baseline.summary,
+    proposed: proposed.summary,
+    notes,
+  };
+}
+
 /** Compare risk, concentration, sectors and stress results before and after adding a position. */
 export async function whatIf(
   holdings: Holding[],
@@ -138,32 +299,7 @@ export async function whatIf(
   if (existing) existing.marketValue += addedValue;
   else after.push({ symbol, marketValue: addedValue, sector: security?.sector ?? null });
 
-  const describe = async (positions: typeof before) => {
-    const model = await buildRiskModel(positions, benchmark, 252 * 2);
-    const stats = riskStatistics(model, riskFree);
-    const total = positions.reduce((sum, position) => sum + position.marketValue, 0) + cash;
-    const sectors = new Map<string, number>();
-    for (const position of positions) sectors.set(position.sector ?? 'Other', (sectors.get(position.sector ?? 'Other') ?? 0) + position.marketValue);
-    const stress = await runStressTests(positions.map((position) => ({ symbol: position.symbol, value: position.marketValue })));
-    return {
-      total,
-      stats: stats
-        ? {
-            annualReturn: stats.annualReturn,
-            volatility: stats.volatility,
-            beta: stats.beta,
-            sharpe: stats.sharpe,
-            sortino: stats.sortino,
-            maxDrawdown: stats.maxDrawdown,
-            var95: stats.var95?.historical ?? null,
-          }
-        : null,
-      concentration: concentration(positions.map((position) => position.marketValue)),
-      sectors: [...sectors.entries()].map(([sector, value]) => ({ sector, weight: total ? value / total : 0 })).sort((a, b) => b.weight - a.weight),
-      stress: stress.map((scenario) => ({ id: scenario.id, name: scenario.name, portfolioReturn: scenario.portfolioReturn, maxDrawdown: scenario.maxDrawdown })),
-      excluded: model.excluded,
-    };
-  };
+  const describe = async (positions: typeof before) => (await describePositions(positions, cash, benchmark, riskFree)).summary;
 
   const [baseline, proposed, history] = await Promise.all([describe(before), describe(after), past ? performanceSince(transactions, benchmark, symbol, past) : null]);
   return { symbol, name: security?.name ?? symbol, amount: add.amount, purchase: past ? { ...past, history } : null, baseline, proposed };

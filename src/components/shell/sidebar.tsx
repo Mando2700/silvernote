@@ -21,6 +21,7 @@ import { usePathname } from 'next/navigation';
 
 import { BrandMark, Wordmark } from '@/components/shell/brand';
 import { useShell } from '@/components/shell/providers';
+import { useStatus, type StatusPayload } from '@/components/shell/topbar';
 import { cn } from '@/lib/utils';
 
 const NAV = [
@@ -42,15 +43,35 @@ const NAV = [
   ] },
 ] as const;
 
+/** One-line data pipeline readout: syncing while a job runs, a warning when the last run failed. */
+function PipelineStatus({ status }: { status: StatusPayload }) {
+  const jobs = Object.values(status.jobs);
+  const state = jobs.some((job) => job?.status === 'running') ? 'sync' : jobs.some((job) => job?.status === 'failed') ? 'failed' : 'ok';
+  const tone = state === 'failed' ? 'bg-warning' : state === 'sync' ? 'bg-ion' : 'bg-gain';
+  const label = state === 'failed' ? 'Data job failed' : state === 'sync' ? 'Syncing data' : 'Data pipeline online';
+  return (
+    <div className="mx-4 mb-2 flex items-center gap-2 font-mono text-[9.5px] tracking-[0.16em] text-faint uppercase" role="status">
+      <span className="relative flex size-1.5">
+        <span className={cn('absolute inset-0 animate-ping rounded-full opacity-60 [animation-duration:2.8s]', tone)} />
+        <span className={cn('relative size-1.5 rounded-full', tone)} />
+      </span>
+      {label}
+    </div>
+  );
+}
+
 export function Sidebar({ collapsed, onToggle, user }: { collapsed: boolean; onToggle: () => void; user: { email: string | null; local: boolean } }) {
   const pathname = usePathname();
   const { setAssistantOpen } = useShell();
+  const { status } = useStatus();
   const isActive = (href: string) => (href === '/' ? pathname === '/' : pathname.startsWith(href));
 
   return (
     <aside
       className={cn(
-        'sticky top-0 z-40 flex h-dvh shrink-0 flex-col border-r border-line bg-surface-1/95 backdrop-blur transition-[width] duration-300 ease-[var(--ease-out-expo)]',
+        'sticky top-0 z-40 flex h-dvh shrink-0 flex-col border-r border-line bg-surface-1/80 backdrop-blur-xl transition-[width] duration-300 ease-[var(--ease-out-expo)]',
+        // A faint vertical light along the sidebar's edge.
+        'after:pointer-events-none after:absolute after:inset-y-0 after:-right-px after:w-px after:bg-gradient-to-b after:from-transparent after:via-ion/25 after:to-transparent',
         collapsed ? 'w-[60px]' : 'w-[214px]',
       )}
     >
@@ -76,20 +97,33 @@ export function Sidebar({ collapsed, onToggle, user }: { collapsed: boolean; onT
                   href={item.href}
                   title={collapsed ? item.label : undefined}
                   className={cn(
-                    'relative mb-0.5 flex h-8 items-center gap-2.5 rounded-sm text-[13px] transition-colors',
+                    'group/nav relative mb-0.5 flex h-8 items-center gap-2.5 rounded-sm text-[13px] transition-colors',
                     collapsed ? 'justify-center px-0' : 'px-2.5',
-                    active ? 'bg-white/[0.05] text-ink' : 'text-muted hover:bg-white/[0.03] hover:text-ink-2',
+                    active ? 'text-ink' : 'text-muted hover:bg-white/[0.03] hover:text-ink-2',
                   )}
                 >
                   {active ? (
-                    <motion.span
-                      layoutId="nav-active"
-                      className="absolute top-1.5 bottom-1.5 left-0 w-[2px] rounded-full bg-brand shadow-[0_0_10px_rgba(205,212,222,0.54)]"
-                      transition={{ type: 'spring', stiffness: 500, damping: 40 }}
-                    />
+                    <>
+                      <motion.span
+                        layoutId="nav-active-bg"
+                        className="absolute inset-0 rounded-sm border border-white/[0.06] bg-gradient-to-r from-ion/[0.09] via-white/[0.04] to-transparent shadow-[inset_0_1px_0_rgba(255,255,255,0.05)]"
+                        transition={{ type: 'spring', stiffness: 500, damping: 40 }}
+                      />
+                      <motion.span
+                        layoutId="nav-active"
+                        className="absolute top-1.5 bottom-1.5 left-0 w-[2px] rounded-full bg-gradient-to-b from-white to-ion shadow-[0_0_10px_rgba(159,216,255,0.8),0_0_2px_#fff]"
+                        transition={{ type: 'spring', stiffness: 500, damping: 40 }}
+                      />
+                    </>
                   ) : null}
-                  <Icon className={cn('size-4 shrink-0', active && 'text-brand')} strokeWidth={1.8} />
-                  {!collapsed ? <span className="truncate">{item.label}</span> : null}
+                  <Icon
+                    className={cn(
+                      'relative size-4 shrink-0 transition-transform duration-300 ease-[var(--ease-out-expo)] group-hover/nav:scale-110',
+                      active && 'text-brand drop-shadow-[0_0_6px_rgba(159,216,255,0.6)]',
+                    )}
+                    strokeWidth={1.8}
+                  />
+                  {!collapsed ? <span className="relative truncate transition-transform duration-300 ease-[var(--ease-out-expo)] group-hover/nav:translate-x-0.5">{item.label}</span> : null}
                 </Link>
               );
             })}
@@ -97,16 +131,18 @@ export function Sidebar({ collapsed, onToggle, user }: { collapsed: boolean; onT
         ))}
       </nav>
 
+      {!collapsed && status ? <PipelineStatus status={status} /> : null}
       <div className="border-t border-line p-2">
         <button
           onClick={() => setAssistantOpen(true)}
+          disabled={pathname.startsWith('/assistant')}
           className={cn(
-            'mb-1 flex h-8 w-full items-center gap-2.5 rounded-sm text-[12.5px] text-ink-2 transition-colors hover:bg-brand-wash hover:text-ink',
+            'group/grok mb-1 flex h-8 w-full items-center gap-2.5 rounded-sm text-[12.5px] text-ink-2 transition-colors hover:bg-brand-wash hover:text-ink disabled:pointer-events-none disabled:opacity-40',
             collapsed ? 'justify-center' : 'px-2.5',
           )}
-          title="Ask Grok (⌘J)"
+          title={pathname.startsWith('/assistant') ? 'Grok is open' : 'Ask Grok (⌘J)'}
         >
-          <Sparkles className="size-4 text-brand" strokeWidth={1.8} />
+          <Sparkles className="size-4 text-brand transition-[transform,filter] duration-500 group-hover/grok:rotate-12 group-hover/grok:drop-shadow-[0_0_6px_rgba(159,216,255,0.8)]" strokeWidth={1.8} />
           {!collapsed ? (
             <>
               <span>Ask Grok</span>

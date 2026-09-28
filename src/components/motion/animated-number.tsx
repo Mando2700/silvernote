@@ -31,6 +31,15 @@ export function AnimatedNumber({
   const valid = typeof value === 'number' && Number.isFinite(value);
   // Callers pass inline formatters; read the latest one without restarting the tween.
   const show = useEffectEvent((latest: number) => setAnimated(format(latest)));
+  // A short gain/loss glow each time the value moves (not on first appearance).
+  const [seen, setSeen] = useState(value);
+  const [flash, setFlash] = useState<{ dir: 'up' | 'down'; count: number } | null>(null);
+  if (value !== seen) {
+    setSeen(value);
+    if (typeof seen === 'number' && typeof value === 'number' && Number.isFinite(seen) && Number.isFinite(value) && value !== seen) {
+      setFlash({ dir: value > seen ? 'up' : 'down', count: (flash?.count ?? 0) + 1 });
+    }
+  }
 
   useEffect(() => {
     if (!valid || reduced || !inView) return;
@@ -48,7 +57,13 @@ export function AnimatedNumber({
   const text = !valid ? '—' : reduced ? format(value) : (animated ?? format(from === 'near' ? value * 0.985 : 0));
   return (
     <span ref={ref} className={cn('inline-block', className)}>
-      {text}
+      {flash ? (
+        <span key={flash.count} className={flash.dir === 'up' ? 'tick-up' : 'tick-down'}>
+          {text}
+        </span>
+      ) : (
+        text
+      )}
     </span>
   );
 }

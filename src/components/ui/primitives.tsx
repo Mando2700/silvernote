@@ -29,7 +29,12 @@ export function PanelHeader({
   return (
     <div className={cn('flex items-start justify-between gap-3 px-4 pt-3.5 pb-3', className)}>
       <div className="min-w-0">
-        {kicker ? <div className="kicker mb-1">{kicker}</div> : null}
+        {kicker ? (
+          <div className="kicker mb-1 flex min-w-0 items-start gap-1.5">
+            <span className="mt-[4px] h-[5px] w-[5px] shrink-0 rotate-45 border border-brand/60 bg-brand/15" aria-hidden />
+            <span className="min-w-0">{kicker}</span>
+          </div>
+        ) : null}
         {title ? <h2 className="truncate text-[14px] font-semibold tracking-[-0.01em] text-ink">{title}</h2> : null}
         {children}
       </div>
@@ -72,8 +77,9 @@ export function Kbd({ children, className }: { children: ReactNode; className?: 
 
 export function Skeleton({ className }: { className?: string }) {
   return (
-    <div className={cn('relative overflow-hidden rounded-sm bg-white/[0.04]', className)}>
-      <div className="absolute inset-0 -translate-x-full animate-sweep bg-gradient-to-r from-transparent via-white/[0.05] to-transparent" />
+    <div className={cn('relative overflow-hidden rounded-sm bg-white/[0.035] [background-image:repeating-linear-gradient(0deg,transparent_0_3px,rgb(255_255_255/0.012)_3px_4px)]', className)}>
+      <div className="absolute inset-0 -translate-x-full animate-sweep bg-gradient-to-r from-transparent via-ion/[0.07] to-transparent" />
+      <div className="absolute inset-y-0 left-0 w-px animate-scan bg-gradient-to-b from-transparent via-ion/50 to-transparent shadow-[0_0_10px_var(--color-ion)]" />
     </div>
   );
 }
@@ -81,7 +87,12 @@ export function Skeleton({ className }: { className?: string }) {
 export function EmptyState({ icon, title, body, action, className }: { icon?: ReactNode; title: string; body?: ReactNode; action?: ReactNode; className?: string }) {
   return (
     <div className={cn('flex flex-col items-center justify-center gap-2 px-6 py-10 text-center', className)}>
-      {icon ? <div className="mb-1 grid size-10 place-items-center rounded-md border border-line-strong bg-surface-3 text-muted">{icon}</div> : null}
+      {icon ? (
+        <div className="relative mb-1 grid size-11 place-items-center rounded-md border border-line-strong bg-surface-3 text-brand-soft shadow-[0_0_24px_-6px_rgba(159,216,255,0.35)]">
+          <span className="absolute -inset-2 animate-[spin_14s_linear_infinite] rounded-full border border-dashed border-white/[0.08]" aria-hidden />
+          {icon}
+        </div>
+      ) : null}
       <div className="text-[13.5px] font-medium text-ink">{title}</div>
       {body ? <div className="max-w-sm text-[12.5px] leading-relaxed text-muted">{body}</div> : null}
       {action ? <div className="mt-2">{action}</div> : null}
@@ -126,7 +137,10 @@ export function Switch({ checked, onChange, label }: { checked: boolean; onChang
       aria-checked={checked}
       aria-label={label}
       onClick={() => onChange(!checked)}
-      className={cn('relative h-4.5 w-8 shrink-0 rounded-full border transition-colors', checked ? 'border-brand/60 bg-brand/80' : 'border-line-strong bg-surface-4')}
+      className={cn(
+        'relative h-4.5 w-8 shrink-0 rounded-full border transition-[background-color,border-color,box-shadow] duration-300',
+        checked ? 'border-brand/60 bg-brand/80 shadow-[0_0_12px_-2px_rgba(159,216,255,0.55)]' : 'border-line-strong bg-surface-4',
+      )}
     >
       <motion.span
         className="absolute top-[2px] left-[2px] size-3 rounded-full bg-white shadow"
@@ -215,7 +229,7 @@ export function Tabs<T extends string>({
             {active ? (
               <motion.span
                 layoutId={`tab-${id}`}
-                className="absolute inset-x-2 -bottom-px h-[2px] rounded-full bg-brand shadow-[0_0_12px_rgba(205,212,222,0.48)]"
+                className="absolute inset-x-2 -bottom-px h-[2px] rounded-full bg-gradient-to-r from-ion/70 via-white to-brand shadow-[0_0_12px_rgba(159,216,255,0.55),0_-4px_14px_-2px_rgba(205,212,222,0.25)]"
                 transition={{ type: 'spring', stiffness: 480, damping: 36 }}
               />
             ) : null}

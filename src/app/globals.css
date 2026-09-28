@@ -45,6 +45,11 @@
   --color-warning: #fab219;
   --color-critical: #e5484d;
 
+  /* Ion: a cold, barely-there blue that tints glows, scan lines and live indicators so the
+     silver reads as lit rather than grey. Never used for data. */
+  --color-ion: #9fd8ff;
+  --color-ion-soft: rgb(159 216 255 / 0.14);
+
   --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
   --font-mono: var(--font-geist-mono), ui-monospace, 'SF Mono', monospace;
 
@@ -59,7 +64,13 @@
   --animate-pulse-dot: pulse-dot 2.4s ease-in-out infinite;
   --animate-sweep: sweep 2.8s linear infinite;
   --animate-fade-up: fade-up 0.5s var(--ease-out-expo) both;
+  --animate-scan: scan 2.2s var(--ease-out-expo) infinite;
 
+  @keyframes scan {
+    from { transform: translateX(-100%); opacity: 0; }
+    20% { opacity: 1; }
+    to { transform: translateX(260%); opacity: 0; }
+  }
   @keyframes pulse-dot {
     0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgb(205 212 222 / 0.4); }
     50% { opacity: 0.7; box-shadow: 0 0 0 5px rgb(205 212 222 / 0); }
@@ -105,8 +116,30 @@ body {
   mask-image: radial-gradient(ellipse 120% 80% at 50% 0%, black 30%, transparent 85%);
 }
 
+/* Slow-moving light behind the workspace: two soft silver/ion blooms that drift and breathe. */
+.aurora {
+  background:
+    radial-gradient(38% 42% at 22% 8%, rgb(205 212 222 / 0.09), transparent 70%),
+    radial-gradient(30% 36% at 78% 0%, rgb(159 216 255 / 0.06), transparent 70%),
+    radial-gradient(40% 30% at 60% 100%, rgb(159 216 255 / 0.035), transparent 70%);
+  animation: aurora 26s ease-in-out infinite alternate;
+  will-change: transform, opacity;
+}
+@keyframes aurora {
+  0% { transform: translate3d(0, 0, 0) scale(1); opacity: 0.85; }
+  50% { transform: translate3d(3%, 2%, 0) scale(1.06); opacity: 1; }
+  100% { transform: translate3d(-3%, 1%, 0) scale(1.02); opacity: 0.8; }
+}
+
+/* Film grain: breaks up banding in the dark gradients. */
+.noise {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.5'/%3E%3C/svg%3E");
+  opacity: 0.035;
+  mix-blend-mode: overlay;
+}
+
 ::selection {
-  background: rgb(205 212 222 / 0.28);
+  background: rgb(159 216 255 / 0.26);
   color: #fff;
 }
 
@@ -119,7 +152,7 @@ body {
 
 * {
   scrollbar-width: thin;
-  scrollbar-color: rgb(255 255 255 / 0.12) transparent;
+  scrollbar-color: rgb(205 212 222 / 0.16) transparent;
 }
 
 @utility num {
@@ -136,9 +169,154 @@ body {
 }
 
 @utility panel {
-  background: linear-gradient(180deg, rgb(255 255 255 / 0.018), rgb(255 255 255 / 0) 60%), var(--color-surface-2);
+  /* The first layer is a pointer-following spotlight; --mx/--my are set by the shell's
+     pointer tracker on the panel under the cursor, and default off-screen. */
+  background:
+    radial-gradient(420px circle at var(--mx, -999px) var(--my, -999px), rgb(205 212 222 / 0.045), transparent 60%),
+    linear-gradient(180deg, rgb(255 255 255 / 0.022), rgb(255 255 255 / 0) 60%),
+    var(--color-surface-2);
   border: 1px solid var(--color-line);
   border-radius: var(--radius-md);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.035), 0 1px 0 rgb(0 0 0 / 0.4);
+}
+
+/* Panels get a lit edge that follows the pointer, and HUD corner ticks. Lives in the components
+   layer so positioning utilities (absolute, sticky…) on a panel still win. */
+@layer components {
+  .panel {
+    position: relative;
+  }
+  .panel::before {
+    content: '';
+    position: absolute;
+    inset: -1px;
+    border-radius: inherit;
+    padding: 1px;
+    background: radial-gradient(260px circle at var(--mx, -999px) var(--my, -999px), rgb(236 241 248 / 0.4), rgb(159 216 255 / 0.12) 40%, transparent 70%);
+    -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+    -webkit-mask-composite: xor;
+    mask-composite: exclude;
+    opacity: 0;
+    transition: opacity 0.35s var(--ease-out-expo);
+    pointer-events: none;
+    z-index: 1;
+  }
+  .panel:hover::before {
+    opacity: 1;
+  }
+  /* Four 7px corner ticks, drawn with gradients so no extra markup is needed. */
+  .hud::after {
+    --tick: rgb(205 212 222 / 0.55);
+    content: '';
+    position: absolute;
+    inset: -1px;
+    border-radius: inherit;
+    pointer-events: none;
+    background:
+      linear-gradient(var(--tick), var(--tick)) top left / 7px 1px,
+      linear-gradient(var(--tick), var(--tick)) top left / 1px 7px,
+      linear-gradient(var(--tick), var(--tick)) top right / 7px 1px,
+      linear-gradient(var(--tick), var(--tick)) top right / 1px 7px,
+      linear-gradient(var(--tick), var(--tick)) bottom left / 7px 1px,
+      linear-gradient(var(--tick), var(--tick)) bottom left / 1px 7px,
+      linear-gradient(var(--tick), var(--tick)) bottom right / 7px 1px,
+      linear-gradient(var(--tick), var(--tick)) bottom right / 1px 7px;
+    background-repeat: no-repeat;
+    opacity: 0.55;
+    transition: opacity 0.3s, inset 0.4s var(--ease-out-expo);
+    z-index: 1;
+  }
+  .hud:hover::after {
+    opacity: 1;
+    inset: -4px;
+  }
+}
+
+/* Page sections rise in one after another. */
+.stagger > * {
+  /* backwards, not both: once done, the element's own transform/filter apply again. */
+  animation: stagger-in 0.6s var(--ease-out-expo) backwards;
+}
+.stagger > *:nth-child(1) { animation-delay: 0ms; }
+.stagger > *:nth-child(2) { animation-delay: 60ms; }
+.stagger > *:nth-child(3) { animation-delay: 120ms; }
+.stagger > *:nth-child(4) { animation-delay: 180ms; }
+.stagger > *:nth-child(5) { animation-delay: 240ms; }
+.stagger > *:nth-child(6) { animation-delay: 300ms; }
+.stagger > *:nth-child(n + 7) { animation-delay: 340ms; }
+@keyframes stagger-in {
+  from { opacity: 0; transform: translateY(10px); filter: blur(4px); }
+  to { opacity: 1; transform: none; filter: none; }
+}
+
+/* Live value flash: a short glow when a number ticks up or down. */
+.tick-up { animation: tick-up 1.1s var(--ease-out-expo); }
+.tick-down { animation: tick-down 1.1s var(--ease-out-expo); }
+@keyframes tick-up {
+  0% { text-shadow: 0 0 14px var(--color-gain); color: var(--color-gain); }
+  100% { text-shadow: none; }
+}
+@keyframes tick-down {
+  0% { text-shadow: 0 0 14px var(--color-loss); color: var(--color-loss); }
+  100% { text-shadow: none; }
+}
+
+/* Assistant: shimmering status text and a blinking caret at the end of a streaming answer. */
+.thinking-shimmer {
+  background: linear-gradient(90deg, var(--color-muted) 0%, var(--color-muted) 35%, #fff 50%, var(--color-muted) 65%, var(--color-muted) 100%);
+  background-size: 250% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: thinking-shimmer 1.6s linear infinite;
+}
+@keyframes thinking-shimmer {
+  from { background-position: 100% 0; }
+  to { background-position: -150% 0; }
+}
+.streaming-caret > :last-child::after {
+  content: '';
+  display: inline-block;
+  width: 7px;
+  height: 1.05em;
+  margin-left: 3px;
+  vertical-align: -0.15em;
+  border-radius: 1px;
+  background: var(--color-brand);
+  box-shadow: 0 0 8px var(--color-ion);
+  animation: caret-blink 1s steps(2, start) infinite;
+}
+@keyframes caret-blink {
+  to { visibility: hidden; }
+}
+
+/* List rows: a lit bar slides in on the left edge on hover. */
+.row-glow {
+  position: relative;
+}
+.row-glow::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 20%;
+  bottom: 20%;
+  width: 2px;
+  border-radius: 2px;
+  background: linear-gradient(180deg, #fff, var(--color-ion));
+  box-shadow: 0 0 8px var(--color-ion);
+  transform: scaleY(0);
+  opacity: 0;
+  transition: transform 0.3s var(--ease-out-expo), opacity 0.2s;
+}
+.row-glow:hover::before {
+  transform: scaleY(1);
+  opacity: 1;
+}
+
+/* Top route progress line. */
+.route-progress {
+  background: linear-gradient(90deg, transparent, var(--color-ion) 40%, #fff 80%, var(--color-brand));
+  box-shadow: 0 0 12px rgb(159 216 255 / 0.7), 0 0 2px #fff;
 }
 
 @utility glow-brand {
@@ -294,8 +472,11 @@ body {
 .prose-rn code { font-family: var(--font-mono); font-size: 0.85em; background: var(--color-surface-4); padding: 0.1em 0.35em; border-radius: 3px; }
 .prose-rn pre { background: var(--color-surface-1); border: 1px solid var(--color-line); padding: 0.8em; border-radius: 6px; overflow-x: auto; }
 .prose-rn blockquote { border-left: 2px solid var(--color-brand); padding-left: 0.9em; color: var(--color-muted); }
-.prose-rn table { width: 100%; border-collapse: collapse; font-size: 12.5px; margin: 0.7em 0; }
-.prose-rn th, .prose-rn td { border-bottom: 1px solid var(--color-line); padding: 0.35em 0.5em; text-align: left; }
+/* Wide tables (e.g. AI comparisons) scroll sideways instead of overflowing the panel. */
+.prose-rn table { display: block; max-width: 100%; overflow-x: auto; border-collapse: collapse; font-size: 12.5px; margin: 0.7em 0; font-variant-numeric: tabular-nums; }
+.prose-rn th, .prose-rn td { border-bottom: 1px solid var(--color-line); padding: 0.35em 0.5em; text-align: left; white-space: nowrap; }
+.prose-rn td { white-space: normal; }
+.prose-rn tbody tr:hover { background: var(--color-surface-2); }
 .prose-rn th { color: var(--color-muted); font-weight: 500; }
 .prose-rn hr { border: none; border-top: 1px solid var(--color-line); margin: 1.2em 0; }
 

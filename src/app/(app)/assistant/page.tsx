@@ -6,5 +6,5 @@ import { env } from '@/lib/env';
 export const metadata: Metadata = { title: 'Grok' };
 
 export default function Assistant() {
-  return <AssistantPage configured={Boolean(env.xaiKey)} model={env.xaiModel} />;
+  return <AssistantPage configured={Boolean(env.xaiKey)} models={{ fast: env.xaiFastLiteModel, standard: env.xaiFastModel, thinking: env.xaiModel }} />;
 }

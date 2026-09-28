@@ -1,5 +1,6 @@
 import 'server-only';
 
+import type { TokenUsage } from '@/lib/ai/pricing';
 import type { ToolDefinition } from '@/lib/ai/tools';
 import { env } from '@/lib/env';
 
@@ -63,9 +64,28 @@ export type ToolRunner = { definitions: ToolDefinition[]; run: (name: string, ar
 type FunctionCall = { type: 'function_call'; call_id: string; name: string; arguments: string };
 
 /** Most tool rounds per answer, so a confused model can't loop forever. */
-const MAX_TOOL_ROUNDS = 8;
+const MAX_TOOL_ROUNDS = 12;
 
-async function* viaResponses(messages: ChatMessage[], model: string, signal?: AbortSignal, tools?: ToolRunner) {
+type UsageSink = (usage: TokenUsage) => void;
+
+function addUsage(sink: UsageSink | undefined, raw: unknown) {
+  if (!sink || !raw || typeof raw !== 'object') return;
+  const usage = raw as {
+    input_tokens?: number;
+    output_tokens?: number;
+    prompt_tokens?: number;
+    completion_tokens?: number;
+    input_tokens_details?: { cached_tokens?: number };
+    prompt_tokens_details?: { cached_tokens?: number };
+  };
+  sink({
+    input: usage.input_tokens ?? usage.prompt_tokens ?? 0,
+    output: usage.output_tokens ?? usage.completion_tokens ?? 0,
+    cached: usage.input_tokens_details?.cached_tokens ?? usage.prompt_tokens_details?.cached_tokens ?? 0,
+  });
+}
+
+async function* viaResponses(messages: ChatMessage[], model: string, signal?: AbortSignal, tools?: ToolRunner, onUsage?: UsageSink) {
   const input: unknown[] = [...messages];
   for (let round = 0; ; round += 1) {
     // After the last allowed round, drop the functions so Grok has to answer with what it has.
@@ -86,7 +106,8 @@ async function* viaResponses(messages: ChatMessage[], model: string, signal?: Ab
         text += event.delta;
         yield event.delta;
       } else if (type === 'response.output_item.done' || type === 'response.completed') {
-        const items = type === 'response.completed' ? ((event.response as { output?: unknown[] } | undefined)?.output ?? []) : [event.item];
+        if (type === 'response.completed') addUsage(onUsage, (event.response as { usage?: unknown } | undefined)?.usage);
+        const items = type === 'response.completed' ?((event.response as { output?: unknown[] } | undefined)?.output ?? []) : [event.item];
         for (const item of items as Array<Partial<FunctionCall>>) {
           if (item?.type === 'function_call' && item.call_id && item.name) {
             calls.set(item.call_id, { type: 'function_call', call_id: item.call_id, name: item.name, arguments: item.arguments ?? '{}' });
@@ -104,15 +125,16 @@ async function* viaResponses(messages: ChatMessage[], model: string, signal?: Ab
   }
 }
 
-async function* viaChatCompletions(messages: ChatMessage[], model: string, signal?: AbortSignal) {
+async function* viaChatCompletions(messages: ChatMessage[], model: string, signal?: AbortSignal, onUsage?: UsageSink) {
   const response = await fetch(`${BASE}/chat/completions`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${env.xaiKey}` },
-    body: JSON.stringify({ model, messages, stream: true }),
+    body: JSON.stringify({ model, messages, stream: true, stream_options: { include_usage: true } }),
     signal,
   });
   if (!response.ok) throw new GrokError(response.status, await errorText(response));
   for await (const event of sse(response)) {
+    addUsage(onUsage, event.usage);
     const choices = event.choices as Array<{ delta?: { content?: string } }> | undefined;
     const delta = choices?.[0]?.delta?.content;
     if (delta) yield delta;
@@ -124,12 +146,15 @@ async function* viaChatCompletions(messages: ChatMessage[], model: string, signa
  * `tools` Grok calls along the way, and falls back to the legacy Chat Completions endpoint (no
  * tools) if the account or model doesn't support it.
  */
-export async function* streamGrok(messages: ChatMessage[], options: { model?: string; signal?: AbortSignal; tools?: ToolRunner } = {}) {
+export async function* streamGrok(
+  messages: ChatMessage[],
+  options: { model?: string; signal?: AbortSignal; tools?: ToolRunner; onUsage?: (usage: TokenUsage) => void } = {},
+) {
   if (!env.xaiKey) throw new GrokError(401, 'XAI_API_KEY is not set.');
   const model = options.model || env.xaiModel;
   let produced = false;
   try {
-    for await (const chunk of viaResponses(messages, model, options.signal, options.tools)) {
+    for await (const chunk of viaResponses(messages, model, options.signal, options.tools, options.onUsage)) {
       produced = true;
       yield chunk;
     }
@@ -137,7 +162,7 @@ export async function* streamGrok(messages: ChatMessage[], options: { model?: st
   } catch (error) {
     if (produced || (error instanceof GrokError && [401, 403, 429].includes(error.status))) throw error;
   }
-  yield* viaChatCompletions(messages, model, options.signal);
+  yield* viaChatCompletions(messages, model, options.signal, options.onUsage);
 }
 
 export type VisionImage = { base64: string; mimeType: string };

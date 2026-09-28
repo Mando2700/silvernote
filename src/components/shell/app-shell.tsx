@@ -3,6 +3,7 @@
 import dynamic from 'next/dynamic';
 import { useSyncExternalStore, type ReactNode } from 'react';
 
+import { Ambient, RouteProgress, usePanelSpotlight } from '@/components/shell/ambient';
 import { CommandPalette } from '@/components/shell/command-palette';
 import { Sidebar } from '@/components/shell/sidebar';
 import { Topbar } from '@/components/shell/topbar';
@@ -43,14 +44,12 @@ function writeSidebar(collapsed: boolean) {
 export function AppShell({ user, children }: { user: { email: string | null; local: boolean }; children: ReactNode }) {
   const collapsed = useSyncExternalStore(subscribeSidebar, readSidebar, () => false);
   const toggle = () => writeSidebar(!collapsed);
+  usePanelSpotlight();
 
   return (
     <div className="relative flex min-h-dvh">
-      <div className="grid-backdrop pointer-events-none fixed inset-0 z-0" aria-hidden />
-      <div
-        className="pointer-events-none fixed -top-40 left-1/3 z-0 h-80 w-[640px] rounded-full bg-brand/10 blur-[120px]"
-        aria-hidden
-      />
+      <Ambient />
+      <RouteProgress />
       <Sidebar collapsed={collapsed} onToggle={toggle} user={user} />
       <div className="relative z-10 flex min-w-0 flex-1 flex-col">
         <Topbar />

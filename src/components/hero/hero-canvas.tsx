@@ -50,7 +50,10 @@ const FRAGMENT = /* glsl */ `
     float shade = smoothstep(0.05, 0.8, -vLight);
     vec3 base = vec3(0.5, 0.54, 0.62);
     vec3 silver = vec3(0.9, 0.93, 0.99);
+    vec3 ion = vec3(0.62, 0.85, 1.0);
     vec3 color = mix(base * 0.7, silver, clamp(peak * 0.55 + lit * 0.6, 0.0, 1.0)) + crest * vec3(0.1, 0.12, 0.16);
+    // The back slope picks up a cold ion tint so the fold reads as lit from two sides.
+    color = mix(color, ion * 0.8, shade * 0.35 + crest * 0.15);
     float fade = smoothstep(80.0, 26.0, vDepth) * smoothstep(3.0, 9.0, vDepth);
     float strength = 0.34 + peak * 0.3 + lit * 0.55 + crest * 0.3 - shade * 0.22;
     gl_FragColor = vec4(color, alpha * fade * strength);
