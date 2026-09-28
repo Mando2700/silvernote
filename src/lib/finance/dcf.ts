@@ -14,7 +14,10 @@ export type DcfAssumptions = {
   capexPctRevenue: number;
   /** Net working capital as a share of revenue: growth ties up this much of each new dollar of revenue. */
   nwcPctRevenue: number;
-  /** Stock-based compensation as a share of revenue, deducted as a real cost when `deductSbc` is on. */
+  /**
+   * Stock-based compensation as a share of revenue. GAAP EBIT already expenses it, so with `deductSbc` on it stays a cost;
+   * with it off it is added back as a non-cash charge (as reported free cash flow does).
+   */
   sbcPctRevenue: number;
   deductSbc: boolean;
   wacc: number;
@@ -80,8 +83,8 @@ export function runDcf(a: DcfAssumptions): DcfResult {
     const da = revenue * a.daPctRevenue;
     const capex = revenue * a.capexPctRevenue;
     const changeNwc = (revenue - previous) * a.nwcPctRevenue;
-    const sbc = a.deductSbc ? revenue * a.sbcPctRevenue : 0;
-    const fcf = nopat + da - capex - changeNwc - sbc;
+    const sbc = revenue * a.sbcPctRevenue;
+    const fcf = nopat + da - capex - changeNwc + (a.deductSbc ? 0 : sbc);
     const period = a.midYear ? index + 0.5 : index + 1;
     const discountFactor = 1 / (1 + a.wacc) ** period;
     years.push({ year: index + 1, revenue, growth, ebit, nopat, da, capex, changeNwc, sbc, fcf, discountFactor, presentValue: fcf * discountFactor });
@@ -97,6 +100,8 @@ export function runDcf(a: DcfAssumptions): DcfResult {
   const equityValue =
     enterpriseValue + a.cash - a.debt - (a.includeLeases ? a.leases : 0) - a.minorityInterest - a.preferredStock;
   const lastEbitda = last ? last.ebit + last.da : 0;
+  // A perpetuity of losses is not a valuation: keep the forecast visible but withhold the per-share value.
+  const error = terminalFcf <= 0 ? 'Final-year free cash flow is negative, so there is no terminal value. Raise the margin or cut capex.' : null;
   return {
     years,
     pvForecast,
@@ -104,10 +109,10 @@ export function runDcf(a: DcfAssumptions): DcfResult {
     pvTerminal,
     enterpriseValue,
     equityValue,
-    perShare: a.shares > 0 ? equityValue / a.shares : null,
-    terminalShare: enterpriseValue !== 0 ? pvTerminal / enterpriseValue : 0,
-    impliedExitMultiple: lastEbitda > 0 ? terminalValue / lastEbitda : null,
-    error: null,
+    perShare: a.shares > 0 && !error ? equityValue / a.shares : null,
+    terminalShare: enterpriseValue > 0 ? pvTerminal / enterpriseValue : 0,
+    impliedExitMultiple: lastEbitda > 0 && terminalValue > 0 ? terminalValue / lastEbitda : null,
+    error,
   };
 }
 
@@ -131,4 +136,30 @@ export function waccFromInputs(input: {
   const capital = Math.max(input.marketCap, 0) + Math.max(input.debt, 0);
   const debtWeight = capital > 0 ? Math.max(input.debt, 0) / capital : 0;
   return { costOfEquity, afterTaxDebt, debtWeight, wacc: costOfEquity * (1 - debtWeight) + afterTaxDebt * debtWeight };
+}
+
+/** What a reverse DCF solves for: the final-year EBIT margin (faded linearly from year 1), or a shift added to every year's growth. */
+export type SolveLever = 'margin' | 'growth';
+
+export function applyLever(a: DcfAssumptions, lever: SolveLever, value: number): DcfAssumptions {
+  if (lever === 'growth') return { ...a, growth: a.growth.map((growth) => growth + value) };
+  return { ...a, ebitMargin: fade(a.ebitMargin[0] ?? value, value, a.growth.length) };
+}
+
+/**
+ * The lever value at which value per share equals `targetPerShare` (in the model's currency), by bisection.
+ * Null when no value in the search range reaches the target.
+ */
+export function solveForPerShare(a: DcfAssumptions, targetPerShare: number, lever: SolveLever): number | null {
+  const [min, max] = lever === 'margin' ? [-0.2, 0.9] : [-0.3, 0.6];
+  const valueAt = (x: number) => runDcf(applyLever(a, lever, x)).perShare ?? -Infinity;
+  let lo = min;
+  let hi = max;
+  if (valueAt(lo) > targetPerShare || valueAt(hi) < targetPerShare) return null;
+  for (let step = 0; step < 60; step += 1) {
+    const mid = (lo + hi) / 2;
+    if (valueAt(mid) < targetPerShare) lo = mid;
+    else hi = mid;
+  }
+  return (lo + hi) / 2;
 }

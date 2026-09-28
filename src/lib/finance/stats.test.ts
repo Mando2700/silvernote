@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   annualizedVolatility,
+  backfillReturns,
   beta,
   cholesky,
   concentration,
@@ -101,5 +102,33 @@ describe('risk measures', () => {
         expect(rebuilt).toBeCloseTo(matrix[row][col], 12);
       }
     }
+  });
+});
+
+describe('backfillReturns', () => {
+  it('fills pre-listing days from beta × benchmark without extending the short sample alpha', () => {
+    const market = new Map<number, number>();
+    for (let day = 1; day <= 200; day += 1) market.set(day, day % 2 ? 0.01 : -0.01);
+    const young = new Map<number, number>();
+    // Listed on day 141: 2× the market plus a hot +1%/day run.
+    for (let day = 141; day <= 200; day += 1) young.set(day, 2 * (market.get(day) as number) + 0.01);
+    const old = new Map(market);
+
+    const { dates, matrix, firstReal } = backfillReturns([old, young], market);
+    expect(dates).toHaveLength(200);
+    expect(firstReal).toEqual([0, 140]);
+    expect(matrix[1].slice(140)).toEqual([...young.values()]);
+    const early = matrix[1].slice(0, 140);
+    early.forEach((value, index) => expect(value).toBeCloseTo(2 * (market.get(index + 1) as number), 10));
+  });
+});
+
+describe('multi-day value-at-risk', () => {
+  it('scales volatility by √days and the mean by days', () => {
+    const returns = Array.from({ length: 200 }, (_, index) => (index % 2 ? 0.012 : -0.008));
+    const one = valueAtRisk(returns, 0.95, 1)!;
+    const ten = valueAtRisk(returns, 0.95, 10)!;
+    const sd = one.parametric + 0.002; // z·σ, since the mean daily return is 0.002
+    expect(ten.parametric).toBeCloseTo(sd * Math.sqrt(10) - 0.002 * 10, 10);
   });
 });

@@ -6,6 +6,7 @@ import { useState, type ReactNode } from 'react';
 import { toast } from 'sonner';
 import useSWR from 'swr';
 
+import { IbkrPanel } from '@/components/settings/ibkr';
 import { Page } from '@/components/shell/page';
 import { useShell, type Preferences } from '@/components/shell/providers';
 import { Button } from '@/components/ui/button';
@@ -15,7 +16,7 @@ import { relativeTime } from '@/lib/format';
 import { MARKET_PALETTES } from '@/lib/theme';
 import { cn } from '@/lib/utils';
 
-type JobKind = 'universe' | 'fundamentals' | 'scores';
+type JobKind = 'universe' | 'fundamentals' | 'scores' | 'panel';
 type Job = { id: string; kind: JobKind; status: 'running' | 'done' | 'failed' | 'cancelled'; total: number; done: number; message: string | null; error: string | null; finished_at: string | null; started_at: string | null };
 type Status = {
   user: { email: string | null; local: boolean };
@@ -47,6 +48,7 @@ const JOBS: Array<{ kind: JobKind; title: string; body: string; schedule: string
   { kind: 'universe', title: 'Market universe', body: 'Every US listing with price, change, market value, sector and industry (Nasdaq).', schedule: 'Every 10 min in market hours, 6 h otherwise' },
   { kind: 'fundamentals', title: 'SEC fundamentals', body: 'Standardized XBRL frames for the whole market from SEC EDGAR.', schedule: 'Weekly' },
   { kind: 'scores', title: 'SilverNote Scores', body: 'Recomputes the score for every company with enough data, largest first.', schedule: 'Weekly, after fundamentals' },
+  { kind: 'panel', title: 'Backtest history', body: 'Month-end scores for the 500 largest companies over ten years, rebuilt from the filings public at each date.', schedule: 'On demand (Backtest page)' },
 ];
 
 export function Settings() {
@@ -163,6 +165,8 @@ export function Settings() {
         </div>
 
         <div className="flex flex-col gap-4">
+          <IbkrPanel />
+
           <Panel>
             <PanelHeader kicker="Data" title="Sources" />
             {!status ? (

@@ -2,6 +2,7 @@ import { z } from 'zod';
 
 import { body, route, symbolSchema } from '@/lib/api';
 import { HttpError } from '@/lib/auth';
+import { latestValidDate } from '@/lib/dates';
 import { q1, tx } from '@/lib/db';
 import { getPortfolio } from '@/lib/services/portfolio';
 
@@ -22,7 +23,7 @@ const schema = z.object({
 /** Save reviewed photo-import rows as opening buys (plus cash) in a new or existing portfolio. */
 export const POST = route(async ({ request, user }) => {
   const input = await body(request, schema);
-  if (input.tradedAt > new Date().toISOString().slice(0, 10)) throw new HttpError(400, 'Trade date cannot be in the future.');
+  if (input.tradedAt > latestValidDate()) throw new HttpError(400, 'Trade date cannot be in the future.');
   if (!input.rows.length && !input.cash) throw new HttpError(400, 'Nothing to import.');
   if ('portfolioId' in input.target) await getPortfolio(user.id, input.target.portfolioId);
   const target = input.target;
@@ -43,8 +44,9 @@ export const POST = route(async ({ request, user }) => {
     }
     for (const row of input.rows) {
       await db.query(
-        `insert into public.transactions (portfolio_id, user_id, symbol, side, quantity, price, fees, traded_at, note)
-         values ($1, $2, $3, 'buy', $4, $5, 0, $6::date, 'Imported from photo')`,
+        // Marked as an opening balance: the shares are today's holdings, bought on unknown dates.
+        `insert into public.transactions (portfolio_id, user_id, symbol, side, quantity, price, fees, traded_at, note, broker_execution_id)
+         values ($1, $2, $3, 'buy', $4, $5, 0, $6::date, 'Imported from photo', 'import:opening:' || gen_random_uuid()::text)`,
         [id, user.id, row.symbol, row.quantity, row.price, input.tradedAt],
       );
     }

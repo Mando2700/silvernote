@@ -1,6 +1,8 @@
 import 'server-only';
 
+import { todayInNewYork } from '@/lib/dates';
 import { q } from '@/lib/db';
+import { getLiveQuote } from '@/lib/services/market';
 
 export type AlertKind = 'price_above' | 'price_below' | 'change_pct' | 'score_above' | 'score_below' | 'score_change';
 
@@ -34,10 +36,18 @@ async function fire(alert: Pick<AlertRow, 'id' | 'user_id' | 'symbol' | 'kind'>,
 export async function evaluatePriceAlerts() {
   const rows = await q<AlertRow & { price: number | null; change_pct: number | null; name: string }>(
     `select a.*, s.price, s.change_pct, s.name from public.alerts a
-     join public.securities s on s.symbol = a.symbol
+     left join public.securities s on s.symbol = a.symbol
      where a.active and a.kind in ('price_above', 'price_below', 'change_pct')`,
   );
+  // Funds and other symbols outside the stock universe are priced from a live quote.
+  for (const alert of rows) {
+    if (alert.price !== null && alert.price !== undefined) continue;
+    const quote = await getLiveQuote(alert.symbol).catch(() => null);
+    alert.price = quote?.price ?? null;
+    alert.change_pct = quote?.changePct ?? null;
+  }
   let fired = 0;
+  const today = todayInNewYork();
   for (const alert of rows) {
     if (alert.price === null) continue;
     if (alert.kind === 'price_above' && alert.price >= alert.threshold) {
@@ -47,7 +57,7 @@ export async function evaluatePriceAlerts() {
       await fire(alert, `${alert.symbol} fell to ${money(alert.price)}, below your ${money(alert.threshold)} alert.`, alert.price, true);
       fired += 1;
     } else if (alert.kind === 'change_pct' && alert.change_pct !== null && Math.abs(alert.change_pct) >= alert.threshold) {
-      const firedToday = alert.triggered_at && new Date(alert.triggered_at).toDateString() === new Date().toDateString();
+      const firedToday = alert.triggered_at && todayInNewYork(new Date(alert.triggered_at)) === today;
       if (!firedToday) {
         const sign = alert.change_pct > 0 ? '+' : '−';
         await fire(alert, `${alert.symbol} moved ${sign}${Math.abs(alert.change_pct).toFixed(2)}% today.`, alert.change_pct, false);

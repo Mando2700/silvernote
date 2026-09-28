@@ -3,13 +3,15 @@ import 'server-only';
 import { q, q1 } from '@/lib/db';
 import { forget, purgeExpiredCache } from '@/lib/data/http';
 import { evaluatePriceAlerts } from '@/lib/services/alerts';
+import { dueIbkrConnections, syncDueIbkr } from '@/lib/services/ibkr';
 import { ingestFundamentals } from '@/lib/services/fundamentals';
+import { buildScorePanel } from '@/lib/services/backtest';
 import { getCandles, isMarketOpen } from '@/lib/services/prices';
 import { computeUniverseScore } from '@/lib/services/scores';
 import { getCompanyStatements } from '@/lib/services/statements';
 import { refreshUniverse, universeStatus } from '@/lib/services/universe';
 
-export type JobKind = 'universe' | 'fundamentals' | 'scores';
+export type JobKind = 'universe' | 'fundamentals' | 'scores' | 'panel' | 'ibkr';
 
 export type JobRow = {
   id: string;
@@ -121,6 +123,8 @@ export async function startJob(kind: JobKind, params: Record<string, unknown> = 
     try {
       if (kind === 'universe') await runUniverse(report);
       else if (kind === 'fundamentals') await runFundamentals(report);
+      else if (kind === 'ibkr') await syncDueIbkr(report);
+      else if (kind === 'panel') await buildScorePanel(report, job, params as { size?: number; years?: number });
       else await runScores(report, job, params as { minMarketCap?: number; symbols?: string[] });
       await q(`update public.jobs set status = $2, finished_at = now() where id = $1`, [id, job.cancelled ? 'cancelled' : 'done']);
     } catch (error) {
@@ -162,12 +166,16 @@ async function lastFinished(kind: JobKind) {
   return row?.finished_at ? new Date(row.finished_at).getTime() : 0;
 }
 
-/** Decide what needs refreshing: prices every 5 min in market hours, fundamentals weekly, scores after. */
+/**
+ * Decide what needs refreshing: prices every 5 min in market hours, fundamentals weekly, scores after.
+ * Broker sync runs alongside those every few hours.
+ */
 export async function schedulerTick() {
   if (globalForJobs.__silvernoteTicking) return;
   globalForJobs.__silvernoteTicking = true;
   try {
     await q("update public.jobs set status = 'failed', error = 'Interrupted by a server restart', finished_at = now() where status = 'running' and started_at < now() - interval '6 hours'").catch(() => {});
+    if (!running.has('ibkr') && (await dueIbkrConnections().catch(() => [])).length) await startJob('ibkr');
     const status = await universeStatus();
     const updated = status?.updated_at ? new Date(status.updated_at).getTime() : 0;
     const maxAge = isMarketOpen() ? 5 * 60_000 : 6 * 3_600_000;

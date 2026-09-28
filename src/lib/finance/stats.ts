@@ -67,6 +67,38 @@ export function alignReturns(maps: Array<Map<number, number>>) {
   return { dates, matrix: maps.map((map) => dates.map((date) => map.get(date) as number)) };
 }
 
+/**
+ * Align return maps on the benchmark's dates, filling days an asset has no price (e.g. before it
+ * listed) with beta × benchmark plus the asset's own demeaned residuals, so one young holding does
+ * not truncate everyone's history. Residuals are demeaned so a short hot run is not extended as alpha.
+ */
+export function backfillReturns(maps: Array<Map<number, number>>, benchmark: Map<number, number>) {
+  const dates = [...benchmark.keys()].sort((a, b) => a - b);
+  const market = dates.map((date) => benchmark.get(date) as number);
+  const firstReal: number[] = [];
+  const matrix = maps.map((map) => {
+    const own: number[] = [];
+    const ref: number[] = [];
+    dates.forEach((date, index) => {
+      if (!map.has(date)) return;
+      own.push(map.get(date) as number);
+      ref.push(market[index]);
+    });
+    const raw = beta(own, ref);
+    const b = raw !== null && Number.isFinite(raw) ? Math.max(0, Math.min(3, raw)) : 1;
+    const residuals = own.map((value, index) => value - b * ref[index]);
+    const residualMean = mean(residuals);
+    let cursor = 0;
+    firstReal.push(Math.max(0, dates.findIndex((date) => map.has(date))));
+    return dates.map((date, index) => {
+      if (map.has(date)) return map.get(date) as number;
+      const noise = residuals.length ? residuals[cursor++ % residuals.length] - residualMean : 0;
+      return Math.max(-0.95, b * market[index] + noise);
+    });
+  });
+  return { dates, matrix, market, firstReal };
+}
+
 export function beta(asset: number[], market: number[]) {
   const varMarket = variance(market);
   if (!varMarket) return null;
@@ -145,7 +177,8 @@ export function valueAtRisk(returns: number[], confidence = 0.95, horizonDays = 
   return {
     historical: -cutoff * scale,
     expectedShortfall: -(tail.length ? mean(tail) : cutoff) * scale,
-    parametric: (z * stdev(returns) - mean(returns)) * scale,
+    // Volatility grows with √horizon, the expected return with the horizon itself.
+    parametric: z * stdev(returns) * scale - mean(returns) * horizonDays,
   };
 }
 

@@ -1,6 +1,6 @@
 'use client';
 
-import { ArrowDown, ArrowUp, Briefcase, ImagePlus, Info, MoreHorizontal, Pencil, Plus, Sparkles, Trash2 } from 'lucide-react';
+import { ArrowDown, ArrowUp, Briefcase, ImagePlus, MoreHorizontal, Pencil, Plus, Sparkles, Trash2 } from 'lucide-react';
 import { motion } from 'motion/react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
@@ -10,9 +10,11 @@ import useSWR from 'swr';
 
 import { CorrelationGrid } from '@/components/charts/correlation-grid';
 import { MarketHeatmap } from '@/components/charts/market-heatmap';
-import { LineChart, ScrollReveal, SERIES_COLORS } from '@/components/charts/svg';
+import { PerformanceChart } from '@/components/portfolio/performance-chart';
 import { AnimatedNumber } from '@/components/motion/animated-number';
+import { BondsPanel } from '@/components/portfolio/bonds';
 import { ImportPhotosModal } from '@/components/portfolio/import-photos';
+import { TaxPanel } from '@/components/portfolio/tax';
 import { Delta } from '@/components/motion/delta';
 import { ScoreRing } from '@/components/motion/score-ring';
 import { Page } from '@/components/shell/page';
@@ -21,16 +23,18 @@ import { Button, Magnetic } from '@/components/ui/button';
 import { CompanyLogo } from '@/components/ui/company-logo';
 import { Menu, Modal } from '@/components/ui/overlay';
 import { Badge, EmptyState, Field, Input, Panel, PanelHeader, Segmented, Select, Skeleton } from '@/components/ui/primitives';
+import { StatTile } from '@/components/ui/stat-tile';
 import { TickerSearch } from '@/components/ui/ticker-search';
+import { localToday } from '@/lib/dates';
 import { api, revalidate } from '@/lib/client';
 import { type LivePrice, useLivePrices } from '@/lib/live-client';
 import { fixed, money, pct, price, shortDate, signedPct } from '@/lib/format';
 import { cn } from '@/lib/utils';
 
 type PortfolioListItem = { id: string; name: string; benchmark: string; cash: number; summary: Summary };
-type Summary = { totalValue: number; invested: number; cash: number; costBasis: number; unrealized: number; unrealizedPct: number | null; realized: number; dayChange: number; dayChangePct: number | null; positions: number };
-type Holding = { symbol: string; name: string; sector: string | null; industry: string | null; shares: number; avgCost: number; costBasis: number; price: number | null; marketValue: number; dayChange: number; dayChangePct: number | null; unrealized: number; unrealizedPct: number | null; realized: number; weight: number; score: number | null };
-type Transaction = { id: string; symbol: string; side: 'buy' | 'sell'; quantity: number; price: number; fees: number; traded_at: string; note: string | null };
+type Summary = { totalValue: number; invested: number; fixedIncome: number; bonds: number; cash: number; costBasis: number; unrealized: number; unrealizedPct: number | null; realized: number; dayChange: number; dayChangePct: number | null; extended?: { session: 'pre' | 'post'; change: number; changePct: number | null } | null; positions: number; unpriced?: string[]; pricesAsOf?: number | null };
+type Holding = { symbol: string; name: string; sector: string | null; industry: string | null; shares: number; avgCost: number; costBasis: number; price: number | null; marketValue: number; dayChange: number; dayChangePct: number | null; extendedPrice?: number | null; extendedChange?: number; extendedChangePct?: number | null; unrealized: number; unrealizedPct: number | null; realized: number; weight: number; score: number | null; priced?: boolean; priceAsOf?: number | null };
+type Transaction = { id: string; symbol: string; side: 'buy' | 'sell'; quantity: number; price: number; fees: number; traded_at: string; note: string | null; split_factor?: number; kind?: 'trade' | 'opening' | 'removal' };
 type Detail = {
   portfolio: { id: string; name: string; benchmark: string; cash: number };
   holdings: Holding[];
@@ -63,14 +67,124 @@ type Risk = {
     riskFree: number;
   };
   excluded: string[];
+  backfilled: string[];
   benchmark: string;
 };
-type Performance = { benchmark: string; points: Array<{ t: number; value: number; invested: number; twr: number; benchmark: number }> };
+/** "10-for-1" for a factor of 10, "1-for-10" for a reverse split. */
+function splitLabel(factor: number) {
+  const round = (value: number) => Number(value.toFixed(3)).toString();
+  return factor >= 1 ? `${round(factor)}-for-1` : `1-for-${round(1 / factor)}`;
+}
 
-type HoldingSortKey = 'symbol' | 'shares' | 'avgCost' | 'price' | 'marketValue' | 'weight' | 'dayChangePct' | 'unrealized' | 'score';
-const HOLDING_SORT_DEFAULT_DIR: Record<HoldingSortKey, 'asc' | 'desc'> = { symbol: 'asc', shares: 'desc', avgCost: 'desc', price: 'desc', marketValue: 'desc', weight: 'desc', dayChangePct: 'desc', unrealized: 'desc', score: 'desc' };
+type HoldingSortKey = 'symbol' | 'shares' | 'avgCost' | 'price' | 'marketValue' | 'weight' | 'dayChange' | 'unrealized' | 'score';
+const HOLDING_SORT_DEFAULT_DIR: Record<HoldingSortKey, 'asc' | 'desc'> = { symbol: 'asc', shares: 'desc', avgCost: 'desc', price: 'desc', marketValue: 'desc', weight: 'desc', dayChange: 'desc', unrealized: 'desc', score: 'desc' };
 
-function sortHoldings(holdings: Holding[], sort: { key: HoldingSortKey; dir: 'asc' | 'desc' }) {
+const SESSION_LABEL = { pre: 'Pre-market', post: 'After hours' } as const;
+
+/** A share's own move: signed price change and percent (already in percent units). */
+function PriceMove({ change, changePct }: { change: number | null; changePct: number | null | undefined }) {
+  return (
+    <span className="inline-flex items-center gap-1 text-[10.5px]">
+      <Delta value={change} kind="money" digits={2} className="text-[10.5px]" />
+      <Delta value={changePct} alreadyPercent className="text-[10.5px]" />
+    </span>
+  );
+}
+
+const HOLDING_COLUMNS: Record<HoldingSortKey, { label: string; align: 'left' | 'right' }> = {
+  symbol: { label: 'Holding', align: 'left' },
+  shares: { label: 'Shares', align: 'right' },
+  avgCost: { label: 'Avg cost', align: 'right' },
+  price: { label: 'Price', align: 'right' },
+  marketValue: { label: 'Market value', align: 'right' },
+  weight: { label: 'Weight', align: 'left' },
+  dayChange: { label: 'Day P&L', align: 'right' },
+  unrealized: { label: 'Total P&L', align: 'right' },
+  score: { label: 'Score', align: 'right' },
+};
+const DEFAULT_COLUMN_ORDER = Object.keys(HOLDING_COLUMNS) as HoldingSortKey[];
+const COLUMN_ORDER_KEY = 'portfolio:holding-columns';
+
+function HoldingCell({ column, holding, extendedSession, showExtended }: { column: HoldingSortKey; holding: Holding; extendedSession: 'pre' | 'post' | null; showExtended: boolean }) {
+  switch (column) {
+    case 'symbol':
+      return (
+        <td className="px-4 py-2">
+          <ViewTransition name={`company-${holding.symbol}`} share="morph" default="none">
+            <div className="flex min-w-0 items-center gap-2.5">
+              <CompanyLogo symbol={holding.symbol} size="sm" />
+              <span className="w-12 shrink-0 font-mono text-[12px] font-semibold text-ink group-hover:text-white">{holding.symbol}</span>
+              <span className="max-w-48 truncate text-[11.5px] text-muted">{holding.name}</span>
+            </div>
+          </ViewTransition>
+        </td>
+      );
+    case 'shares':
+      return <td className="num px-3 py-2 text-right text-ink-2">{holding.shares.toLocaleString('en-US', { maximumFractionDigits: 4 })}</td>;
+    case 'avgCost':
+      return <td className="num px-3 py-2 text-right text-ink-2">{price(holding.avgCost)}</td>;
+    case 'price':
+      return (
+        <td className="num px-3 py-2 text-right text-ink" title={holding.priceAsOf ? `Quote as of ${new Date(holding.priceAsOf).toLocaleString()}` : 'No price available: valued at cost'}>
+          {holding.priced === false ? (
+            <span className="text-warning">—</span>
+          ) : (
+            <div className="flex flex-col items-end">
+              <span>{price(holding.price)}</span>
+              <PriceMove change={holding.shares > 0 ? holding.dayChange / holding.shares : null} changePct={holding.dayChangePct} />
+              {extendedSession && holding.extendedPrice != null ? (
+                <span className="inline-flex items-center gap-1 text-[9.5px] text-muted" title={`${SESSION_LABEL[extendedSession]} ${price(holding.extendedPrice)}`}>
+                  <Delta value={holding.price !== null ? holding.extendedPrice - holding.price : null} kind="money" digits={2} className="text-[9.5px]" />
+                  <Delta value={holding.extendedChangePct} alreadyPercent className="text-[9.5px]" />
+                </span>
+              ) : null}
+            </div>
+          )}
+        </td>
+      );
+    case 'marketValue':
+      return <td className="num px-3 py-2 text-right text-ink">{money(holding.marketValue, { digits: 0 })}</td>;
+    case 'weight':
+      return (
+        <td className="px-3 py-2">
+          <div className="flex items-center gap-2">
+            <div className="h-1.5 w-10 rounded-full bg-white/[0.06]">
+              <motion.div className="h-full rounded-full bg-brand" initial={{ width: 0 }} animate={{ width: `${holding.weight * 100}%` }} transition={{ duration: 0.8, ease: [0.16, 1, 0.3, 1] }} />
+            </div>
+            <span className="num text-[11px] text-muted">{pct(holding.weight, 1)}</span>
+          </div>
+        </td>
+      );
+    case 'dayChange': {
+      const extended = showExtended && holding.extendedPrice != null;
+      return (
+        <td className="px-3 py-2 text-right">
+          <div className="flex flex-col items-end">
+            <Delta value={holding.priced === false || (showExtended && !extended) ? null : extended ? holding.extendedChange : holding.dayChange} kind="money" digits={0} className="text-[12px]" />
+            <Delta value={showExtended ? (extended ? holding.extendedChangePct : null) : holding.dayChangePct} alreadyPercent className="text-[10.5px]" />
+          </div>
+        </td>
+      );
+    }
+    case 'unrealized':
+      return (
+        <td className="px-3 py-2 text-right">
+          <div className="flex flex-col items-end">
+            <Delta value={holding.unrealized} kind="money" digits={0} className="text-[12px]" />
+            <Delta value={holding.unrealizedPct} digits={1} className="text-[10.5px]" />
+          </div>
+        </td>
+      );
+    case 'score':
+      return (
+        <td className="px-3 py-2">
+          <div className="flex justify-end">{holding.score !== null ? <ScoreRing score={holding.score} size="xs" /> : <span className="text-faint">—</span>}</div>
+        </td>
+      );
+  }
+}
+
+function sortHoldings(holdings: Holding[], sort: { key: HoldingSortKey | 'extendedChange'; dir: 'asc' | 'desc' }) {
   const factor = sort.dir === 'asc' ? 1 : -1;
   return holdings.slice().sort((a, b) => {
     if (sort.key === 'symbol') return factor * a.symbol.localeCompare(b.symbol);
@@ -88,7 +202,7 @@ function TradeForm({ portfolioId, onDone }: { portfolioId: string; onDone: () =>
   const [side, setSide] = useState<'buy' | 'sell'>('buy');
   const [quantity, setQuantity] = useState('');
   const [tradePrice, setTradePrice] = useState('');
-  const [date, setDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [date, setDate] = useState(() => localToday());
   const [fees, setFees] = useState('');
   const [saving, setSaving] = useState(false);
   const { data: quote } = useSWR<Record<string, { price: number | null }>>(symbol ? `/api/quotes?symbols=${symbol}` : null);
@@ -135,7 +249,7 @@ function TradeForm({ portfolioId, onDone }: { portfolioId: string; onDone: () =>
           <Input inputMode="decimal" value={tradePrice} onChange={(event) => setTradePrice(event.target.value)} placeholder={lastPrice ? price(lastPrice) : '0.00'} />
         </Field>
         <Field label="Trade date">
-          <Input type="date" value={date} max={new Date().toISOString().slice(0, 10)} onChange={(event) => setDate(event.target.value)} />
+          <Input type="date" value={date} max={localToday()} onChange={(event) => setDate(event.target.value)} />
         </Field>
         <Field label="Fees">
           <Input inputMode="decimal" value={fees} onChange={(event) => setFees(event.target.value)} placeholder="0" />
@@ -148,28 +262,22 @@ function TradeForm({ portfolioId, onDone }: { portfolioId: string; onDone: () =>
   );
 }
 
-function StatTile({ label, value, sub, hint }: { label: string; value: React.ReactNode; sub?: React.ReactNode; hint?: string }) {
-  return (
-    <div className="rounded-sm border border-line bg-surface-1 p-3" title={hint}>
-      <div className="flex items-center gap-1 text-[11.5px] text-muted">
-        {label}
-        {hint ? <Info className="size-3 text-faint" /> : null}
-      </div>
-      <div className="mt-1 text-[17px] font-semibold tracking-[-0.01em] text-ink">{value}</div>
-      {sub ? <div className="mt-0.5 text-[11.5px]">{sub}</div> : null}
-    </div>
-  );
-}
-
 function RiskPanel({ portfolioId, benchmark, concentration }: { portfolioId: string; benchmark: string; concentration: Detail['concentration'] }) {
-  const [days, setDays] = useState('504');
+  const [days, setDays] = useState('actual');
   const { data, isLoading } = useSWR<Risk>(`/api/portfolios/${portfolioId}/risk?days=${days}`);
   const stats = data?.stats;
+  const actual = days === 'actual';
   return (
     <div className="flex flex-col gap-4">
       <Panel>
         <PanelHeader
-          kicker={stats ? `${stats.days} trading days · current weights · vs ${benchmark}` : 'Risk'}
+          kicker={
+            stats
+              ? actual
+                ? `Your account since ${shortDate(stats.from)} · ${stats.days} trading days · vs ${benchmark}`
+                : `Today's holdings back-tested · ${stats.days} trading days · vs ${benchmark}`
+              : 'Risk'
+          }
           title="Risk statistics"
           actions={
             <Segmented
@@ -177,6 +285,7 @@ function RiskPanel({ portfolioId, benchmark, concentration }: { portfolioId: str
               value={days}
               onChange={setDays}
               options={[
+                { value: 'actual', label: 'Actual' },
                 { value: '252', label: '1Y' },
                 { value: '504', label: '2Y' },
                 { value: '756', label: '3Y' },
@@ -195,19 +304,30 @@ function RiskPanel({ portfolioId, benchmark, concentration }: { portfolioId: str
               <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
                 <StatTile label="Annualized return" value={<Delta value={stats.annualReturn} digits={1} className="text-[17px]" />} sub={<span className="text-muted">{benchmark} {signedPct(stats.benchmarkReturn, 1)}</span>} hint="Compound annual return of today’s weights over the window" />
                 <StatTile label="Volatility" value={pct(stats.volatility)} sub={<span className="text-muted">{benchmark} {pct(stats.benchmarkVolatility)}</span>} hint="Annualized standard deviation of daily returns" />
-                <StatTile label={`Beta vs ${benchmark}`} value={fixed(stats.beta)} sub={<span className="text-muted">Correlation {fixed(stats.correlationToBenchmark)}</span>} hint="Sensitivity to benchmark moves (1.0 = moves with it)" />
-                <StatTile label="Max drawdown" value={<span className="text-loss">{signedPct(stats.maxDrawdown, 1)}</span>} sub={<span className="text-muted">{stats.maxDrawdownFrom ? `${shortDate(stats.maxDrawdownFrom)} → ${shortDate(stats.maxDrawdownTo)}` : ''}</span>} hint="Worst peak-to-trough fall of the current mix" />
-                <StatTile label="Sharpe ratio" value={fixed(stats.sharpe)} sub={<span className="text-muted">Risk-free {pct(stats.riskFree, 2)}</span>} hint="(Return − risk-free) ÷ volatility" />
-                <StatTile label="Sortino ratio" value={fixed(stats.sortino)} hint="(Return − risk-free) ÷ downside deviation" />
+                <StatTile label={`Beta vs ${benchmark}`} value={fixed(stats.beta)} sub={<span className="text-muted">Correlation {fixed(stats.correlationToBenchmark)}</span>} hint="Sensitivity to benchmark moves. 1.0 = moves with it, >1 amplifies its swings, <1 dampens them, negative = tends to move opposite" />
+                <StatTile label="Max drawdown" value={<span className="text-loss">{signedPct(stats.maxDrawdown, 1)}</span>} sub={<span className="text-muted">{stats.maxDrawdownFrom ? `${shortDate(stats.maxDrawdownFrom)} → ${shortDate(stats.maxDrawdownTo)}` : ''}</span>} hint="Worst peak-to-trough fall of the current mix. Smaller (closer to 0%) is better; -20% or worse is a rough line for painful" />
+                <StatTile label="Sharpe ratio" value={fixed(stats.sharpe)} sub={<span className="text-muted">Risk-free {pct(stats.riskFree, 2)}</span>} hint="(Return − risk-free) ÷ volatility. Rule of thumb: <0 losing to risk-free, 0–1 subpar, 1–2 good, 2–3 very good, >3 excellent" />
+                <StatTile label="Sortino ratio" value={fixed(stats.sortino)} hint="(Return − risk-free) ÷ downside deviation. Same rough scale as Sharpe, but only penalizes downside moves — usually higher than Sharpe for the same portfolio" />
                 <StatTile label="VaR 95% · 1 day" value={pct(stats.var95?.historical ?? null, 2)} sub={<span className="text-muted">Parametric {pct(stats.var95?.parametric ?? null, 2)} · CVaR {pct(stats.var95?.expectedShortfall ?? null, 2)}</span>} hint="Loss not exceeded on 95% of days (historical)" />
                 <StatTile label="VaR 99% · 1 day" value={pct(stats.var99?.historical ?? null, 2)} sub={<span className="text-muted">10-day 95%: {pct(stats.var95_10d?.historical ?? null, 1)}</span>} hint="Loss not exceeded on 99% of days" />
               </div>
               <div className="mt-2 grid grid-cols-2 gap-2 md:grid-cols-4">
                 <StatTile label="Largest position" value={pct(concentration.top1)} hint="Weight of the biggest holding" />
                 <StatTile label="Top 5 weight" value={pct(concentration.top5)} />
-                <StatTile label="Herfindahl index" value={fixed(concentration.hhi, 3)} hint="Sum of squared weights; 1 = one stock, 1/N = equal weights" />
-                <StatTile label="Effective positions" value={fixed(concentration.effectiveN, 1)} hint="1 ÷ HHI: how many equal-weight positions this behaves like" />
+                <StatTile label="Herfindahl index" value={fixed(concentration.hhi, 3)} hint="Sum of squared weights, from 1/N (equal-weighted, most diversified) to 1 (all one stock). Below 0.15 is broadly diversified, above 0.25 is concentrated" />
+                <StatTile label="Effective positions" value={fixed(concentration.effectiveN, 1)} hint="1 ÷ HHI: how many equal-weight positions this behaves like. Close to your actual position count means weights are even; much lower means a few holdings dominate" />
               </div>
+              {actual ? (
+                <p className="mt-2 text-[11px] text-faint">
+                  Time-weighted daily returns of this account, including past trades and cash. {stats.days < 252 ? 'Under a year of history, so ratios and VaR are rough estimates. ' : ''}
+                  Risk contribution and correlations below use today&apos;s holdings over 2 years.
+                </p>
+              ) : null}
+              {data?.backfilled.length ? (
+                <p className="mt-2 text-[11px] text-faint">
+                  {data.backfilled.join(', ')} listed after the window starts; days before listing are modelled from {benchmark} via beta (no excess return assumed).
+                </p>
+              ) : null}
               {data?.excluded.length ? <p className="mt-2 text-[11px] text-faint">Excluded for lack of price history: {data.excluded.join(', ')}</p> : null}
             </>
           )}
@@ -260,46 +380,6 @@ function RiskPanel({ portfolioId, benchmark, concentration }: { portfolioId: str
   );
 }
 
-function PerformancePanel({ portfolioId }: { portfolioId: string }) {
-  const { data } = useSWR<Performance>(`/api/portfolios/${portfolioId}/performance`);
-  const points = data?.points ?? [];
-  if (points.length < 3) return null;
-  const step = Math.max(1, Math.floor(points.length / 160));
-  const sampled = points.filter((_, index) => index % step === 0 || index === points.length - 1);
-  const last = points[points.length - 1];
-  return (
-    <Panel>
-      <PanelHeader
-        kicker={`Since ${shortDate(points[0].t)} · time-weighted (cash flows removed)`}
-        title="Performance vs. benchmark"
-        actions={
-          <div className="flex items-center gap-3 text-[12px]">
-            <span className="text-muted">
-              You <Delta value={last.twr / 100 - 1} digits={1} />
-            </span>
-            <span className="text-muted">
-              {data?.benchmark} <Delta value={last.benchmark / 100 - 1} digits={1} />
-            </span>
-          </div>
-        }
-      />
-      <div className="px-4 pb-4">
-        <ScrollReveal>
-          <LineChart
-            categories={sampled.map((point) => shortDate(point.t))}
-            series={[
-              { label: 'Portfolio (TWR)', values: sampled.map((point) => point.twr), color: '#cdd4de', emphasis: true },
-              { label: data?.benchmark ?? 'Benchmark', values: sampled.map((point) => point.benchmark), color: SERIES_COLORS[0] },
-            ]}
-            format={(value) => value.toFixed(0)}
-            height={230}
-          />
-        </ScrollReveal>
-      </div>
-    </Panel>
-  );
-}
-
 export function PortfolioView() {
   const router = useRouter();
   const params = useSearchParams();
@@ -309,12 +389,36 @@ export function PortfolioView() {
   const { data: savedDetail, mutate: refreshDetail } = useSWR<Detail>(selectedId ? `/api/portfolios/${selectedId}` : null, { refreshInterval: 60_000 });
   const live = useLivePrices(useMemo(() => (savedDetail?.holdings ?? []).map((holding) => holding.symbol), [savedDetail]));
   const detail = useMemo(() => (savedDetail ? withLivePrices(savedDetail, live) : undefined), [savedDetail, live]);
-  const [tab, setTab] = useState<'holdings' | 'risk' | 'transactions'>('holdings');
+  /** Outside regular hours: whether day changes show extended trading or the last regular session. */
+  const [changeView, setChangeView] = useState<'extended' | 'regular'>('extended');
+  const [tab, setTab] = useState<'holdings' | 'risk' | 'bonds' | 'tax' | 'transactions'>(() => {
+    const requested = params.get('tab');
+    return requested === 'risk' || requested === 'bonds' || requested === 'tax' || requested === 'transactions' ? requested : 'holdings';
+  });
   const [trading, setTrading] = useState(false);
   const [creating, setCreating] = useState(false);
   const [editing, setEditing] = useState(false);
   const [importing, setImporting] = useState(false);
   const [form, setForm] = useState({ name: '', benchmark: 'SPY', cash: '' });
+  // The table only renders once data has loaded on the client, so reading storage here cannot mismatch the server render.
+  const [columnOrder, setColumnOrder] = useState<HoldingSortKey[]>(() => {
+    try {
+      const saved = JSON.parse(window.localStorage.getItem(COLUMN_ORDER_KEY) ?? 'null') as HoldingSortKey[] | null;
+      // Only a complete, known set: new or renamed columns fall back to the default order.
+      if (saved && saved.length === DEFAULT_COLUMN_ORDER.length && DEFAULT_COLUMN_ORDER.every((key) => saved.includes(key))) return saved;
+    } catch {}
+    return DEFAULT_COLUMN_ORDER;
+  });
+  const [draggedColumn, setDraggedColumn] = useState<HoldingSortKey | null>(null);
+  const moveColumn = (from: HoldingSortKey, to: HoldingSortKey) =>
+    setColumnOrder((current) => {
+      const next = current.filter((key) => key !== from);
+      next.splice(current.indexOf(to), 0, from);
+      try {
+        window.localStorage.setItem(COLUMN_ORDER_KEY, JSON.stringify(next));
+      } catch {}
+      return next;
+    });
   const [holdingSort, setHoldingSort] = useState<{ key: HoldingSortKey; dir: 'asc' | 'desc' }>({ key: 'weight', dir: 'desc' });
 
   const toggleHoldingSort = (key: HoldingSortKey) => {
@@ -405,6 +509,8 @@ export function PortfolioView() {
   }
 
   const summary = detail?.summary;
+  const extendedSession = summary?.extended?.session ?? null;
+  const showExtended = extendedSession !== null && changeView === 'extended';
 
   return (
     <Page
@@ -483,29 +589,49 @@ export function PortfolioView() {
               <AnimatedNumber value={summary?.totalValue} format={(value) => money(value, { digits: 0 })} />
             </div>
             <div className="mt-2 flex items-center gap-2 text-[13px]">
-              <span className="text-muted">Today</span>
-              <Delta value={summary?.dayChange} kind="money" digits={0} />
-              <Delta value={summary?.dayChangePct} className="text-[12px]" />
+              <span className="text-muted">{showExtended && extendedSession ? SESSION_LABEL[extendedSession] : 'Today'}</span>
+              <Delta value={showExtended ? summary?.extended?.change : summary?.dayChange} kind="money" digits={0} />
+              <Delta value={showExtended ? summary?.extended?.changePct : summary?.dayChangePct} className="text-[12px]" />
             </div>
           </div>
-          <div className="grid grid-cols-2 gap-2 self-end md:grid-cols-5">
+          <div className="grid grid-cols-2 gap-2 self-end md:grid-cols-6">
             <StatTile label="Unrealized P&L" value={<Delta value={summary?.unrealized} kind="money" digits={0} className="text-[17px]" />} sub={<Delta value={summary?.unrealizedPct} className="text-[11.5px]" />} />
             <StatTile label="Realized P&L" value={<Delta value={summary?.realized} kind="money" digits={0} className="text-[17px]" />} />
             <StatTile label="Cost basis" value={money(summary?.costBasis, { digits: 0 })} />
+            <StatTile label="Bonds" value={money(summary?.fixedIncome, { digits: 0 })} sub={summary?.bonds ? <span className="text-muted">{summary.bonds} held</span> : undefined} />
             <StatTile label="Cash" value={money(summary?.cash, { digits: 0 })} />
             <StatTile label="Positions" value={summary?.positions ?? '—'} />
           </div>
         </div>
-        <div className="relative border-t border-line px-4 py-2">
+        {summary?.unpriced?.length ? (
+          <div className="relative mx-5 mb-4 rounded-sm border border-warning/25 bg-warning/10 px-3 py-2 text-[12px] text-ink-2">
+            No current price for {summary.unpriced.join(', ')}. {summary.unpriced.length === 1 ? 'It is' : 'They are'} valued at cost, so the total and P&amp;L above leave out {summary.unpriced.length === 1 ? 'its' : 'their'} gains and losses.
+          </div>
+        ) : null}
+        <div className="relative flex items-center justify-between gap-3 border-t border-line px-4 py-2">
           <Segmented
             value={tab}
             onChange={setTab}
             options={[
               { value: 'holdings', label: 'Holdings & allocation' },
               { value: 'risk', label: 'Risk' },
+              { value: 'bonds', label: 'Bonds' },
+              { value: 'tax', label: 'Tax' },
               { value: 'transactions', label: `Transactions${detail ? ` (${detail.transactions.length})` : ''}` },
             ]}
           />
+          {extendedSession ? (
+            <Segmented
+              size="xs"
+             
+              value={changeView}
+              onChange={setChangeView}
+              options={[
+                { value: 'regular', label: 'Day' },
+                { value: 'extended', label: SESSION_LABEL[extendedSession] },
+              ]}
+            />
+          ) : null}
         </div>
       </Panel>
 
@@ -517,32 +643,35 @@ export function PortfolioView() {
                 <table className="w-full min-w-[980px] text-[12.5px]">
                   <thead>
                     <tr className="border-b border-line bg-surface-1 text-left text-[11px] text-muted">
-                      {(
-                        [
-                          { key: 'symbol', label: 'Holding', align: 'left' },
-                          { key: 'shares', label: 'Shares', align: 'right' },
-                          { key: 'avgCost', label: 'Avg cost', align: 'right' },
-                          { key: 'price', label: 'Price', align: 'right' },
-                          { key: 'marketValue', label: 'Market value', align: 'right' },
-                          { key: 'weight', label: 'Weight', align: 'left' },
-                          { key: 'dayChangePct', label: 'Day', align: 'right' },
-                          { key: 'unrealized', label: 'Unrealized', align: 'right' },
-                          { key: 'score', label: 'Score', align: 'right' },
-                        ] as const
-                      ).map((column) => {
-                        const active = holdingSort.key === column.key;
+                      {columnOrder.map((key) => {
+                        const column = HOLDING_COLUMNS[key];
+                        const active = holdingSort.key === key;
                         return (
                           <th
-                            key={column.key}
-                            onClick={() => toggleHoldingSort(column.key)}
+                            key={key}
+                            draggable
+                            onDragStart={(event) => {
+                              setDraggedColumn(key);
+                              event.dataTransfer.effectAllowed = 'move';
+                            }}
+                            onDragOver={(event) => {
+                              if (!draggedColumn || draggedColumn === key) return;
+                              event.preventDefault();
+                              moveColumn(draggedColumn, key);
+                            }}
+                            onDragEnd={() => setDraggedColumn(null)}
+                            onClick={() => toggleHoldingSort(key)}
+                            title="Click to sort, drag to reorder"
                             className={cn(
-                              'cursor-pointer px-3 py-2 font-medium first:px-4 select-none hover:text-ink-2',
+                              'cursor-grab px-3 py-2 font-medium whitespace-nowrap first:px-4 select-none hover:text-ink-2 active:cursor-grabbing',
                               column.align === 'right' ? 'text-right' : 'text-left',
+                              key === 'dayChange' && 'w-32',
                               active && 'text-ink-2',
+                              draggedColumn === key && 'opacity-40',
                             )}
                           >
                             <span className={cn('inline-flex items-center gap-1', column.align === 'right' && 'justify-end')}>
-                              {column.label}
+                              {key === 'dayChange' && showExtended && extendedSession ? `${SESSION_LABEL[extendedSession]} P&L` : column.label}
                               {active ? holdingSort.dir === 'desc' ? <ArrowDown className="size-3 text-brand" /> : <ArrowUp className="size-3 text-brand" /> : null}
                             </span>
                           </th>
@@ -551,7 +680,7 @@ export function PortfolioView() {
                     </tr>
                   </thead>
                   <tbody>
-                    {sortHoldings(detail.holdings, holdingSort).map((holding, index) => (
+                    {sortHoldings(detail.holdings, showExtended && holdingSort.key === 'dayChange' ? { ...holdingSort, key: 'extendedChange' } : holdingSort).map((holding, index) => (
                       <motion.tr
                         key={holding.symbol}
                         initial={{ opacity: 0, y: 4 }}
@@ -560,39 +689,9 @@ export function PortfolioView() {
                         onClick={() => router.push(`/company/${holding.symbol}`)}
                         className="group cursor-pointer border-b border-line hover:bg-white/[0.025]"
                       >
-                        <td className="px-4 py-2">
-                          <ViewTransition name={`company-${holding.symbol}`} share="morph" default="none">
-                            <div className="flex min-w-0 items-center gap-2.5">
-                              <CompanyLogo symbol={holding.symbol} size="sm" />
-                              <span className="w-12 shrink-0 font-mono text-[12px] font-semibold text-ink group-hover:text-white">{holding.symbol}</span>
-                              <span className="max-w-48 truncate text-[11.5px] text-muted">{holding.name}</span>
-                            </div>
-                          </ViewTransition>
-                        </td>
-                        <td className="num px-3 py-2 text-right text-ink-2">{holding.shares.toLocaleString('en-US', { maximumFractionDigits: 4 })}</td>
-                        <td className="num px-3 py-2 text-right text-ink-2">{price(holding.avgCost)}</td>
-                        <td className="num px-3 py-2 text-right text-ink">{price(holding.price)}</td>
-                        <td className="num px-3 py-2 text-right text-ink">{money(holding.marketValue, { digits: 0 })}</td>
-                        <td className="px-3 py-2">
-                          <div className="flex items-center gap-2">
-                            <div className="h-1.5 w-20 rounded-full bg-white/[0.06]">
-                              <motion.div className="h-full rounded-full bg-brand" initial={{ width: 0 }} animate={{ width: `${holding.weight * 100}%` }} transition={{ duration: 0.8, ease: [0.16, 1, 0.3, 1] }} />
-                            </div>
-                            <span className="num w-10 text-[11px] text-muted">{pct(holding.weight, 1)}</span>
-                          </div>
-                        </td>
-                        <td className="px-3 py-2 text-right">
-                          <Delta value={holding.dayChangePct} alreadyPercent className="justify-end text-[12px]" />
-                        </td>
-                        <td className="px-3 py-2 text-right">
-                          <div className="flex flex-col items-end">
-                            <Delta value={holding.unrealized} kind="money" digits={0} className="text-[12px]" />
-                            <Delta value={holding.unrealizedPct} digits={1} className="text-[10.5px]" />
-                          </div>
-                        </td>
-                        <td className="px-3 py-2">
-                          <div className="flex justify-end">{holding.score !== null ? <ScoreRing score={holding.score} size="xs" /> : <span className="text-faint">—</span>}</div>
-                        </td>
+                        {columnOrder.map((key) => (
+                          <HoldingCell key={key} column={key} holding={holding} extendedSession={extendedSession} showExtended={showExtended} />
+                        ))}
                       </motion.tr>
                     ))}
                   </tbody>
@@ -617,7 +716,7 @@ export function PortfolioView() {
               />
             </Panel>
           )}
-          {selectedId && detail.holdings.length ? <PerformancePanel portfolioId={selectedId} /> : null}
+          {selectedId && detail.holdings.length ? <PerformanceChart portfolioId={selectedId} /> : null}
           {detail.holdings.length ? (
             <div className="grid gap-4 xl:grid-cols-[1.4fr_1fr]">
               <Panel>
@@ -661,6 +760,10 @@ export function PortfolioView() {
         )
       ) : null}
 
+      {tab === 'bonds' && selectedId ? <BondsPanel portfolioId={selectedId} onChanged={refresh} /> : null}
+
+      {tab === 'tax' && selectedId ? <TaxPanel portfolioId={selectedId} onPortfolioChanged={refresh} /> : null}
+
       {tab === 'transactions' && detail ? (
         <Panel>
           {detail.transactions.length ? (
@@ -690,26 +793,37 @@ export function PortfolioView() {
                         {tx.symbol}
                       </Link>
                     </td>
-                    <td className="num px-3 py-2 text-right text-ink-2">{tx.quantity.toLocaleString('en-US', { maximumFractionDigits: 4 })}</td>
+                    <td className="num px-3 py-2 text-right text-ink-2">
+                      {tx.quantity.toLocaleString('en-US', { maximumFractionDigits: 4 })}
+                      {tx.split_factor && tx.split_factor !== 1 ? (
+                        <div className="text-[10.5px] text-faint" title="Restated in today's shares for stock splits since the trade">
+                          {(tx.quantity / tx.split_factor).toLocaleString('en-US', { maximumFractionDigits: 4 })} before {splitLabel(tx.split_factor)} split
+                        </div>
+                      ) : null}
+                      {tx.kind === 'opening' ? <div className="text-[10.5px] text-faint">Opening balance</div> : null}
+                      {tx.kind === 'removal' ? <div className="text-[10.5px] text-faint">Balancing removal</div> : null}
+                    </td>
                     <td className="num px-3 py-2 text-right text-ink-2">{price(tx.price)}</td>
                     <td className="num px-3 py-2 text-right text-muted">{tx.fees ? price(tx.fees) : '—'}</td>
                     <td className="num px-3 py-2 text-right text-ink">{money(tx.quantity * tx.price + (tx.side === 'buy' ? tx.fees : -tx.fees), { digits: 2 })}</td>
                     <td className="px-3 py-2 text-right">
-                      <button
-                        onClick={async () => {
-                          if (!window.confirm('Delete this trade? Holdings and P&L are recalculated.')) return;
-                          try {
-                            await api(`/api/portfolios/${selectedId}/transactions?id=${tx.id}`, { method: 'DELETE' });
-                            refresh();
-                          } catch (error) {
-                            toast.error((error as Error).message);
-                          }
-                        }}
-                        className="rounded-xs p-1 text-faint hover:bg-white/5 hover:text-ink"
-                        aria-label="Delete trade"
-                      >
-                        <Trash2 className="size-3.5" />
-                      </button>
+                      {tx.id.startsWith('balance:') ? null : (
+                        <button
+                          onClick={async () => {
+                            if (!window.confirm('Delete this trade? Holdings and P&L are recalculated.')) return;
+                            try {
+                              await api(`/api/portfolios/${selectedId}/transactions?id=${tx.id}`, { method: 'DELETE' });
+                              refresh();
+                            } catch (error) {
+                              toast.error((error as Error).message);
+                            }
+                          }}
+                          className="rounded-xs p-1 text-faint hover:bg-white/5 hover:text-ink"
+                          aria-label="Delete trade"
+                        >
+                          <Trash2 className="size-3.5" />
+                        </button>
+                      )}
                     </td>
                   </tr>
                 ))}
@@ -721,7 +835,7 @@ export function PortfolioView() {
         </Panel>
       ) : null}
 
-      <Modal open={trading} onClose={() => setTrading(false)} title="Record a trade" description="Average-cost accounting; sells realize P&L against the running average.">
+      <Modal open={trading} onClose={() => setTrading(false)} title="Record a trade" description="Holdings show average cost; the Tax tab tracks every lot (FIFO, LIFO or HIFO) with wash sales.">
         {selectedId ? (
           <TradeForm
             portfolioId={selectedId}
@@ -758,6 +872,12 @@ function withLivePrices(detail: Detail, live: Record<string, LivePrice | undefin
   const holdings = detail.holdings.map((holding) => {
     const tick = live[holding.symbol];
     if (!tick) return holding;
+    // Outside regular hours, trades move the extended-session price; the regular close stays put.
+    if (holding.extendedPrice != null && holding.price !== null) {
+      if (tick.timestamp <= (holding.priceAsOf ?? 0)) return holding;
+      const change = tick.price - holding.price;
+      return { ...holding, extendedPrice: tick.price, extendedChange: change * holding.shares, extendedChangePct: holding.price ? (change / holding.price) * 100 : null };
+    }
     const marketValue = tick.price * holding.shares;
     return {
       ...holding,
@@ -770,8 +890,9 @@ function withLivePrices(detail: Detail, live: Record<string, LivePrice | undefin
     };
   });
   const invested = holdings.reduce((sum, holding) => sum + holding.marketValue, 0);
-  const total = invested + detail.summary.cash;
+  const total = invested + detail.summary.fixedIncome + detail.summary.cash;
   const dayChange = holdings.reduce((sum, holding) => sum + holding.dayChange, 0);
+  const extendedChange = holdings.reduce((sum, holding) => sum + (holding.extendedChange ?? 0), 0);
   const costBasis = detail.summary.costBasis;
   return {
     ...detail,
@@ -784,6 +905,7 @@ function withLivePrices(detail: Detail, live: Record<string, LivePrice | undefin
       unrealizedPct: costBasis > 0 ? (invested - costBasis) / costBasis : null,
       dayChange,
       dayChangePct: total - dayChange > 0 ? dayChange / (total - dayChange) : null,
+      extended: detail.summary.extended ? { ...detail.summary.extended, change: extendedChange, changePct: total > 0 ? extendedChange / total : null } : null,
     },
   };
 }

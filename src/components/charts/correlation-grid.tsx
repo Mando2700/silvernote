@@ -20,8 +20,8 @@ export function CorrelationGrid({ symbols, matrix }: { symbols: string[]; matrix
             <tr>
               <th />
               {symbols.map((symbol, column) => (
-                <th key={symbol} className={cn('pb-1 text-center font-mono text-[9.5px] font-medium', hover?.[1] === column ? 'text-ink' : 'text-muted')} style={{ width: size }}>
-                  <span className="inline-block origin-bottom-left -rotate-45 whitespace-nowrap">{symbol}</span>
+                <th key={symbol} className={cn('relative h-14 align-bottom text-center font-mono text-[9.5px] font-medium', hover?.[1] === column ? 'text-ink' : 'text-muted')} style={{ width: size }}>
+                  <span className="absolute bottom-1 left-1/2 origin-bottom-left -rotate-45 whitespace-nowrap">{symbol}</span>
                 </th>
               ))}
             </tr>

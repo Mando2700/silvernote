@@ -3,9 +3,12 @@ import 'server-only';
 import { HttpError } from '@/lib/auth';
 import { q, q1 } from '@/lib/db';
 import type { Candle } from '@/lib/data/types';
+import { sortTrades, type TradeKind } from '@/lib/finance/ledger';
+import { buildPositions } from '@/lib/finance/positions';
 import {
   alignReturns,
   annualizedReturn,
+  backfillReturns,
   annualizedVolatility,
   beta,
   concentration,
@@ -21,58 +24,46 @@ import {
   valueAtRisk,
   variance,
 } from '@/lib/finance/stats';
-import { getQuotes } from '@/lib/services/market';
+import { getBondValues } from '@/lib/services/bonds';
+import { getExtendedQuotes, getQuotes } from '@/lib/services/market';
 import { getCandlesForMany, getRiskFreeRate } from '@/lib/services/prices';
 import { getSecuritiesBySymbols } from '@/lib/services/universe';
+import { adjustTransactionsForSplits } from '@/lib/services/splits';
+import { reconcile } from '@/lib/services/ibkr-reconcile';
+import type { FlexPosition } from '@/lib/data/providers/ibkr';
 
-export type PortfolioRow = { id: string; user_id: string; name: string; benchmark: string; cash: number; created_at: Date };
+export type PortfolioRow = {
+  id: string;
+  user_id: string;
+  name: string;
+  benchmark: string;
+  cash: number;
+  lot_method: 'fifo' | 'lifo' | 'hifo';
+  account_type: 'taxable' | 'tax_deferred' | 'tax_free';
+  created_at: Date;
+};
 export type TransactionRow = {
   id: string;
   portfolio_id: string;
   symbol: string;
   side: 'buy' | 'sell';
+  /** In today's share units (restated for splits since the trade; see `split_factor`). */
   quantity: number;
   price: number;
   fees: number;
   traded_at: string;
   note: string | null;
   created_at: Date;
+  broker_execution_id: string | null;
+  kind: TradeKind;
+  /** Shares per originally recorded share (1 when no split since the trade). */
+  split_factor: number;
 };
 
-export type Position = { symbol: string; shares: number; cost: number; realized: number; firstBought: string | null };
-
-/** Average-cost position keeping: sells realize P&L against the running average cost. */
-export function buildPositions(transactions: Array<Pick<TransactionRow, 'symbol' | 'side' | 'quantity' | 'price' | 'fees' | 'traded_at'>>) {
-  const positions = new Map<string, Position>();
-  const sorted = [...transactions].sort((a, b) => a.traded_at.localeCompare(b.traded_at));
-  for (const tx of sorted) {
-    const position = positions.get(tx.symbol) ?? { symbol: tx.symbol, shares: 0, cost: 0, realized: 0, firstBought: null };
-    if (tx.side === 'buy') {
-      position.cost += tx.quantity * tx.price + tx.fees;
-      position.shares += tx.quantity;
-      position.firstBought ??= tx.traded_at;
-    } else {
-      const quantity = Math.min(tx.quantity, position.shares);
-      const average = position.shares > 0 ? position.cost / position.shares : 0;
-      position.realized += quantity * tx.price - tx.fees - average * quantity;
-      position.cost -= average * quantity;
-      position.shares -= quantity;
-      if (position.shares < 1e-9) {
-        position.shares = 0;
-        position.cost = 0;
-      }
-    }
-    positions.set(tx.symbol, position);
-  }
-  return positions;
-}
+export { buildPositions, type Position } from '@/lib/finance/positions';
 
 export async function listPortfolios(userId: string) {
-  return q<PortfolioRow & { positions: number }>(
-    `select p.*, (select count(distinct symbol)::int from public.transactions t where t.portfolio_id = p.id) as positions
-     from public.portfolios p where p.user_id = $1 order by p.created_at`,
-    [userId],
-  );
+  return q<PortfolioRow>(`select p.* from public.portfolios p where p.user_id = $1 order by p.created_at`, [userId]);
 }
 
 export async function getPortfolio(userId: string, id: string) {
@@ -81,12 +72,74 @@ export async function getPortfolio(userId: string, id: string) {
   return portfolio;
 }
 
-export async function getTransactions(portfolioId: string) {
-  return q<TransactionRow>(
-    `select id, portfolio_id, symbol, side, quantity, price, fees, traded_at::text as traded_at, note, created_at
+/**
+ * Synthetic rows are marked by their execution id: broker balancing rows, and photo imports (today's
+ * holdings booked as opening buys, so their real purchase dates are unknown). Older photo imports
+ * predate the marker and are recognized by their note.
+ */
+export function kindOf(brokerExecutionId: string | null | undefined, note?: string | null): TradeKind {
+  if (brokerExecutionId?.startsWith('ibkr:balance:open:') || brokerExecutionId?.startsWith('import:opening:')) return 'opening';
+  if (brokerExecutionId?.startsWith('ibkr:balance:adjust:')) return 'removal';
+  if (!brokerExecutionId && note === 'Imported from photo') return 'opening';
+  return 'trade';
+}
+
+/** Rows exactly as stored (in the share units of their trade day). */
+export async function getStoredTransactions(portfolioId: string) {
+  const rows = await q<Omit<TransactionRow, 'kind' | 'split_factor'>>(
+    `select id, portfolio_id, symbol, side, quantity, price, fees, traded_at::text as traded_at, note, created_at, broker_execution_id
      from public.transactions where portfolio_id = $1 order by traded_at desc, created_at desc`,
     [portfolioId],
   );
+  return rows.map((row) => ({ ...row, kind: kindOf(row.broker_execution_id, row.note) }));
+}
+
+type StoredTransaction = Awaited<ReturnType<typeof getStoredTransactions>>[number];
+
+/**
+ * The ledger in today's share units, from stored rows: trades restated for splits, plus the balancing
+ * rows that make a broker-synced portfolio match the broker's positions as of its last sync. Those are
+ * derived here from the stored snapshot (not stored themselves) so they always agree with the split
+ * adjustment. Trades after the snapshot date apply on top.
+ */
+export async function assembleLedger(portfolioId: string, stored: StoredTransaction[]): Promise<TransactionRow[]> {
+  const snapshot = await q1<{ positions: FlexPosition[]; positions_as_of: string }>(
+    `select positions, positions_as_of::text as positions_as_of from public.broker_accounts
+     where portfolio_id = $1 and positions is not null and positions_as_of is not null limit 1`,
+    [portfolioId],
+  );
+  // Balancing rows stored by older syncs are superseded by the snapshot.
+  const rows = snapshot ? stored.filter((row) => !row.broker_execution_id?.startsWith('ibkr:balance:')) : stored;
+  const adjusted = await adjustTransactionsForSplits(rows);
+  if (!snapshot) return adjusted;
+  const asOf = snapshot.positions_as_of;
+  const balancing: TransactionRow[] = reconcile(
+    adjusted.filter((row) => row.traded_at <= asOf),
+    snapshot.positions,
+    asOf,
+  ).map((row) => ({
+    id: `balance:${row.kind}:${row.symbol}`,
+    portfolio_id: portfolioId,
+    symbol: row.symbol,
+    side: row.side,
+    quantity: row.quantity,
+    price: row.price,
+    fees: 0,
+    traded_at: row.tradedAt,
+    note: row.kind === 'open' ? 'Opening balance from IBKR (before synced history)' : 'Balanced to the IBKR position',
+    created_at: new Date(row.kind === 'open' ? `${row.tradedAt}T00:00:00Z` : `${row.tradedAt}T23:59:59Z`),
+    broker_execution_id: null,
+    kind: row.kind === 'open' ? 'opening' : 'removal',
+    split_factor: 1,
+  }));
+  return [...adjusted, ...balancing].sort(
+    (a, b) => b.traded_at.localeCompare(a.traded_at) || new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
+  );
+}
+
+/** The ledger in today's share units: every consumer (holdings, tax lots, performance) reads this. */
+export async function getTransactions(portfolioId: string): Promise<TransactionRow[]> {
+  return assembleLedger(portfolioId, await getStoredTransactions(portfolioId));
 }
 
 export type Holding = {
@@ -101,22 +154,32 @@ export type Holding = {
   marketValue: number;
   dayChange: number;
   dayChangePct: number | null;
+  /** Pre-market or after-hours price, with the position's move from the regular close ($ and %). */
+  extendedPrice: number | null;
+  extendedChange: number;
+  extendedChangePct: number | null;
   unrealized: number;
   unrealizedPct: number | null;
   realized: number;
   weight: number;
   score: number | null;
   firstBought: string | null;
+  /** False when no quote was available: market value then falls back to cost and P&L reads zero. */
+  priced: boolean;
+  /** When the price was last updated (ms since epoch), or null when unpriced. */
+  priceAsOf: number | null;
 };
 
 export async function getHoldings(portfolio: PortfolioRow) {
   const transactions = await getTransactions(portfolio.id);
   const positions = buildPositions(transactions);
   const symbols = [...positions.keys()];
-  const [quotes, securities, scores] = await Promise.all([
+  const [quotes, extendedQuotes, securities, scores, bonds] = await Promise.all([
     getQuotes(symbols),
+    getExtendedQuotes(symbols),
     getSecuritiesBySymbols(symbols),
     symbols.length ? q<{ symbol: string; overall: number }>('select symbol, overall from public.scores where symbol = any($1::text[])', [symbols]) : Promise.resolve([]),
+    getBondValues(portfolio.id),
   ]);
   const securityBySymbol = new Map(securities.map((row) => [row.symbol, row]));
   const scoreBySymbol = new Map(scores.map((row) => [row.symbol, row.overall]));
@@ -126,10 +189,13 @@ export async function getHoldings(portfolio: PortfolioRow) {
     realizedTotal += position.realized;
     if (position.shares <= 0) continue;
     const quote = quotes[position.symbol];
+    const extended = extendedQuotes[position.symbol];
     const security = securityBySymbol.get(position.symbol);
-    const lastPrice = quote?.price ?? null;
+    // Outside regular hours the position is valued at the regular close; extended trading is shown on its own.
+    const lastPrice = extended?.close ?? quote?.price ?? null;
+    const lastChange = extended ? extended.closeChange : (quote?.change ?? null);
     const marketValue = lastPrice !== null ? lastPrice * position.shares : position.cost;
-    const dayChange = quote?.change != null ? quote.change * position.shares : 0;
+    const dayChange = lastChange != null ? lastChange * position.shares : 0;
     holdings.push({
       symbol: position.symbol,
       name: security?.name ?? position.symbol,
@@ -141,27 +207,38 @@ export async function getHoldings(portfolio: PortfolioRow) {
       price: lastPrice,
       marketValue,
       dayChange,
-      dayChangePct: quote?.changePct ?? null,
+      dayChangePct: extended ? extended.closeChangePct : (quote?.changePct ?? null),
+      extendedPrice: extended?.price ?? null,
+      extendedChange: extended ? extended.change * position.shares : 0,
+      extendedChangePct: extended?.changePct ?? null,
       unrealized: marketValue - position.cost,
       unrealizedPct: position.cost > 0 ? (marketValue - position.cost) / position.cost : null,
       realized: position.realized,
       weight: 0,
       score: scoreBySymbol.get(position.symbol) ?? null,
       firstBought: position.firstBought,
+      priced: lastPrice !== null,
+      priceAsOf: lastPrice !== null ? (extended?.timestamp ?? quote?.timestamp ?? null) : null,
     });
   }
   const invested = holdings.reduce((total, holding) => total + holding.marketValue, 0);
-  const total = invested + (portfolio.cash ?? 0);
+  // Bonds count toward the total (market value with accrued interest) but not toward equity analytics.
+  const fixedIncome = bonds.reduce((sum, bond) => sum + bond.marketValue, 0);
+  const total = invested + fixedIncome + (portfolio.cash ?? 0);
   for (const holding of holdings) holding.weight = total > 0 ? holding.marketValue / total : 0;
   holdings.sort((a, b) => b.marketValue - a.marketValue);
   const costBasis = holdings.reduce((sum, holding) => sum + holding.costBasis, 0);
   const dayChange = holdings.reduce((sum, holding) => sum + holding.dayChange, 0);
+  const extendedChange = holdings.reduce((sum, holding) => sum + holding.extendedChange, 0);
+  const extendedSession = Object.values(extendedQuotes)[0]?.session ?? null;
   return {
     transactions,
     holdings,
     summary: {
       totalValue: total,
       invested,
+      fixedIncome,
+      bonds: bonds.filter((bond) => !bond.matured).length,
       cash: portfolio.cash ?? 0,
       costBasis,
       unrealized: invested - costBasis,
@@ -169,7 +246,13 @@ export async function getHoldings(portfolio: PortfolioRow) {
       realized: realizedTotal,
       dayChange,
       dayChangePct: total - dayChange > 0 ? dayChange / (total - dayChange) : null,
+      /** Pre-market or after-hours move of the holdings from the regular close; null during regular hours. */
+      extended: extendedSession ? { session: extendedSession, change: extendedChange, changePct: total > 0 ? extendedChange / total : null } : null,
       positions: holdings.length,
+      /** Holdings valued at cost because no price was available. */
+      unpriced: holdings.filter((holding) => !holding.priced).map((holding) => holding.symbol),
+      /** Oldest quote behind the valuation (ms since epoch). */
+      pricesAsOf: holdings.reduce<number | null>((oldest, holding) => (holding.priceAsOf !== null && (oldest === null || holding.priceAsOf < oldest) ? holding.priceAsOf : oldest), null),
     },
   };
 }
@@ -184,6 +267,8 @@ export type RiskModel = {
   returns: number[][];
   benchmark: { symbol: string; returns: number[] } | null;
   excluded: string[];
+  /** Symbols listed inside the window whose earlier days are modelled from the benchmark via beta. */
+  backfilled: string[];
 };
 
 /** Aligned daily returns for the current holdings (plus benchmark) over the lookback window. */
@@ -200,19 +285,33 @@ export async function buildRiskModel(
   const maps = usable.map((symbol) => dailyReturns((candles.get(symbol) as Candle[]).map((candle) => ({ t: candle.t, c: candle.c }))));
   const benchmarkCandles = candles.get(benchmarkSymbol) ?? [];
   const benchmarkMap = dailyReturns(benchmarkCandles.map((candle) => ({ t: candle.t, c: candle.c })));
-  const { dates, matrix } = alignReturns(benchmarkCandles.length > 60 ? [...maps, benchmarkMap] : maps);
-  const start = Math.max(0, dates.length - lookbackDays);
-  const cut = (row: number[]) => row.slice(start);
   const hasBenchmark = benchmarkCandles.length > 60;
   const valueBySymbol = new Map(holdings.map((holding) => [holding.symbol, holding.marketValue]));
   const totalUsable = usable.reduce((sum, symbol) => sum + (valueBySymbol.get(symbol) ?? 0), 0);
+  const weights = usable.map((symbol) => (totalUsable > 0 ? (valueBySymbol.get(symbol) ?? 0) / totalUsable : 0));
+  if (hasBenchmark) {
+    const filled = backfillReturns(maps, benchmarkMap);
+    const start = Math.max(0, filled.dates.length - lookbackDays);
+    return {
+      symbols: usable,
+      weights,
+      dates: filled.dates.slice(start),
+      returns: filled.matrix.map((row) => row.slice(start)),
+      benchmark: { symbol: benchmarkSymbol, returns: filled.market.slice(start) },
+      excluded,
+      backfilled: usable.filter((_, index) => filled.firstReal[index] > start),
+    };
+  }
+  const { dates, matrix } = alignReturns(maps);
+  const start = Math.max(0, dates.length - lookbackDays);
   return {
     symbols: usable,
-    weights: usable.map((symbol) => (totalUsable > 0 ? (valueBySymbol.get(symbol) ?? 0) / totalUsable : 0)),
+    weights,
     dates: dates.slice(start),
-    returns: matrix.slice(0, usable.length).map(cut),
-    benchmark: hasBenchmark ? { symbol: benchmarkSymbol, returns: cut(matrix[matrix.length - 1]) } : null,
+    returns: matrix.map((row) => row.slice(start)),
+    benchmark: null,
     excluded,
+    backfilled: [],
   };
 }
 
@@ -271,7 +370,7 @@ export function riskStatistics(model: RiskModel, riskFree: number) {
 /** Portfolio value through time from the ledger, plus a time-weighted index vs the benchmark. */
 export async function performanceHistory(transactions: TransactionRow[], benchmarkSymbol: string) {
   if (!transactions.length) return [];
-  const sorted = [...transactions].sort((a, b) => a.traded_at.localeCompare(b.traded_at));
+  const sorted = sortTrades(transactions);
   const first = sorted[0].traded_at;
   const years = Math.min(10, (Date.now() - Date.parse(first)) / (365.25 * 86_400_000) + 0.1);
   const symbols = [...new Set(sorted.map((tx) => tx.symbol))];
@@ -298,10 +397,20 @@ export async function performanceHistory(transactions: TransactionRow[], benchma
     const dayIso = new Date(day * 1000).toISOString().slice(0, 10);
     while (txIndex < sorted.length && sorted[txIndex].traded_at <= dayIso) {
       const tx = sorted[txIndex];
-      const signedQuantity = tx.side === 'buy' ? tx.quantity : -tx.quantity;
-      shares.set(tx.symbol, (shares.get(tx.symbol) ?? 0) + signedQuantity);
-      const amount = tx.quantity * tx.price + (tx.side === 'buy' ? tx.fees : -tx.fees);
-      flow += tx.side === 'buy' ? amount : -amount;
+      const held = shares.get(tx.symbol) ?? 0;
+      // Never sell more than is held, matching the holdings replay.
+      const quantity = tx.side === 'buy' ? tx.quantity : Math.min(tx.quantity, Math.max(0, held));
+      shares.set(tx.symbol, held + (tx.side === 'buy' ? quantity : -quantity));
+      // Until a symbol has a close of its own, it is carried at its trade price so the flow and the value agree.
+      if (!lastClose.has(tx.symbol) && tx.price > 0) lastClose.set(tx.symbol, tx.price);
+      if (tx.kind === 'removal') {
+        // Shares leaving without a sale are an outflow at market value, not a loss.
+        flow -= quantity * (closes.get(tx.symbol)?.get(day) ?? lastClose.get(tx.symbol) ?? tx.price);
+      } else if (tx.side === 'buy') {
+        flow += quantity * tx.price + tx.fees;
+      } else {
+        flow -= quantity * tx.price - (tx.quantity > 0 ? (tx.fees * quantity) / tx.quantity : 0);
+      }
       txIndex += 1;
     }
     invested += flow;
@@ -312,9 +421,11 @@ export async function performanceHistory(transactions: TransactionRow[], benchma
       if (close) lastClose.set(symbol, close);
       value += count * (lastClose.get(symbol) ?? 0);
     }
-    if (previousValue > 0) {
-      const dailyReturn = (value - flow) / previousValue - 1;
-      if (Number.isFinite(dailyReturn) && Math.abs(dailyReturn) < 0.5) twr *= 1 + dailyReturn;
+    // Time-weighted return: the day's gain on the capital at work (yesterday's value plus today's buys).
+    const base = previousValue + Math.max(0, flow);
+    if (base > 0) {
+      const dailyReturn = (value - Math.min(0, flow)) / base - 1;
+      if (Number.isFinite(dailyReturn)) twr *= 1 + dailyReturn;
     }
     previousValue = value;
     points.push({ t: day, value, invested, twr: twr * 100, benchmark: ((benchmarkClose.get(day) ?? benchmarkBase) / benchmarkBase) * 100 });
@@ -327,10 +438,11 @@ export async function riskFreeFor(preferred: number | null | undefined) {
   return getRiskFreeRate();
 }
 
-export function sectorExposure(holdings: Holding[], cash: number) {
-  const total = holdings.reduce((sum, holding) => sum + holding.marketValue, 0) + cash;
+export function sectorExposure(holdings: Holding[], cash: number, fixedIncome = 0) {
+  const total = holdings.reduce((sum, holding) => sum + holding.marketValue, 0) + cash + fixedIncome;
   const map = new Map<string, number>();
   for (const holding of holdings) map.set(holding.sector ?? 'Other', (map.get(holding.sector ?? 'Other') ?? 0) + holding.marketValue);
+  if (fixedIncome > 0) map.set('Bonds', fixedIncome);
   if (cash > 0) map.set('Cash', cash);
   return [...map.entries()].map(([sector, value]) => ({ sector, value, weight: total > 0 ? value / total : 0 })).sort((a, b) => b.value - a.value);
 }

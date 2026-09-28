@@ -5,8 +5,8 @@ import { useMemo, useState, type ReactNode } from 'react';
 import useSWR from 'swr';
 
 import { Button } from '@/components/ui/button';
-import { Badge, EmptyState, Field, Input, Panel, PanelHeader, Skeleton, Stat, Switch } from '@/components/ui/primitives';
-import { fade, runDcf, sensitivity, waccFromInputs, type DcfAssumptions, type DcfYear } from '@/lib/finance/dcf';
+import { Badge, EmptyState, Field, Input, Panel, PanelHeader, Segmented, Skeleton, Stat, Switch } from '@/components/ui/primitives';
+import { applyLever, fade, runDcf, sensitivity, solveForPerShare, waccFromInputs, type DcfAssumptions, type DcfYear, type SolveLever } from '@/lib/finance/dcf';
 import { compactNumber, multiple, pct, price } from '@/lib/format';
 import type { DcfInputs } from '@/lib/services/dcf';
 import { cn } from '@/lib/utils';
@@ -49,7 +49,7 @@ function defaultModel(data: DcfInputs): Model {
   const growth = [...analyst, ...tail].slice(0, YEARS);
   return {
     growth,
-    ebitMargin: Array(YEARS).fill(d.ebitMargin),
+    ebitMargin: fade(d.ebitMargin, d.targetMargin, YEARS),
     taxRate: d.taxRate,
     daPct: d.daPct,
     capexPct: d.capexPct,
@@ -74,25 +74,95 @@ function defaultModel(data: DcfInputs): Model {
   };
 }
 
-const storageKey = (symbol: string) => `silvernote:dcf:${symbol}`;
+type Scenario = 'bear' | 'base' | 'bull';
+const SCENARIOS: Array<{ value: Scenario; label: string }> = [
+  { value: 'bear', label: 'Bear' },
+  { value: 'base', label: 'Base' },
+  { value: 'bull', label: 'Bull' },
+];
+/** Edited scenarios for one company; a scenario without a saved model uses its defaults. */
+type Saved = { active: Scenario; models: Partial<Record<Scenario, Model>> };
 
-function loadModel(symbol: string): Model | null {
+/**
+ * Defaults per scenario. Bear halves the growth above terminal and trims 3 points off the final-year margin;
+ * bull adds 40% to the growth above terminal and 5 points to the final-year margin.
+ */
+function scenarioModel(data: DcfInputs, scenario: Scenario): Model {
+  const base = defaultModel(data);
+  if (scenario === 'base') return base;
+  const [growthScale, marginShift] = scenario === 'bear' ? [0.5, -0.03] : [1.4, 0.05];
+  const t = base.terminalGrowth;
+  return {
+    ...base,
+    growth: base.growth.map((growth) => (growth > t ? t + (growth - t) * growthScale : growth)),
+    ebitMargin: base.ebitMargin.map((margin, index) => margin + (marginShift * index) / (YEARS - 1)),
+  };
+}
+
+// Bump the version when the default assumptions change so stale saved models are not reused.
+const storageKey = (symbol: string) => `silvernote:dcf:v3:${symbol}`;
+const isModel = (value: unknown): value is Model => Array.isArray((value as Model | null)?.growth) && (value as Model).growth.length === YEARS;
+
+function loadSaved(symbol: string): Saved {
+  const empty: Saved = { active: 'base', models: {} };
   try {
     const raw = window.localStorage.getItem(storageKey(symbol));
-    const parsed = raw ? (JSON.parse(raw) as Model) : null;
-    return parsed && Array.isArray(parsed.growth) && parsed.growth.length === YEARS ? parsed : null;
+    if (raw) {
+      const parsed = JSON.parse(raw) as Saved;
+      const models = Object.fromEntries(Object.entries(parsed.models ?? {}).filter(([key, model]) => SCENARIOS.some((s) => s.value === key) && isModel(model)));
+      return { active: SCENARIOS.some((s) => s.value === parsed.active) ? parsed.active : 'base', models };
+    }
+    // One-model format from before scenarios: it becomes the base case.
+    const legacy = JSON.parse(window.localStorage.getItem(`silvernote:dcf:v2:${symbol}`) ?? 'null') as unknown;
+    return isModel(legacy) ? { active: 'base', models: { base: legacy } } : empty;
   } catch {
-    return null;
+    return empty;
   }
 }
 
-function saveModel(symbol: string, model: Model | null) {
+function storeSaved(symbol: string, saved: Saved) {
   try {
-    if (model) window.localStorage.setItem(storageKey(symbol), JSON.stringify(model));
-    else window.localStorage.removeItem(storageKey(symbol));
+    window.localStorage.setItem(storageKey(symbol), JSON.stringify(saved));
   } catch {
-    // storage unavailable: the model just isn't remembered
+    // storage unavailable: scenarios just aren't remembered
   }
+}
+
+/** Runs the model: discount rate, DCF result and the assumptions it used. */
+function evaluate(data: DcfInputs, model: Model) {
+  const capital = waccFromInputs({
+    riskFree: model.riskFree,
+    beta: model.beta,
+    equityRiskPremium: model.equityRiskPremium,
+    preTaxCostOfDebt: model.costOfDebt,
+    taxRate: model.taxRate,
+    // Market cap is in USD; convert to the reporting currency so the weights line up with debt.
+    marketCap: (data.marketCap ?? 0) / (data.fxToUsd ?? 1),
+    debt: model.debt,
+  });
+  const wacc = model.useWaccOverride ? model.waccOverride : capital.wacc;
+  const assumptions: DcfAssumptions = {
+    baseRevenue: data.baseRevenue ?? 0,
+    growth: model.growth,
+    ebitMargin: model.ebitMargin,
+    taxRate: model.taxRate,
+    daPctRevenue: model.daPct,
+    capexPctRevenue: model.capexPct,
+    nwcPctRevenue: model.nwcPct,
+    sbcPctRevenue: model.sbcPct,
+    deductSbc: model.deductSbc,
+    wacc,
+    terminalGrowth: model.terminalGrowth,
+    midYear: model.midYear,
+    cash: model.cash,
+    debt: model.debt,
+    leases: model.leases,
+    includeLeases: model.includeLeases,
+    minorityInterest: model.minorityInterest,
+    preferredStock: model.preferredStock,
+    shares: model.shares,
+  };
+  return { capital, wacc, assumptions, result: runDcf(assumptions) };
 }
 
 /**
@@ -154,18 +224,21 @@ const cell = 'px-3 py-1.5 text-right font-mono tabular-nums';
 
 export function DcfPanel({ symbol }: { symbol: string }) {
   const { data, isLoading } = useSWR<DcfInputs>(`/api/company/${symbol}/dcf`);
-  // Local edits; until the user changes something, the saved model (or the defaults) is used.
-  const [edits, setEdits] = useState<{ symbol: string; model: Model | null } | null>(null);
-  const saved = useMemo(() => (data ? loadModel(symbol) : null), [data, symbol]);
-  const current = edits?.symbol === symbol ? edits : null;
-  const model = current ? current.model ?? (data ? defaultModel(data) : null) : saved ?? (data ? defaultModel(data) : null);
-  const edited = current ? current.model !== null : saved !== null;
+  // Scenario edits; until the user changes something, the saved scenarios (or the defaults) are used.
+  const [edits, setEdits] = useState<{ symbol: string; saved: Saved } | null>(null);
+  const stored = useMemo(() => (data ? loadSaved(symbol) : null), [data, symbol]);
+  const saved = (edits?.symbol === symbol ? edits.saved : stored) ?? { active: 'base' as Scenario, models: {} };
+  const active = saved.active;
+  const model = saved.models[active] ?? (data ? scenarioModel(data, active) : null);
+  const edited = Boolean(saved.models[active]);
 
+  const commit = (next: Saved) => {
+    storeSaved(symbol, next);
+    setEdits({ symbol, saved: next });
+  };
   const update = (patch: Partial<Model>) => {
     if (!model) return;
-    const next = { ...model, ...patch };
-    saveModel(symbol, next);
-    setEdits({ symbol, model: next });
+    commit({ ...saved, models: { ...saved.models, [active]: { ...model, ...patch } } });
   };
   const setYear = (key: 'growth' | 'ebitMargin', index: number, value: number) => {
     if (!model) return;
@@ -174,49 +247,33 @@ export function DcfPanel({ symbol }: { symbol: string }) {
     update({ [key]: next } as Partial<Model>);
   };
   const reset = () => {
-    saveModel(symbol, null);
-    setEdits({ symbol, model: null });
+    const models = { ...saved.models };
+    delete models[active];
+    commit({ ...saved, models });
   };
 
   const computed = useMemo(() => {
     if (!data || !model || !data.baseRevenue) return null;
-    const capital = waccFromInputs({
-      riskFree: model.riskFree,
-      beta: model.beta,
-      equityRiskPremium: model.equityRiskPremium,
-      preTaxCostOfDebt: model.costOfDebt,
-      taxRate: model.taxRate,
-      // Market cap is in USD; convert to the reporting currency so the weights line up with debt.
-      marketCap: (data.marketCap ?? 0) / (data.fxToUsd || 1),
-      debt: model.debt,
-    });
-    const wacc = model.useWaccOverride ? model.waccOverride : capital.wacc;
-    const assumptions: DcfAssumptions = {
-      baseRevenue: data.baseRevenue,
-      growth: model.growth,
-      ebitMargin: model.ebitMargin,
-      taxRate: model.taxRate,
-      daPctRevenue: model.daPct,
-      capexPctRevenue: model.capexPct,
-      nwcPctRevenue: model.nwcPct,
-      sbcPctRevenue: model.sbcPct,
-      deductSbc: model.deductSbc,
-      wacc,
-      terminalGrowth: model.terminalGrowth,
-      midYear: model.midYear,
-      cash: model.cash,
-      debt: model.debt,
-      leases: model.leases,
-      includeLeases: model.includeLeases,
-      minorityInterest: model.minorityInterest,
-      preferredStock: model.preferredStock,
-      shares: model.shares,
-    };
-    const result = runDcf(assumptions);
+    const { capital, wacc, assumptions, result } = evaluate(data, model);
     const waccs = [-0.01, -0.005, 0, 0.005, 0.01].map((delta) => wacc + delta);
     const growths = [-0.01, -0.005, 0, 0.005, 0.01].map((delta) => model.terminalGrowth + delta);
-    return { capital, wacc, result, waccs, growths, grid: sensitivity(assumptions, waccs, growths) };
+    // Reverse DCF: what the current price implies, holding everything else in this scenario fixed.
+    const target = data.price && data.fxToUsd ? data.price / data.fxToUsd : null;
+    const implied = target
+      ? { margin: solveForPerShare(assumptions, target, 'margin'), growth: solveForPerShare(assumptions, target, 'growth') }
+      : null;
+    return { capital, wacc, result, waccs, growths, implied, grid: sensitivity(assumptions, waccs, growths) };
   }, [data, model]);
+
+  // Value per share (USD) of every scenario, for the summary strip.
+  const scenarioValues = useMemo(() => {
+    if (!data?.baseRevenue) return null;
+    return SCENARIOS.map(({ value, label }) => {
+      const scenarioModelValue = saved.models[value] ?? scenarioModel(data, value);
+      const perShare = evaluate(data, scenarioModelValue).result.perShare;
+      return { value, label, usd: perShare === null || !data.fxToUsd ? null : perShare * data.fxToUsd, edited: Boolean(saved.models[value]) };
+    });
+  }, [data, saved.models]);
 
   if (isLoading && !data) return <Skeleton className="h-[640px] w-full" />;
   if (!data || !data.baseRevenue) {
@@ -226,12 +283,27 @@ export function DcfPanel({ symbol }: { symbol: string }) {
       </Panel>
     );
   }
+  if (data.fxToUsd === null) {
+    return (
+      <Panel>
+        <EmptyState
+          title={`No ${data.currency} exchange rate right now`}
+          body={`${data.name} reports in ${data.currency}. Without a current rate its value per share can't be compared with the US dollar price, so the DCF is paused. Try again shortly.`}
+        />
+      </Panel>
+    );
+  }
   if (!model || !computed) return <Skeleton className="h-[640px] w-full" />;
 
-  const { result, capital, wacc } = computed;
-  const fx = data.fxToUsd || 1;
+  const { result, capital, wacc, implied } = computed;
+  // Writes a solved lever back into the scenario so the forecast table shows the path the price implies.
+  const applyImplied = (lever: SolveLever, value: number) => {
+    const next = applyLever({ growth: model.growth, ebitMargin: model.ebitMargin } as DcfAssumptions, lever, value);
+    update({ growth: next.growth, ebitMargin: next.ebitMargin });
+  };
+  const fx = data.fxToUsd ?? 1;
   const perShareUsd = result.perShare !== null ? result.perShare * fx : null;
-  const upside = perShareUsd !== null && data.price ? perShareUsd / data.price - 1 : null;
+  const upside = perShareUsd !== null && perShareUsd > 0 && data.price ? perShareUsd / data.price - 1 : null;
   const m = (value: number | null | undefined) => (value === null || value === undefined ? '—' : compactNumber(value));
   const foreign = data.currency !== 'USD';
 
@@ -243,9 +315,12 @@ export function DcfPanel({ symbol }: { symbol: string }) {
           kicker="Discounted cash flow"
           title={`${data.name} intrinsic value`}
           actions={
-            <Button size="xs" variant="ghost" onClick={reset} disabled={!edited}>
-              <RotateCcw className="size-3.5" /> Reset to defaults
-            </Button>
+            <div className="flex items-center gap-2">
+              <Segmented size="xs" value={active} onChange={(next) => commit({ ...saved, active: next })} options={SCENARIOS} />
+              <Button size="xs" variant="ghost" onClick={reset} disabled={!edited}>
+                <RotateCcw className="size-3.5" /> Reset {active}
+              </Button>
+            </div>
           }
         />
         <div className="grid grid-cols-2 gap-4 px-4 pb-4 sm:grid-cols-5">
@@ -258,6 +333,69 @@ export function DcfPanel({ symbol }: { symbol: string }) {
           <Stat label="Enterprise value" value={m(result.enterpriseValue)} sub={<span className="text-muted">{data.currency}</span>} />
           <Stat label="Terminal value share" value={pct(result.terminalShare)} sub={<span className="text-muted">Implied exit {multiple(result.impliedExitMultiple)} EBITDA</span>} />
         </div>
+        <div className="grid gap-4 border-t border-line px-4 py-3 sm:grid-cols-2">
+          <div>
+            <p className="mb-1.5 font-mono text-[10.5px] tracking-[0.14em] text-faint uppercase">Scenarios</p>
+            <div className="flex flex-wrap gap-x-5 gap-y-1 text-[12.5px]">
+              {scenarioValues?.map((scenario) => {
+                const up = scenario.usd !== null && scenario.usd > 0 && data.price ? scenario.usd / data.price - 1 : null;
+                return (
+                  <button
+                    key={scenario.value}
+                    type="button"
+                    onClick={() => commit({ ...saved, active: scenario.value })}
+                    className={cn('flex items-baseline gap-1.5 text-left', scenario.value === active ? 'text-ink' : 'text-muted hover:text-ink-2')}
+                  >
+                    <span>{scenario.label}{scenario.edited ? '*' : ''}</span>
+                    <span className="font-mono tabular-nums">{price(scenario.usd)}</span>
+                    {up !== null ? <span className={cn('font-mono text-[11px] tabular-nums', up >= 0 ? 'text-gain' : 'text-loss')}>{up >= 0 ? '+' : ''}{pct(up)}</span> : null}
+                  </button>
+                );
+              })}
+            </div>
+            <p className="mt-1 text-[11px] text-faint">Bear halves growth above terminal and trims margins 3 pts; bull lifts growth 40% and margins 5 pts. * edited</p>
+          </div>
+          <div>
+            <p className="mb-1.5 font-mono text-[10.5px] tracking-[0.14em] text-faint uppercase">What the price implies</p>
+            {implied ? (
+              <div className="flex flex-col gap-1 text-[12.5px]">
+                <ImpliedRow
+                  label={`Year ${YEARS} EBIT margin`}
+                  value={implied.margin}
+                  current={model.ebitMargin.at(-1) ?? 0}
+                  format={(v) => pct(v)}
+                  onApply={() => implied.margin !== null && applyImplied('margin', implied.margin)}
+                />
+                <ImpliedRow
+                  label="Growth, every year"
+                  value={implied.growth}
+                  current={0}
+                  format={(v) => `${v >= 0 ? '+' : ''}${(v * 100).toFixed(1)} pts`}
+                  onApply={() => implied.growth !== null && applyImplied('growth', implied.growth)}
+                />
+                <p className="text-[11px] text-faint">Each solved on its own, holding the rest of this scenario fixed. Apply writes it into the forecast.</p>
+              </div>
+            ) : (
+              <p className="text-[12px] text-muted">No current price to solve against.</p>
+            )}
+          </div>
+        </div>
+        {data.financial || data.defaults.targetMargin !== data.defaults.ebitMargin ? (
+          <div className="flex flex-col gap-1 border-t border-line px-4 py-2.5 text-[11.5px] text-muted">
+            {data.financial ? (
+              <p>
+                <span className="text-loss">Financial company.</span> A free-cash-flow-to-the-firm model treats debt as financing, but for banks and insurers
+                deposits and borrowings are the business itself. Treat this value as rough; a dividend or excess-return model fits better.
+              </p>
+            ) : null}
+            {data.defaults.targetMargin !== data.defaults.ebitMargin ? (
+              <p>
+                Operating margin is negative today ({pct(data.defaults.ebitMargin)}), so the default fades it to {pct(data.defaults.targetMargin)} by year {YEARS}{' '}
+                ({data.history.some((year) => (year.ebitMargin ?? 0) > 0) ? 'its historical average' : 'a generic mature margin'}). Edit the margins to change the path.
+              </p>
+            ) : null}
+          </div>
+        ) : null}
       </Panel>
 
       {/* Forecast table */}
@@ -311,14 +449,14 @@ export function DcfPanel({ symbol }: { symbol: string }) {
                   ['+ D&A', (y) => y.da],
                   ['− Capex', (y) => -y.capex],
                   ['− Change in working capital', (y) => -y.changeNwc],
-                  ...(model.deductSbc ? [['− Stock-based comp', (y: DcfYear) => -y.sbc] as const] : []),
+                  ...(model.deductSbc ? [] : [['+ Stock-based comp', (y: DcfYear) => y.sbc] as const]),
                 ] as Array<readonly [string, (year: DcfYear) => number]>
               ).map(([label, pick]) => (
                 <tr key={label} className="border-t border-line">
                   <td className="sticky left-0 bg-surface-1 px-3 py-1.5 text-muted">{label}</td>
                   {data.history.map((year) => (
                     <td key={year.label} className={cn(cell, 'text-faint')}>
-                      {label === 'EBIT' ? m(year.ebit) : label === '+ D&A' ? m(year.da) : label === '− Capex' ? m(year.capex === null ? null : -year.capex) : label === '− Stock-based comp' ? m(year.sbc === null ? null : -year.sbc) : ''}
+                      {label === 'EBIT' ? m(year.ebit) : label === '+ D&A' ? m(year.da) : label === '− Capex' ? m(year.capex === null ? null : -year.capex) : label === '+ Stock-based comp' ? m(year.sbc) : ''}
                     </td>
                   ))}
                   <td className={cell} />
@@ -341,7 +479,8 @@ export function DcfPanel({ symbol }: { symbol: string }) {
           </table>
         </div>
         <p className="border-t border-line px-4 py-2.5 text-[11px] text-faint">
-          Faded columns are reported history (operating cash flow minus capex for free cash flow). Year columns use the assumptions below.
+          Faded columns are reported history (operating cash flow minus capex for free cash flow, so stock comp is added back). EBIT is GAAP, after stock
+          comp: with “Treat SBC as a cost” on it stays deducted; off, it is added back like reported free cash flow. Year columns use the assumptions below.
         </p>
       </Panel>
 
@@ -350,10 +489,10 @@ export function DcfPanel({ symbol }: { symbol: string }) {
         <Panel>
           <PanelHeader kicker="Assumptions" title="Operations" />
           <div className="grid grid-cols-2 gap-3 px-4 pb-4">
-            <Field label="Tax rate" hint="3-year effective rate"><PctInput value={model.taxRate} onChange={(taxRate) => update({ taxRate })} /></Field>
+            <Field label="Tax rate" hint="3-year effective rate, one-offs excluded"><PctInput value={model.taxRate} onChange={(taxRate) => update({ taxRate })} /></Field>
             <Field label="D&A % of revenue"><PctInput value={model.daPct} onChange={(daPct) => update({ daPct })} /></Field>
             <Field label="Capex % of revenue"><PctInput value={model.capexPct} onChange={(capexPct) => update({ capexPct })} /></Field>
-            <Field label="Working capital % of revenue" hint="Receivables + inventory − payables"><PctInput value={model.nwcPct} onChange={(nwcPct) => update({ nwcPct })} /></Field>
+            <Field label="Working capital % of revenue" hint="Receivables + inventory − payables − deferred revenue"><PctInput value={model.nwcPct} onChange={(nwcPct) => update({ nwcPct })} /></Field>
             <Field label="Stock comp % of revenue"><PctInput value={model.sbcPct} onChange={(sbcPct) => update({ sbcPct })} /></Field>
             <div className="flex items-end pb-1.5"><Toggle checked={model.deductSbc} onChange={(deductSbc) => update({ deductSbc })} label="Treat SBC as a cost" /></div>
           </div>
@@ -404,11 +543,12 @@ export function DcfPanel({ symbol }: { symbol: string }) {
             <BridgeRow label="− Preferred stock" input={<MillionsInput value={model.preferredStock} onChange={(preferredStock) => update({ preferredStock })} />} missing={data.bridge.preferredStock === null} />
             <BridgeRow label="Equity value" value={m(result.equityValue)} strong />
             <BridgeRow
-              label="Shares outstanding (M)"
+              label={data.bridge.sharesFromQuote ? 'Shares, in quoted units (M)' : 'Shares outstanding (M)'}
               input={<NumberInput value={model.shares / 1e6} digits={1} onChange={(value) => update({ shares: value * 1e6 })} />}
             />
           </div>
           <p className="border-t border-line px-4 py-2.5 text-[11px] text-faint">
+            {data.bridge.sharesFromQuote ? 'The share count is market cap ÷ quoted price, so it counts ADRs or the quoted share class rather than filed ordinary shares. ' : ''}
             Include leases when EBIT is after rent (US GAAP operating leases); leave them out to avoid double-counting. “None reported” means the filing had no tagged value.
           </p>
         </Panel>
@@ -511,6 +651,29 @@ export function DcfPanel({ symbol }: { symbol: string }) {
           </div>
         </Panel>
       </div>
+    </div>
+  );
+}
+
+function ImpliedRow({
+  label,
+  value,
+  current,
+  format,
+  onApply,
+}: {
+  label: string;
+  value: number | null;
+  current: number;
+  format: (value: number) => string;
+  onApply: () => void;
+}) {
+  return (
+    <div className="flex items-center gap-2">
+      <span className="text-muted">{label}</span>
+      <span className="ml-auto font-mono tabular-nums text-ink">{value === null ? 'out of range' : format(value)}</span>
+      <span className="w-24 text-right font-mono text-[11px] text-faint tabular-nums">now {format(current)}</span>
+      <Button size="xs" variant="ghost" onClick={onApply} disabled={value === null}>Apply</Button>
     </div>
   );
 }

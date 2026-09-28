@@ -5,6 +5,7 @@ import {
   Compass,
   Eye,
   FlaskConical,
+  History,
   LayoutDashboard,
   Newspaper,
   NotebookPen,
@@ -32,6 +33,7 @@ const NAV = [
     { href: '/watchlists', label: 'Watchlists', icon: Eye },
     { href: '/portfolio', label: 'Portfolio', icon: Briefcase },
     { href: '/simulations', label: 'Simulations', icon: FlaskConical },
+    { href: '/backtest', label: 'Backtest', icon: History },
   ] },
   { group: 'Research', items: [
     { href: '/notes', label: 'Notes & theses', icon: NotebookPen },

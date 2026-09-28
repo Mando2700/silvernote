@@ -11,11 +11,13 @@ const schema = z.object({
   benchmark: z.string().max(10).optional(),
   riskFreeRate: z.number().min(0).max(0.2).nullable().optional(),
   aiModel: z.string().max(60).nullable().optional(),
+  taxShortRate: z.number().min(0).max(0.7).optional(),
+  taxLongRate: z.number().min(0).max(0.5).optional(),
 });
 
 export const GET = route(async ({ user }) => {
   const row = await q1<{ data: Record<string, unknown> }>('select data from public.user_settings where user_id = $1', [user.id]);
-  return { marketColors: 'red-green', motion: 'system', benchmark: 'SPY', riskFreeRate: null, aiModel: null, ...(row?.data ?? {}) };
+  return { marketColors: 'red-green', motion: 'system', benchmark: 'SPY', riskFreeRate: null, aiModel: null, taxShortRate: 0.32, taxLongRate: 0.15, ...(row?.data ?? {}) };
 });
 
 export const PUT = route(async ({ request, user }) => {

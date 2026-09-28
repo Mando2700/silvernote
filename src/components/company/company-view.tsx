@@ -2,7 +2,7 @@
 
 import { ExternalLink, Sparkles } from 'lucide-react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { useEffect, useMemo, useState, ViewTransition } from 'react';
+import { useCallback, useEffect, useMemo, useState, ViewTransition } from 'react';
 import useSWR from 'swr';
 
 import { PriceChart, type ChartMarker } from '@/components/charts/price-chart';
@@ -118,7 +118,14 @@ function Overview({ data, onTab }: { data: CompanyPayload; onTab: (tab: Tab) => 
   const [range, setRange] = useState<(typeof RANGES)[number]>('1y');
   const [mode, setMode] = useState<'area' | 'candles'>('area');
   const symbol = data.symbol;
-  const { data: candles } = useSWR<{ candles: Candle[] }>(`/api/company/${symbol}/candles?range=${range}`);
+  // Pages of older history loaded as the chart is zoomed out; a new symbol or range starts from one page.
+  const [history, setHistory] = useState({ view: '', pages: 1 });
+  const view = `${symbol}:${range}`;
+  const pages = history.view === view ? history.pages : 1;
+  const { data: candles } = useSWR<{ candles: Candle[]; range: string }>(
+    `/api/company/${symbol}/candles?range=${range}${pages > 1 ? `&pages=${pages}` : ''}`,
+  );
+  const loadOlder = useCallback(() => setHistory((current) => ({ view, pages: current.view === view ? Math.min(current.pages * 2, 32) : 2 })), [view]);
   const { data: workspace } = useSWR<WorkspaceData>(`/api/workspaces/${symbol}`);
   const { data: statements } = useSWR<StandardizedStatements>(`/api/company/${symbol}/statements`);
   const { data: news } = useSWR<{ news: NewsItem[] }>(`/api/company/${symbol}/news`);
@@ -155,7 +162,7 @@ function Overview({ data, onTab }: { data: CompanyPayload; onTab: (tab: Tab) => 
           </div>
           <div className="px-4 pt-2 pb-3">
             {candles?.candles.length ? (
-              <PriceChart candles={candles.candles} mode={mode} height={340} animationKey={symbol} markers={markers} targetPrice={workspace?.meta?.target_price ?? null} />
+              <PriceChart candles={candles.candles} mode={mode} height={340} animationKey={symbol} rangeKey={candles.range} onReachStart={loadOlder} markers={markers} targetPrice={workspace?.meta?.target_price ?? null} />
             ) : (
               <Skeleton className="h-[340px] w-full" />
             )}

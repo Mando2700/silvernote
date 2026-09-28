@@ -49,6 +49,7 @@ export const limiters = {
   fred: new RateLimiter(300, 2),
   xai: new RateLimiter(0, 4),
   news: new RateLimiter(250, 3),
+  yahoo: new RateLimiter(300, 2),
 };
 
 export function sleep(ms: number) {

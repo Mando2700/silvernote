@@ -172,16 +172,44 @@ async function init(): Promise<Driver> {
   return driver;
 }
 
-const globalForDb = globalThis as unknown as { __silvernoteDb?: Promise<Driver> };
+const globalForDb = globalThis as unknown as {
+  __silvernoteDb?: Promise<Driver>;
+  __silvernoteMigrationCheck?: { at: number; files: string; running: Promise<void> | null };
+};
 
-export function getDb(): Promise<Driver> {
+/**
+ * In development the server outlives code changes, so a migration added while it runs would never
+ * apply (they run at startup) and queries would hit a missing column. Look for new files every few
+ * seconds and apply them before the next query.
+ */
+async function applyNewMigrations(driver: Driver) {
+  if (process.env.NODE_ENV === 'production') return;
+  const state = (globalForDb.__silvernoteMigrationCheck ??= { at: Date.now(), files: '', running: null });
+  if (state.running) return state.running;
+  if (Date.now() - state.at < 3_000) return;
+  state.at = Date.now();
+  state.running = (async () => {
+    const files = (await fs.readdir(MIGRATIONS_DIR)).filter((file) => file.endsWith('.sql')).sort().join('|');
+    if (files !== state.files) {
+      await migrate(driver);
+      state.files = files;
+    }
+  })().finally(() => {
+    state.running = null;
+  });
+  return state.running;
+}
+
+export async function getDb(): Promise<Driver> {
   if (!globalForDb.__silvernoteDb) {
     globalForDb.__silvernoteDb = init().catch((error) => {
       globalForDb.__silvernoteDb = undefined;
       throw error;
     });
   }
-  return globalForDb.__silvernoteDb;
+  const driver = await globalForDb.__silvernoteDb;
+  await applyNewMigrations(driver);
+  return driver;
 }
 
 export async function q<T = Row>(text: string, params?: unknown[]): Promise<T[]> {

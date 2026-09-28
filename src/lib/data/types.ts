@@ -15,6 +15,22 @@ export type Quote = {
   timestamp: number | null;
   source: string;
   realtime?: boolean;
+  /** Pre-market or after-hours trading, measured from the regular session's close. */
+  extended?: ExtendedQuote | null;
+};
+
+export type ExtendedQuote = {
+  session: 'pre' | 'post';
+  price: number;
+  /** Move from the regular close. */
+  change: number;
+  /** Percent (5 = 5%). */
+  changePct: number | null;
+  timestamp: number | null;
+  /** The regular session behind it: its close and that day's move. */
+  close: number;
+  closeChange: number | null;
+  closeChangePct: number | null;
 };
 
 export type NewsItem = {

@@ -14,17 +14,29 @@ export const GET = route<{ id: string }>(async ({ user, params }) => {
     holdings,
     summary,
     transactions,
-    sectors: sectorExposure(holdings, portfolio.cash),
+    sectors: sectorExposure(holdings, portfolio.cash, summary.fixedIncome),
     concentration: concentrationStats(holdings),
   };
 });
 
 export const PATCH = route<{ id: string }>(async ({ request, user, params }) => {
   await getPortfolio(user.id, params.id);
-  const input = await body(request, z.object({ name: z.string().trim().min(1).max(60).optional(), benchmark: z.string().trim().min(1).max(10).optional(), cash: z.number().min(0).max(1e12).optional() }));
+  const input = await body(
+    request,
+    z.object({
+      name: z.string().trim().min(1).max(60).optional(),
+      benchmark: z.string().trim().min(1).max(10).optional(),
+      // Negative for a margin loan (as synced from IBKR).
+      cash: z.number().min(-1e12).max(1e12).optional(),
+      lot_method: z.enum(['fifo', 'lifo', 'hifo']).optional(),
+      account_type: z.enum(['taxable', 'tax_deferred', 'tax_free']).optional(),
+    }),
+  );
   const [row] = await q(
-    'update public.portfolios set name = coalesce($3, name), benchmark = coalesce($4, benchmark), cash = coalesce($5, cash) where id = $1 and user_id = $2 returning *',
-    [params.id, user.id, input.name ?? null, input.benchmark?.toUpperCase() ?? null, input.cash ?? null],
+    `update public.portfolios set name = coalesce($3, name), benchmark = coalesce($4, benchmark), cash = coalesce($5, cash),
+       lot_method = coalesce($6, lot_method), account_type = coalesce($7, account_type)
+     where id = $1 and user_id = $2 returning *`,
+    [params.id, user.id, input.name ?? null, input.benchmark?.toUpperCase() ?? null, input.cash ?? null, input.lot_method ?? null, input.account_type ?? null],
   );
   return row;
 });

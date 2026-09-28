@@ -8,6 +8,7 @@ import useSWR from 'swr';
 import { Button } from '@/components/ui/button';
 import { Modal, Menu } from '@/components/ui/overlay';
 import { Field, Input, Segmented, Select } from '@/components/ui/primitives';
+import { localToday } from '@/lib/dates';
 import { api, revalidate } from '@/lib/client';
 import { relativeTime } from '@/lib/format';
 
@@ -192,7 +193,7 @@ export function TradeButton({ symbol, price }: { symbol: string; price: number |
   const [side, setSide] = useState<'buy' | 'sell'>('buy');
   const [quantity, setQuantity] = useState('');
   const [tradePrice, setTradePrice] = useState('');
-  const [date, setDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [date, setDate] = useState(() => localToday());
   const [fees, setFees] = useState('');
   const [saving, setSaving] = useState(false);
 
@@ -267,7 +268,7 @@ export function TradeButton({ symbol, price }: { symbol: string; price: number |
               <Input inputMode="decimal" value={tradePrice} onChange={(event) => setTradePrice(event.target.value)} placeholder={price ? price.toFixed(2) : '0.00'} />
             </Field>
             <Field label="Trade date">
-              <Input type="date" value={date} max={new Date().toISOString().slice(0, 10)} onChange={(event) => setDate(event.target.value)} />
+              <Input type="date" value={date} max={localToday()} onChange={(event) => setDate(event.target.value)} />
             </Field>
             <Field label="Fees">
               <Input inputMode="decimal" value={fees} onChange={(event) => setFees(event.target.value)} placeholder="0" />

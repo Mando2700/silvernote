@@ -13,7 +13,13 @@ const ETF_SYMBOLS = new Set([
   'XLK', 'XLF', 'XLV', 'XLY', 'XLP', 'XLE', 'XLI', 'XLB', 'XLU', 'XLRE', 'XLC', 'SMH', 'ARKK', 'VNQ', 'BND', 'SCHD',
 ]);
 
-type StoredRow = { candles: Array<[number, number, number, number, number, number | null]>; first_date: string | null; last_date: string | null; fetched_at: Date };
+type StoredRow = {
+  candles: Array<[number, number, number, number, number, number | null]>;
+  first_date: string | null;
+  last_date: string | null;
+  fetched_at: Date;
+  adjusted_at: Date | null;
+};
 
 const toCandle = ([t, o, h, l, c, v]: [number, number, number, number, number, number | null]): Candle => ({ t, o, h, l, c, v });
 const toTuple = (candle: Candle): [number, number, number, number, number, number | null] => [candle.t, candle.o, candle.h, candle.l, candle.c, candle.v];
@@ -64,14 +70,28 @@ async function download(symbol: string, from: string, to: string): Promise<{ can
 }
 
 /**
- * Daily candles for at least `years` of history (Nasdaq serves up to ~10 years).
- * Stored per symbol and topped up incrementally once the next session closes.
+ * True when freshly downloaded closes disagree with the stored ones on the days they share: the
+ * history has been re-adjusted since it was stored (a split or similar), so the stored part is stale.
+ */
+export function historyRebased(existing: Candle[], incoming: Candle[]) {
+  const stored = new Map(existing.map((candle) => [candle.t, candle.c]));
+  const ratios = incoming.filter((candle) => stored.has(candle.t)).map((candle) => candle.c / (stored.get(candle.t) as number));
+  if (!ratios.length) return false;
+  ratios.sort((a, b) => a - b);
+  const median = ratios[Math.floor(ratios.length / 2)];
+  return Math.abs(median - 1) > 0.02;
+}
+
+/**
+ * Daily candles for at least `years` of history (Nasdaq serves up to ~10 years), split-adjusted.
+ * Stored per symbol and topped up incrementally once the next session closes. A top-up that no
+ * longer lines up with the stored closes (a split since) replaces the whole history.
  */
 export async function getCandles(symbol: string, years = 2): Promise<Candle[]> {
   const upper = symbol.toUpperCase();
   return memo(`candles:${upper}:${years}`, 60_000, async () => {
     const row = await q1<StoredRow>(
-      'select candles, first_date::text as first_date, last_date::text as last_date, fetched_at from public.price_history where symbol = $1',
+      'select candles, first_date::text as first_date, last_date::text as last_date, fetched_at, adjusted_at from public.price_history where symbol = $1',
       [upper],
     );
     const wantedStart = new Date(Date.now() - years * 365.25 * 86_400_000);
@@ -80,27 +100,36 @@ export async function getCandles(symbol: string, years = 2): Promise<Candle[]> {
     const coversStart = row?.first_date ? row.first_date <= isoDate(new Date(wantedStart.getTime() + 10 * 86_400_000)) : false;
     const upToDate = row?.last_date ? row.last_date >= session : false;
     const recentlyFetched = row ? Date.now() - new Date(row.fetched_at).getTime() < 4 * 3_600_000 : false;
-    if (row && coversStart && (upToDate || recentlyFetched)) return trimTo(existing, wantedStart);
+    // Rows stored before split checks existed are downloaded again in full once.
+    const trusted = Boolean(row?.adjusted_at);
+    if (row && trusted && coversStart && (upToDate || recentlyFetched)) return trimTo(existing, wantedStart);
+    if (row && !trusted && recentlyFetched && coversStart) return trimTo(existing, wantedStart);
 
-    let from = isoDate(wantedStart);
-    if (row && coversStart && row.last_date) {
-      from = isoDate(new Date(Date.parse(row.last_date) - 7 * 86_400_000));
+    // Keep at least the history already stored when re-downloading in full.
+    const fullFrom = isoDate(row?.first_date && row.first_date < isoDate(wantedStart) ? new Date(`${row.first_date}T00:00:00Z`) : wantedStart);
+    let full = !(row && trusted && coversStart && row.last_date);
+    let { candles, source } = await download(upper, full ? fullFrom : isoDate(new Date(Date.parse(row?.last_date as string) - 7 * 86_400_000)), isoDate(new Date()));
+    if (!full && candles.length && historyRebased(existing, candles)) {
+      full = true;
+      ({ candles, source } = await download(upper, fullFrom, isoDate(new Date())));
     }
-    const { candles, source } = await download(upper, from, isoDate(new Date()));
-    const merged = merge(coversStart ? existing : [], candles.length ? candles : []);
+    const downloaded = candles.length > 0;
+    const merged = full ? candles : merge(existing, candles);
     const finalCandles = merged.length ? merged : existing;
     if (finalCandles.length) {
       await q(
-        `insert into public.price_history (symbol, candles, first_date, last_date, source, fetched_at)
-         values ($1, $2::jsonb, $3::date, $4::date, $5, now())
+        `insert into public.price_history (symbol, candles, first_date, last_date, source, fetched_at, adjusted_at)
+         values ($1, $2::jsonb, $3::date, $4::date, coalesce($5, 'none'), now(), case when $6 then now() else null end)
          on conflict (symbol) do update set candles = excluded.candles, first_date = excluded.first_date,
-           last_date = excluded.last_date, source = excluded.source, fetched_at = now()`,
+           last_date = excluded.last_date, source = coalesce($5, price_history.source), fetched_at = now(),
+           adjusted_at = case when $6 then now() else price_history.adjusted_at end`,
         [
           upper,
           JSON.stringify(finalCandles.map(toTuple)),
           isoDate(new Date(finalCandles[0].t * 1000)),
           isoDate(new Date(finalCandles[finalCandles.length - 1].t * 1000)),
-          source,
+          downloaded ? source : null,
+          full && downloaded,
         ],
       );
     }

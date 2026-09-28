@@ -1,8 +1,9 @@
 import 'server-only';
 
+import { HttpError } from '@/lib/auth';
 import type { Candle } from '@/lib/data/types';
 import { betaFromCloses, concentration } from '@/lib/finance/stats';
-import { buildRiskModel, riskStatistics, type Holding } from '@/lib/services/portfolio';
+import { buildRiskModel, performanceHistory, riskStatistics, type Holding, type TransactionRow } from '@/lib/services/portfolio';
 import { getCandles, getCandlesForMany, getIndexHistory } from '@/lib/services/prices';
 import { getSecuritiesBySymbols } from '@/lib/services/universe';
 
@@ -118,14 +119,24 @@ export async function runStressTests(positions: Position[]) {
 }
 
 /** Compare risk, concentration, sectors and stress results before and after adding a position. */
-export async function whatIf(holdings: Holding[], cash: number, benchmark: string, riskFree: number, add: { symbol: string; amount: number }) {
+export async function whatIf(
+  holdings: Holding[],
+  cash: number,
+  benchmark: string,
+  riskFree: number,
+  add: { symbol: string; amount: number; date?: string | null },
+  transactions: TransactionRow[] = [],
+) {
   const symbol = add.symbol.toUpperCase();
   const [security] = await getSecuritiesBySymbols([symbol]);
+  const past = add.date ? await pastPurchase(symbol, add.amount, add.date) : null;
+  // A past purchase is worth what it grew into; a purchase today is worth what was paid.
+  const addedValue = past ? past.valueNow : add.amount;
   const before = holdings.map((holding) => ({ symbol: holding.symbol, marketValue: holding.marketValue, sector: holding.sector }));
   const after = before.map((holding) => ({ ...holding }));
   const existing = after.find((holding) => holding.symbol === symbol);
-  if (existing) existing.marketValue += add.amount;
-  else after.push({ symbol, marketValue: add.amount, sector: security?.sector ?? null });
+  if (existing) existing.marketValue += addedValue;
+  else after.push({ symbol, marketValue: addedValue, sector: security?.sector ?? null });
 
   const describe = async (positions: typeof before) => {
     const model = await buildRiskModel(positions, benchmark, 252 * 2);
@@ -154,6 +165,73 @@ export async function whatIf(holdings: Holding[], cash: number, benchmark: strin
     };
   };
 
-  const [baseline, proposed] = await Promise.all([describe(before), describe(after)]);
-  return { symbol, name: security?.name ?? symbol, amount: add.amount, baseline, proposed };
+  const [baseline, proposed, history] = await Promise.all([describe(before), describe(after), past ? performanceSince(transactions, benchmark, symbol, past) : null]);
+  return { symbol, name: security?.name ?? symbol, amount: add.amount, purchase: past ? { ...past, history } : null, baseline, proposed };
+}
+
+type PastPurchase = { date: string; price: number; shares: number; lastPrice: number; valueNow: number; gain: number; return: number };
+
+/** Buy `amount` dollars at the close of the first session on or after `date` (prices are split-adjusted). */
+async function pastPurchase(symbol: string, amount: number, date: string): Promise<PastPurchase> {
+  const years = Math.min(10, (Date.now() - Date.parse(date)) / (365.25 * 86_400_000) + 0.1);
+  const candles = await getCandles(symbol, Math.max(0.3, years));
+  const start = toDay(date);
+  const entry = candles.find((candle) => candle.t >= start);
+  const last = candles[candles.length - 1];
+  if (!entry || !last) throw new HttpError(400, `No ${symbol} price history on or after ${date}.`);
+  const shares = amount / entry.c;
+  const valueNow = shares * last.c;
+  return {
+    date: new Date(entry.t * 1000).toISOString().slice(0, 10),
+    price: entry.c,
+    shares,
+    lastPrice: last.c,
+    valueNow,
+    gain: valueNow - amount,
+    return: valueNow / amount - 1,
+  };
+}
+
+/** Actual performance since the purchase date next to the same ledger with the extra buy booked. */
+async function performanceSince(transactions: TransactionRow[], benchmark: string, symbol: string, purchase: PastPurchase) {
+  const extra: TransactionRow = {
+    id: 'whatif',
+    portfolio_id: transactions[0]?.portfolio_id ?? '',
+    symbol,
+    side: 'buy',
+    quantity: purchase.shares,
+    price: purchase.price,
+    fees: 0,
+    traded_at: purchase.date,
+    note: null,
+    created_at: new Date(`${purchase.date}T23:59:59Z`),
+    broker_execution_id: null,
+    kind: 'trade',
+    split_factor: 1,
+  };
+  const [actual, proposed] = await Promise.all([performanceHistory(transactions, benchmark), performanceHistory([...transactions, extra], benchmark)]);
+  const from = toDay(purchase.date);
+  const byDay = new Map(actual.map((point) => [point.t, point]));
+  const points = proposed.filter((point) => point.t >= from).map((point) => ({ t: point.t, proposed: point, actual: byDay.get(point.t) ?? null }));
+  if (!points.length) return null;
+  const first = points[0];
+  const last = points[points.length - 1];
+  const since = (end: { twr: number } | null, start: { twr: number } | null) => (end && start && start.twr ? end.twr / start.twr - 1 : null);
+  // The first day's return is measured from the prior close so the purchase day itself counts.
+  const prior = proposed[proposed.indexOf(first.proposed) - 1] ?? first.proposed;
+  const priorActual = byDay.get(prior.t) ?? first.actual;
+  return {
+    benchmark,
+    actualReturn: since(last.actual, priorActual),
+    proposedReturn: since(last.proposed, prior),
+    benchmarkReturn: last.proposed.benchmark / prior.benchmark - 1,
+    actualValue: last.actual?.value ?? 0,
+    proposedValue: last.proposed.value,
+    points: points.map((point) => ({
+      t: point.t,
+      actual: point.actual && priorActual ? (point.actual.twr / priorActual.twr - 1) * 100 : 0,
+      proposed: (point.proposed.twr / prior.twr - 1) * 100,
+      benchmark: (point.proposed.benchmark / prior.benchmark - 1) * 100,
+    })),
+  };
 }

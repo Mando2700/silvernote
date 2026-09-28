@@ -7,6 +7,7 @@ import { toast } from 'sonner';
 import { Modal } from '@/components/ui/overlay';
 import { Button } from '@/components/ui/button';
 import { Badge, Field, Input, Segmented, Select } from '@/components/ui/primitives';
+import { localToday } from '@/lib/dates';
 import { api } from '@/lib/client';
 import { money, price } from '@/lib/format';
 import { cn } from '@/lib/utils';
@@ -94,7 +95,7 @@ export function ImportPhotosModal({
   const [portfolioId, setPortfolioId] = useState(defaultPortfolioId ?? '');
   const [name, setName] = useState('Imported portfolio');
   const [costMode, setCostMode] = useState<'imported' | 'today'>('imported');
-  const [tradedAt, setTradedAt] = useState(() => new Date().toISOString().slice(0, 10));
+  const [tradedAt, setTradedAt] = useState(() => localToday());
   const [totalValue, setTotalValue] = useState('');
   const fileInput = useRef<HTMLInputElement>(null);
 
@@ -445,7 +446,7 @@ export function ImportPhotosModal({
               />
             </Field>
             <Field label="Opening trade date" hint="Performance and risk history start here.">
-              <Input type="date" value={tradedAt} max={new Date().toISOString().slice(0, 10)} onChange={(event) => setTradedAt(event.target.value)} />
+              <Input type="date" value={tradedAt} max={localToday()} onChange={(event) => setTradedAt(event.target.value)} />
             </Field>
             {needsTotal ? (
               <Field label="Total portfolio value" hint="Sizes rows that only show an allocation %." className="md:col-span-3">

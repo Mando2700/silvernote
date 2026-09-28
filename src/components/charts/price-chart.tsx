@@ -89,6 +89,14 @@ function priceRange(bars: Candle[], mode: Mode): PriceRange | null {
   return Number.isFinite(min) && Number.isFinite(max) ? { min, max } : null;
 }
 
+/** How many bars `next` adds before `previous`, when it is the same series with older history in front; otherwise 0. */
+function prependedCount(previous: Candle[], next: Candle[]) {
+  if (next.length <= previous.length || !previous.length) return 0;
+  const offset = next.length - previous.length;
+  if (next[offset].t !== previous[0].t || next[next.length - 1].t !== previous[previous.length - 1].t) return 0;
+  return offset;
+}
+
 function prefersReducedMotion() {
   if (typeof window === 'undefined') return true;
   const preference = document.documentElement.dataset.motion;
@@ -111,6 +119,8 @@ export function PriceChart({
   markers = [],
   targetPrice,
   animationKey,
+  rangeKey,
+  onReachStart,
   className,
 }: {
   candles: Candle[];
@@ -120,6 +130,10 @@ export function PriceChart({
   targetPrice?: number | null;
   /** Data for a different key (e.g. another symbol) replaces the chart instead of morphing into it. */
   animationKey?: string;
+  /** The selected timeframe: a new one re-frames the chart, while more bars under the same one are older history loaded on the left. */
+  rangeKey?: string;
+  /** Called when the view is zoomed or panned past the oldest loaded bar, to load more history. */
+  onReachStart?: () => void;
   className?: string;
 }) {
   const hostRef = useRef<HTMLDivElement>(null);
@@ -129,10 +143,16 @@ export function PriceChart({
   const modeRef = useRef(mode);
   const marketRef = useRef<MarketPalette | null>(null);
   // What is on screen right now (mid-transition frames included), so a new range morphs from the current frame.
-  const shownRef = useRef<{ bars: Candle[]; key: string | undefined }>({ bars: [], key: undefined });
+  const shownRef = useRef<{ bars: Candle[]; key: string | undefined; rangeKey: string | undefined }>({ bars: [], key: undefined, rangeKey: undefined });
   const animationRef = useRef<{ frame: number | null; range: PriceRange | null }>({ frame: null, range: null });
   const [series, setSeries] = useState<PriceSeries | null>(null);
   const [hover, setHover] = useState<Hover>(null);
+  const [visible, setVisible] = useState<{ from: number; to: number } | null>(null);
+  const onReachStartRef = useRef(onReachStart);
+  // Bar count at the last history request, so one zoom-out asks for one page.
+  const requestedAtRef = useRef(0);
+  // Set while the chart's data or viewport is changed in code, whose range events are not the user reaching the start.
+  const applyingRef = useRef(false);
   const market = useMarketColors();
   const sorted = useMemo(() => [...candles].sort((a, b) => a.t - b.t), [candles]);
 
@@ -162,6 +182,7 @@ export function PriceChart({
     const chart = chartRef.current;
     if (!chart || !count) return;
     const padding = modeRef.current === 'candles' ? CANDLE_EDGE_PADDING_BARS : 0;
+    chart.priceScale('right').applyOptions({ autoScale: true });
     chart.timeScale().setVisibleLogicalRange({ from: -padding, to: Math.max(count - 1, 1) + padding });
   };
 
@@ -187,13 +208,23 @@ export function PriceChart({
       },
       grid: { vertLines: { color: 'rgba(255,255,255,0.035)' }, horzLines: { color: 'rgba(255,255,255,0.035)' } },
       rightPriceScale: { borderVisible: false, scaleMargins: { top: 0.08, bottom: 0.22 } },
-      timeScale: { borderVisible: false, fixLeftEdge: false, fixRightEdge: false, rightOffset: 0, minBarSpacing: 0.5, timeVisible: false },
+      // Zooming keeps the latest bar where it is and grows or shrinks the view on the left, as in Nestor.
+      timeScale: {
+        borderVisible: false,
+        fixLeftEdge: false,
+        fixRightEdge: false,
+        rightOffset: 0,
+        minBarSpacing: 0.5,
+        timeVisible: false,
+        rightBarStaysOnScroll: true,
+      },
       crosshair: {
         mode: CrosshairMode.Magnet,
         vertLine: { color: 'rgba(255,255,255,0.28)', width: 1, style: LineStyle.Solid, labelBackgroundColor: '#1c2027' },
         horzLine: { color: 'rgba(255,255,255,0.18)', width: 1, style: LineStyle.Solid, labelBackgroundColor: '#1c2027' },
       },
-      handleScale: { axisPressedMouseMove: false },
+      // Drag the price axis to scale vertically and the time axis to scale horizontally; double-click an axis to reset.
+      handleScale: { mouseWheel: true, pinch: true, axisPressedMouseMove: { time: true, price: true }, axisDoubleClickReset: { time: true, price: true } },
     });
     const volume = chart.addSeries(HistogramSeries, { priceFormat: { type: 'volume' }, priceScaleId: 'volume', lastValueVisible: false, priceLineVisible: false });
     volume.priceScale().applyOptions({ scaleMargins: { top: 0.84, bottom: 0 } });
@@ -202,13 +233,23 @@ export function PriceChart({
     // Keep the whole range framed when the panel resizes, as Nestor re-fits on layout changes.
     const onResize = () => fitViewport(shownRef.current.bars.length);
     chart.timeScale().subscribeSizeChange(onResize);
+    const onRange: Parameters<ReturnType<IChartApi['timeScale']>['subscribeVisibleLogicalRangeChange']>[0] = (range) => {
+      setVisible(range ? { from: range.from, to: range.to } : null);
+      const count = shownRef.current.bars.length;
+      if (!range || !count || applyingRef.current || animationRef.current.frame !== null) return;
+      if (range.from < -CANDLE_EDGE_PADDING_BARS - 1 && requestedAtRef.current !== count) {
+        requestedAtRef.current = count;
+        onReachStartRef.current?.();
+      }
+    };
+    chart.timeScale().subscribeVisibleLogicalRangeChange(onRange);
     return () => {
       cancelAnimation();
       chart.remove();
       chartRef.current = null;
       volumeRef.current = null;
       priceRef.current = null;
-      shownRef.current = { bars: [], key: undefined };
+      shownRef.current = { bars: [], key: undefined, rangeKey: undefined };
     };
      
   }, [height]);
@@ -276,22 +317,38 @@ export function PriceChart({
     }
 
     const previous = shownRef.current;
+    const sameView = previous.bars.length > 0 && previous.key === animationKey && previous.rangeKey === rangeKey;
+    // Older history arrived for the same view: keep the user's zoom and pan, shifted by the bars added on the left.
+    const prepended = sameView ? prependedCount(previous.bars, sorted) : 0;
+    const chart = chartRef.current;
+    const range = chart?.timeScale().getVisibleLogicalRange();
     const canMorph = previous.bars.length > 0 && previous.key === animationKey && !prefersReducedMotion();
-    cancelAnimation();
-    shownRef.current.key = animationKey;
-    if (!canMorph) {
-      renderBars(sorted);
-      fitViewport(sorted.length);
-      return;
-    }
-
-    const from = resample(previous.bars, sorted);
+    const from = canMorph ? resample(previous.bars, sorted) : sorted;
     const fromRange = priceRange(from, mode);
     const toRange = priceRange(sorted, mode);
     const animation = animationRef.current;
-    animation.range = fromRange;
-    renderBars(from);
-    fitViewport(sorted.length);
+    cancelAnimation();
+    applyingRef.current = true;
+    try {
+      if (prepended > 0) {
+        renderBars(sorted);
+        if (chart && range) chart.timeScale().setVisibleLogicalRange({ from: range.from + prepended, to: range.to + prepended });
+        return;
+      }
+      shownRef.current.key = animationKey;
+      shownRef.current.rangeKey = rangeKey;
+      requestedAtRef.current = 0;
+      if (!canMorph) {
+        renderBars(sorted);
+        fitViewport(sorted.length);
+        return;
+      }
+      animation.range = fromRange;
+      renderBars(from);
+      fitViewport(sorted.length);
+    } finally {
+      applyingRef.current = false;
+    }
 
     let startedAt: number | null = null;
     const step = (now: number) => {
@@ -310,7 +367,11 @@ export function PriceChart({
     };
     animation.frame = requestAnimationFrame(step);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- helpers only read refs
-  }, [series, sorted, animationKey]);
+  }, [series, sorted, animationKey, rangeKey]);
+
+  useEffect(() => {
+    onReachStartRef.current = onReachStart;
+  }, [onReachStart]);
 
   useEffect(() => {
     if (!series || !sorted.length) return;
@@ -365,9 +426,12 @@ export function PriceChart({
   }, [sorted, height]);
 
   const last = sorted[sorted.length - 1];
-  const firstCandle = sorted[0];
+  // Return over the visible bars, so zooming or loading older history keeps the figure honest.
+  const clampIndex = (value: number) => Math.min(sorted.length - 1, Math.max(0, value));
+  const firstCandle = visible ? sorted[clampIndex(Math.ceil(visible.from))] : sorted[0];
+  const lastVisible = visible ? sorted[clampIndex(Math.floor(visible.to))] : last;
   const shown = hover ?? (last ? { ...last } : null);
-  const rangeReturn = firstCandle && last ? last.c / firstCandle.c - 1 : null;
+  const rangeReturn = firstCandle && lastVisible ? lastVisible.c / firstCandle.c - 1 : null;
 
   return (
     <div className={cn('relative', className)}>

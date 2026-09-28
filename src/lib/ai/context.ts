@@ -18,7 +18,11 @@ export type AssistantContext = { type: 'company'; symbol: string } | { type: 'po
 export const SYSTEM_PROMPT = `You are Grok, the research assistant inside SilverNote — a private investment research workstation used by one investor.
 
 How to work:
-- Ground every claim in the DATA block below. If a number isn't there, say it's not available rather than guessing. Never invent figures, quotes, or filings.
+- Company-specific figures (prices, financials, multiples, holdings, scores, headlines) come from the DATA block below. Never invent figures, quotes, or filings.
+- Derive what you can. If a metric isn't listed but follows from DATA, compute it and show the one-line math (e.g. P/FCF = 1 / FCF yield; PEG = P/E ÷ growth %; medians given as yields invert to multiples). Only say something is unavailable when it truly can't be computed, and then say what would be needed.
+- You can search the web and X. When DATA shows *what* changed but not *why* (a debt jump, a margin swing, a stock move, an acquisition, guidance), search for the reason — filings, press releases, earnings calls, reputable news — and cite sources. Don't say "no reason given in the data" without searching first. Skip searching when DATA already answers the question.
+- Use your own knowledge freely for everything that isn't a live number: what companies do, competitive positioning, industry structure, finance concepts, how metrics work, history. When a number you cite comes from your knowledge rather than DATA, mark it "(from memory, may be stale)".
+- Read follow-ups in light of the conversation. A bare list of tickers means "cover these"; short questions refer to what was just discussed. Answer the question asked — don't refuse because DATA is thin.
 - Be direct, quantitative and skeptical. Lead with the answer, then the evidence. Prefer numbers with units and periods (e.g. "FY25 revenue $416B, +6.4% y/y").
 - Use short markdown: a few headers, tight bullets, and tables when comparing. No filler, no hype.
 - When asked to challenge a thesis, argue the strongest opposing case and name specific, observable signals that would prove the thesis wrong.
@@ -69,9 +73,13 @@ export async function mentionedContext(message: string, exclude: string | null) 
   const listings = await getListings().catch(() => [] as UniverseEntry[]);
   const bySymbol = new Map(listings.map((entry) => [entry.symbol, entry]));
   const candidates = message.match(/\$?\b[A-Za-z]{1,5}(?:[.-][A-Za-z])?\b/g) ?? [];
+  // A message that is essentially a ticker list ("crwd ftnt msft orcl") counts in any case.
+  const known = (token: string) => bySymbol.has(token.toUpperCase().replace('-', '.'));
+  const words = message.split(/[\s,;]+/).filter(Boolean);
+  const tickerList = words.length >= 2 && words.filter((word) => /^\$?[A-Za-z.\-]{1,6}$/.test(word) && known(word.replace('$', ''))).length / words.length >= 0.75;
   const symbols: string[] = [];
   for (const raw of candidates) {
-    const explicit = raw.startsWith('$');
+    const explicit = raw.startsWith('$') || tickerList;
     const token = raw.replace('$', '');
     // Plain words count only when written in capitals and at least two letters, so "meta" or the P in "P/E"
     // are not read as tickers; "$F" still works.
@@ -79,7 +87,7 @@ export async function mentionedContext(message: string, exclude: string | null) 
     const symbol = token.toUpperCase().replace('-', '.');
     const entry = bySymbol.get(symbol) ?? bySymbol.get(symbol.replace('.', '-'));
     if (entry && entry.symbol !== exclude && !symbols.includes(entry.symbol)) symbols.push(entry.symbol);
-    if (symbols.length >= 6) break;
+    if (symbols.length >= (tickerList ? 12 : 6)) break;
   }
   if (!symbols.length) return null;
   const lines = ['COMPANIES NAMED IN THE QUESTION:', ...symbols.map((symbol) => `- ${snapshotLine(bySymbol.get(symbol)!)}`)];
@@ -170,12 +178,12 @@ export async function portfolioContext(userId: string, id: string) {
   const model = await buildRiskModel(holdings, portfolio.benchmark, 504).catch(() => null);
   const stats = model ? riskStatistics(model, await riskFreeFor(settings?.data?.riskFreeRate)) : null;
   const lines: string[] = [];
-  lines.push(`PORTFOLIO: ${portfolio.name}; benchmark ${portfolio.benchmark}; total ${money(summary.totalValue)} (invested ${money(summary.invested)}, cash ${money(summary.cash)}); unrealized P&L ${money(summary.unrealized)} (${pct(summary.unrealizedPct)}); realized ${money(summary.realized)}; today ${money(summary.dayChange)}.`);
+  lines.push(`PORTFOLIO: ${portfolio.name}; benchmark ${portfolio.benchmark}; total ${money(summary.totalValue)} (stocks ${money(summary.invested)}, bonds ${money(summary.fixedIncome)}, cash ${money(summary.cash)}); unrealized P&L ${money(summary.unrealized)} (${pct(summary.unrealizedPct)}); realized ${money(summary.realized)}; today ${money(summary.dayChange)}.`);
   lines.push('HOLDINGS (symbol · weight · value · unrealized · sector · SilverNote Score):');
   for (const holding of holdings) {
     lines.push(`- ${holding.symbol} · ${pct(holding.weight)} · ${money(holding.marketValue)} · ${money(holding.unrealized)} (${pct(holding.unrealizedPct)}) · ${holding.sector ?? 'n/a'} · ${holding.score ?? 'n/a'}`);
   }
-  lines.push(`SECTOR EXPOSURE: ${sectorExposure(holdings, portfolio.cash).map((item) => `${item.sector} ${pct(item.weight)}`).join(', ')}`);
+  lines.push(`SECTOR EXPOSURE: ${sectorExposure(holdings, portfolio.cash, summary.fixedIncome).map((item) => `${item.sector} ${pct(item.weight)}`).join(', ')}`);
   if (stats) {
     lines.push(
       `RISK (last ${stats.days} trading days at current weights): annualized return ${pct(stats.annualReturn)}, volatility ${pct(stats.volatility)}, beta ${stats.beta?.toFixed(2) ?? 'n/a'}, Sharpe ${stats.sharpe?.toFixed(2) ?? 'n/a'}, Sortino ${stats.sortino?.toFixed(2) ?? 'n/a'}, max drawdown ${pct(stats.maxDrawdown)}, 1-day VaR95 ${pct(stats.var95?.historical ?? null)}, benchmark volatility ${pct(stats.benchmarkVolatility)}.`,

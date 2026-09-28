@@ -210,12 +210,12 @@ export async function fetchNews(symbols: string[]): Promise<NewsItem[]> {
 
 type FmpEstimate = { date: string; revenueAvg?: number; revenueLow?: number; revenueHigh?: number; ebitAvg?: number; ebitdaAvg?: number; netIncomeAvg?: number; epsAvg?: number; numAnalystsRevenue?: number };
 
-/** Annual consensus revenue, EBIT and EPS estimates for the coming fiscal years. */
+/** Annual consensus revenue, EBIT and EPS estimates by fiscal year end, oldest first. */
 export async function fetchAnalystEstimates(symbol: string) {
   const rows = await get<FmpEstimate[]>('/analyst-estimates', { symbol: symbol.replace('.', '-'), period: 'annual', page: '0', limit: '10' });
-  const today = new Date().toISOString().slice(0, 10);
+  // Past fiscal years are kept: a year that has ended but isn't filed yet is still a forecast. Callers drop reported years.
   return (Array.isArray(rows) ? rows : [])
-    .filter((row) => row.date >= today)
+    .filter((row) => typeof row.date === 'string' && row.date)
     .sort((a, b) => a.date.localeCompare(b.date))
     .map((row) => ({
       fiscalEnd: row.date,

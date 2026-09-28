@@ -5,7 +5,7 @@ import { XMLParser } from 'fast-xml-parser';
 import { cleanSecurityName, isCommonStock, normalizeSymbol } from '@/lib/data/eligibility';
 import { mapSector } from '@/lib/data/sectors';
 import { BROWSER_UA, fetchJson, fetchText, limiters, parseLooseNumber } from '@/lib/data/http';
-import type { Candle, NewsItem, Quote, SecurityRow } from '@/lib/data/types';
+import type { Candle, ExtendedQuote, NewsItem, Quote, SecurityRow } from '@/lib/data/types';
 
 /**
  * Nasdaq's public website API: the whole US stock universe (with sector, industry and market cap)
@@ -158,8 +158,42 @@ type InfoPayload = {
     isRealTime?: boolean;
     volume?: string;
   };
+  /** Outside regular hours: the regular session's close ("Closed at Sep 25, 2026 4:00 PM ET"). */
+  secondaryData?: { lastSalePrice?: string; netChange?: string; percentageChange?: string } | null;
+  /** "Pre-Market", "Market Open", "After-Hours" or "Closed". */
+  marketStatus?: string;
   keyStats?: { fiftyTwoWeekHighLow?: { value?: string } };
 };
+
+/** "Sep 28, 2026 6:33 AM ET": Date.parse needs a concrete zone, so ET becomes the offset in force that day. */
+function parseEasternTime(stamp: string | undefined) {
+  if (!stamp) return NaN;
+  const cleaned = stamp.replace(/^.*?(?:as of|DATA AS OF|Closed at)\s*/i, '');
+  if (!/\bET$/.test(cleaned)) return Date.parse(cleaned);
+  const guess = Date.parse(cleaned.replace(/\s*ET$/, ' UTC'));
+  if (!Number.isFinite(guess)) return NaN;
+  const zone = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', timeZoneName: 'short' }).formatToParts(new Date(guess)).find((part) => part.type === 'timeZoneName')?.value;
+  return Date.parse(cleaned.replace(/ET$/, zone === 'EDT' ? 'EDT' : 'EST'));
+}
+
+/** Pre-market or after-hours prints, when Nasdaq reports the regular close alongside them. */
+function extendedSession(data: InfoPayload, price: number, timestamp: number): ExtendedQuote | null {
+  const status = (data.marketStatus ?? '').toLowerCase();
+  const session = status.startsWith('pre') ? 'pre' : status.startsWith('after') || status === 'closed' ? 'post' : null;
+  const close = parseLooseNumber(data.secondaryData?.lastSalePrice);
+  if (!session || close === null || close <= 0) return null;
+  const change = price - close;
+  return {
+    session,
+    price,
+    change,
+    changePct: (change / close) * 100,
+    timestamp: Number.isFinite(timestamp) ? timestamp : null,
+    close,
+    closeChange: parseLooseNumber(data.secondaryData?.netChange),
+    closeChangePct: parseLooseNumber(data.secondaryData?.percentageChange),
+  };
+}
 
 export async function fetchQuote(symbol: string, assetClass: 'stocks' | 'etf' = 'stocks'): Promise<Quote | null> {
   const data = await get<InfoPayload>(`/quote/${apiSymbol(symbol)}/info?assetclass=${assetClass}`);
@@ -168,8 +202,7 @@ export async function fetchQuote(symbol: string, assetClass: 'stocks' | 'etf' = 
   const price = parseLooseNumber(primary.lastSalePrice);
   if (price === null) return null;
   const change = parseLooseNumber(primary.netChange);
-  const stamp = primary.lastTradeTimestamp?.replace(/^.*?(?:as of|DATA AS OF)\s*/i, '');
-  const parsed = stamp ? Date.parse(stamp) : NaN;
+  const parsed = parseEasternTime(primary.lastTradeTimestamp);
   return {
     symbol: normalizeSymbol(symbol),
     price,
@@ -180,6 +213,7 @@ export async function fetchQuote(symbol: string, assetClass: 'stocks' | 'etf' = 
     timestamp: Number.isFinite(parsed) ? parsed : Date.now(),
     source: 'Nasdaq',
     realtime: Boolean(primary.isRealTime),
+    extended: extendedSession(data, price, parsed),
   };
 }
 
@@ -315,4 +349,28 @@ const PUBLISHER_FEEDS = [
 export async function fetchPublisherNews(): Promise<NewsItem[]> {
   const results = await Promise.allSettled(PUBLISHER_FEEDS.map((feed) => fetchRss(feed.url, feed.source)));
   return results.flatMap((result) => (result.status === 'fulfilled' ? result.value : []));
+}
+
+type ChartPayload = { previousClose?: string; chart?: Array<{ x: number; y: number; z?: { dateTime?: string } }> | null };
+
+/** Minute bars for the latest session (regular hours only), plus the prior close. */
+export async function fetchIntraday(symbol: string): Promise<{ previousClose: number; bars: Array<{ t: number; price: number }> } | null> {
+  for (const assetClass of ['stocks', 'etf'] as const) {
+    const data = await get<ChartPayload>(`/quote/${apiSymbol(symbol)}/chart?assetclass=${assetClass}`).catch(() => null);
+    const previousClose = parseLooseNumber(data?.previousClose);
+    if (!data?.chart?.length || previousClose === null) continue;
+    // `x` is the Eastern wall-clock time written as if it were UTC; shift it by the ET offset.
+    const offset = Date.parse(new Date(data.chart[0].x).toLocaleString('en-US', { timeZone: 'UTC' })) - Date.parse(new Date(data.chart[0].x).toLocaleString('en-US', { timeZone: 'America/New_York' }));
+    const bars = data.chart
+      .filter((point) => {
+        const match = /^(\d{1,2}):(\d{2})\s*(AM|PM)/i.exec(point.z?.dateTime ?? '');
+        if (!match) return true;
+        const minutes = ((Number(match[1]) % 12) + (match[3].toUpperCase() === 'PM' ? 12 : 0)) * 60 + Number(match[2]);
+        return minutes >= 570 && minutes <= 960;
+      })
+      .map((point) => ({ t: Math.floor((point.x + offset) / 1000), price: point.y }))
+      .filter((bar) => Number.isFinite(bar.price) && bar.price > 0);
+    if (bars.length) return { previousClose, bars };
+  }
+  return null;
 }

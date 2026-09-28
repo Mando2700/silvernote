@@ -16,13 +16,31 @@ import { Button, Magnetic } from '@/components/ui/button';
 import { CompanyLogo } from '@/components/ui/company-logo';
 import { Badge, EmptyState, Field, Input, Panel, PanelHeader, Segmented, Select, Skeleton, Tabs } from '@/components/ui/primitives';
 import { TickerSearch } from '@/components/ui/ticker-search';
+import { localToday } from '@/lib/dates';
 import { api } from '@/lib/client';
 import { fixed, money, pct, shortDate, signedPct } from '@/lib/format';
 import { cn } from '@/lib/utils';
 import type { MonteCarloInput, MonteCarloResult } from '@/workers/montecarlo.worker';
 
 type PortfolioListItem = { id: string; name: string; summary: { totalValue: number; positions: number } };
-type Model = { symbols: string[]; weights: number[]; returns: number[][]; days: number; from: number | null; totalValue: number; invested: number; cash: number; excluded: string[] };
+type Model = {
+  symbols: string[];
+  weights: number[];
+  returns: number[][];
+  benchmark: string | null;
+  days: number;
+  from: number | null;
+  totalValue: number;
+  invested: number;
+  cash: number;
+  excluded: string[];
+  backfilled: string[];
+  riskFree: number;
+  beta: number;
+  impliedReturn: number;
+  historicalReturn: number;
+  blendedReturn: number;
+};
 type Scenario = {
   id: string;
   name: string;
@@ -45,7 +63,25 @@ type WhatIfSide = {
   sectors: Array<{ sector: string; weight: number }>;
   stress: Array<{ id: string; name: string; portfolioReturn: number; maxDrawdown: number }>;
 };
-type WhatIfResult = { symbol: string; name: string; amount: number; baseline: WhatIfSide; proposed: WhatIfSide };
+type WhatIfPurchase = {
+  date: string;
+  price: number;
+  shares: number;
+  lastPrice: number;
+  valueNow: number;
+  gain: number;
+  return: number;
+  history: null | {
+    benchmark: string;
+    actualReturn: number | null;
+    proposedReturn: number | null;
+    benchmarkReturn: number;
+    actualValue: number;
+    proposedValue: number;
+    points: Array<{ t: number; actual: number; proposed: number; benchmark: number }>;
+  };
+};
+type WhatIfResult = { symbol: string; name: string; amount: number; purchase: WhatIfPurchase | null; baseline: WhatIfSide; proposed: WhatIfSide };
 
 function MonteCarlo({ portfolioId }: { portfolioId: string }) {
   // Run once automatically when the model first loads, so the chart is never empty.
@@ -62,7 +98,7 @@ function MonteCarlo({ portfolioId }: { portfolioId: string }) {
   const [method, setMethod] = useState<'bootstrap' | 'normal'>('bootstrap');
   const [contribution, setContribution] = useState('0');
   const [target, setTarget] = useState('');
-  const [assumption, setAssumption] = useState('historical');
+  const [assumption, setAssumption] = useState('implied');
   const [result, setResult] = useState<MonteCarloResult | null>(null);
   const [running, setRunning] = useState(false);
   const workerRef = useRef<Worker | null>(null);
@@ -90,7 +126,8 @@ function MonteCarlo({ portfolioId }: { portfolioId: string }) {
       simulations: Number(simulations),
       method,
       target: target ? Number(target) : null,
-      annualReturn: assumption === 'historical' ? null : Number(assumption),
+      annualReturn:
+        assumption === 'historical' ? null : assumption === 'implied' ? source.impliedReturn : assumption === 'blended' ? source.blendedReturn : Number(assumption),
       seed: Date.now() % 2 ** 31,
     };
     worker.postMessage(input);
@@ -120,7 +157,7 @@ function MonteCarlo({ portfolioId }: { portfolioId: string }) {
         <div className="flex flex-wrap items-end gap-3 p-4">
           <Field label="Horizon">
             <Select value={years} onChange={(event) => setYears(event.target.value)} className="w-28">
-              {['1', '3', '5', '10', '20', '30'].map((value) => (
+              {['1', '3', '5', '10', '15', '20', '25', '30', '40'].map((value) => (
                 <option key={value} value={value}>
                   {value} years
                 </option>
@@ -147,7 +184,9 @@ function MonteCarlo({ portfolioId }: { portfolioId: string }) {
             />
           </Field>
           <Field label="Expected return">
-            <Select value={assumption} onChange={(event) => setAssumption(event.target.value)} className="w-40">
+            <Select value={assumption} onChange={(event) => setAssumption(event.target.value)} className="w-48">
+              <option value="implied">Market ({pct(model.impliedReturn, 1)} a year)</option>
+              <option value="blended">Blended ({pct(model.blendedReturn, 1)} a year)</option>
               <option value="historical">Historical sample</option>
               <option value="0.1">10% a year</option>
               <option value="0.07">7% a year</option>
@@ -167,26 +206,46 @@ function MonteCarlo({ portfolioId }: { portfolioId: string }) {
           </Magnetic>
         </div>
         <div className="border-t border-line px-4 py-2 text-[11.5px] text-muted">
-          Using {model.days.toLocaleString()} trading days of history{model.from ? ` since ${shortDate(model.from)}` : ''} for {model.symbols.length} holdings at today’s weights (cash held flat).
+          Using {model.days.toLocaleString()} trading days of history{model.from ? ` since ${shortDate(model.from)}` : ''} for {model.symbols.length} holdings at today’s weights (cash and bonds held flat).
+          {model.backfilled.length ? ` Before listing, ${model.backfilled.join(', ')} ${model.backfilled.length === 1 ? 'is' : 'are'} modelled from ${model.benchmark ?? 'the benchmark'} via beta.` : ''}
           {model.excluded.length ? ` Excluded (no history): ${model.excluded.join(', ')}.` : ''}
+          {assumption === 'implied' ? ` Expected return = ${pct(model.riskFree, 1)} risk-free + ${model.beta.toFixed(2)} beta × 5% equity premium.` : ''}
+          {assumption === 'blended'
+            ? ` Expected return = 75% × ${pct(model.impliedReturn, 1)} market + 25% × ${pct(model.historicalReturn, 1)} this portfolio's own history.`
+            : ''}
         </div>
       </Panel>
 
       {result ? (
         <>
-          <div className="grid grid-cols-2 gap-2 md:grid-cols-5">
-            {[
-              { label: `Median in ${years}y`, value: money(result.percentiles.p50[result.months], { digits: 0 }) },
-              { label: 'Bad case (5th pct)', value: money(result.percentiles.p5[result.months], { digits: 0 }) },
-              { label: 'Good case (95th pct)', value: money(result.percentiles.p95[result.months], { digits: 0 }) },
-              { label: 'Chance of ending below money put in', value: pct(result.probabilityOfLoss) },
-              result.probabilityOfTarget !== null
-                ? { label: 'Chance of reaching the goal', value: pct(result.probabilityOfTarget) }
-                : { label: 'Median max drawdown', value: signedPct(result.medianMaxDrawdown, 1) },
-            ].map((tile) => (
-              <div key={tile.label} className="rounded-sm border border-line bg-surface-1 p-3">
+          <div className="grid grid-cols-2 gap-2 md:grid-cols-3 xl:grid-cols-6">
+            {(() => {
+              const invested = result.contributions[result.months];
+              const start = result.contributions[0];
+              const monthly = result.months ? (invested - start) / result.months : 0;
+              const multiple = (value: number) => (invested > 0 ? `${(value / invested).toFixed(1)}× money put in` : undefined);
+              const median = result.percentiles.p50[result.months];
+              const low = result.percentiles.p5[result.months];
+              const high = result.percentiles.p95[result.months];
+              return [
+                {
+                  label: `Money put in over ${result.months / 12}y`,
+                  value: money(invested, { digits: 0 }),
+                  sub: monthly > 0 ? `${money(start, { digits: 0 })} now + ${money(monthly, { digits: 0 })}/mo × ${result.months}` : 'Starting value, no contributions',
+                },
+                { label: `Median in ${result.months / 12}y`, value: money(median, { digits: 0 }), sub: multiple(median) },
+                { label: 'Bad case (5th pct)', value: money(low, { digits: 0 }), sub: multiple(low) },
+                { label: 'Good case (95th pct)', value: money(high, { digits: 0 }), sub: multiple(high) },
+                { label: 'Chance of ending below money put in', value: pct(result.probabilityOfLoss) },
+                result.probabilityOfTarget !== null
+                  ? { label: 'Chance of reaching the goal', value: pct(result.probabilityOfTarget) }
+                  : { label: 'Median max drawdown', value: signedPct(result.medianMaxDrawdown, 1) },
+              ];
+            })().map((tile) => (
+              <div key={tile.label} className="flex flex-col items-center justify-center rounded-sm border border-line bg-surface-1 p-3 text-center">
                 <div className="text-[11px] text-muted">{tile.label}</div>
                 <div className="mt-1 text-[17px] font-semibold text-ink">{tile.value}</div>
+                {'sub' in tile && tile.sub ? <div className="mt-0.5 text-[11px] text-faint">{tile.sub}</div> : null}
               </div>
             ))}
           </div>
@@ -196,7 +255,7 @@ function MonteCarlo({ portfolioId }: { portfolioId: string }) {
               title="Projected portfolio value"
               actions={
                 <span className="text-[11.5px] text-muted">
-                  Historical month: {signedPct(result.historicalMonthlyMean, 2)} avg · {pct(result.historicalMonthlyVol, 1)} vol
+                  {assumption === 'historical' ? 'Historical' : 'Modelled'} month: {signedPct(result.historicalMonthlyMean, 2)} avg · {pct(result.historicalMonthlyVol, 1)} vol
                 </span>
               }
             />
@@ -221,7 +280,7 @@ function MonteCarlo({ portfolioId }: { portfolioId: string }) {
           </Panel>
           {histogram ? (
             <Panel>
-              <PanelHeader kicker={`Distribution of outcomes after ${years} years`} title="Where the paths end" />
+              <PanelHeader kicker={`Distribution of outcomes after ${result.months / 12} years`} title="Where the paths end" />
               <div className="px-4 pb-4">
                 <ColumnChart categories={histogram.categories} series={[{ label: 'Paths', values: histogram.counts }]} format={(value) => value.toFixed(0)} height={200} />
               </div>
@@ -232,7 +291,7 @@ function MonteCarlo({ portfolioId }: { portfolioId: string }) {
         <Skeleton className="h-80" />
       )}
       <p className="text-[11px] leading-relaxed text-faint">
-        Projections resample the past; they are not forecasts. Bootstrap keeps real fat tails but assumes the future looks like the sample window; lognormal is smoother and understates crashes. A fixed expected return keeps the historical volatility and shape but re-centres the average, which is more prudent than extrapolating a strong sample.
+        Projections resample the past; they are not forecasts. Bootstrap keeps real fat tails but assumes the future looks like the sample window; lognormal is smoother and understates crashes. The default market expected return (CAPM: risk-free plus beta times a 5% equity premium) keeps the historical volatility and shape but re-centres the average, which is more prudent than extrapolating a strong sample.
       </p>
     </div>
   );
@@ -347,9 +406,67 @@ function StressTests({ portfolioId }: { portfolioId: string }) {
   );
 }
 
+function PastPurchase({ result, purchase }: { result: WhatIfResult; purchase: WhatIfPurchase }) {
+  const history = purchase.history;
+  const step = history ? Math.max(1, Math.ceil(history.points.length / 160)) : 1;
+  const sampled = history ? history.points.filter((_, index) => index % step === 0 || index === history.points.length - 1) : [];
+  const diff = history && history.proposedReturn !== null && history.actualReturn !== null ? history.proposedReturn - history.actualReturn : null;
+  const tiles: Array<{ label: string; value: string; tone?: 'gain' | 'loss' | null; sub?: string }> = [
+    { label: `${result.symbol} position today`, value: money(purchase.valueNow), sub: `${fixed(purchase.shares, 4)} sh at ${money(purchase.price)} → ${money(purchase.lastPrice)}` },
+    { label: 'Gain on the position', value: `${purchase.gain >= 0 ? '+' : '−'}${money(Math.abs(purchase.gain))}`, tone: purchase.gain >= 0 ? 'gain' : 'loss', sub: signedPct(purchase.return, 1) },
+    ...(history
+      ? [
+          { label: 'Portfolio since then', value: signedPct(history.actualReturn, 2), tone: history.actualReturn === null ? null : history.actualReturn >= 0 ? ('gain' as const) : ('loss' as const), sub: 'time-weighted, actual' },
+          {
+            label: `With ${result.symbol}`,
+            value: signedPct(history.proposedReturn, 2),
+            tone: diff === null ? null : diff >= 0 ? ('gain' as const) : ('loss' as const),
+            sub: diff === null ? undefined : `${diff >= 0 ? '+' : '−'}${Math.abs(diff * 100).toFixed(2)} pts vs actual`,
+          },
+          { label: `${history.benchmark === 'SPY' ? 'S&P 500' : history.benchmark} since then`, value: signedPct(history.benchmarkReturn, 2), sub: 'for reference' },
+        ]
+      : []),
+  ];
+
+  return (
+    <Panel>
+      <PanelHeader kicker={`Bought ${money(result.amount, { digits: 0 })} of ${result.name} on ${shortDate(Date.parse(purchase.date) / 1000)} at the close`} title="What it would have done" />
+      <div className="grid grid-cols-2 gap-2 px-4 md:grid-cols-5">
+        {tiles.map((tile) => (
+          <div key={tile.label} className="rounded-sm border border-line bg-surface-1 p-2.5">
+            <div className="truncate text-[11px] text-muted">{tile.label}</div>
+            <div className={cn('num mt-0.5 text-[15px] font-semibold', tile.tone === 'gain' ? 'text-gain' : tile.tone === 'loss' ? 'text-loss' : 'text-ink')}>{tile.value}</div>
+            {tile.sub ? <div className="num mt-0.5 truncate text-[10.5px] text-faint">{tile.sub}</div> : null}
+          </div>
+        ))}
+      </div>
+      {history && sampled.length > 1 ? (
+        <div className="px-4 pt-3 pb-4">
+          <LineChart
+            categories={sampled.map((point) => shortDate(point.t))}
+            series={[
+              { label: `With ${result.symbol}`, values: sampled.map((point) => point.proposed), color: '#cdd4de', emphasis: true },
+              { label: 'Actual', values: sampled.map((point) => point.actual), color: SERIES_COLORS[1], dashed: true },
+              { label: history.benchmark === 'SPY' ? 'S&P 500' : history.benchmark, values: sampled.map((point) => point.benchmark), color: SERIES_COLORS[0] },
+            ]}
+            format={(value) => `${value > 0 ? '+' : ''}${value.toFixed(1)}%`}
+            height={240}
+            zeroLine
+          />
+        </div>
+      ) : (
+        <p className="px-4 py-3 text-[12px] text-muted">Your portfolio has no history on that date yet, so only the position itself is shown.</p>
+      )}
+    </Panel>
+  );
+}
+
 function WhatIf({ portfolioId }: { portfolioId: string }) {
   const [symbol, setSymbol] = useState('');
   const [amount, setAmount] = useState('10000');
+  const [when, setWhen] = useState<'now' | 'past'>('now');
+  const today = localToday();
+  const [date, setDate] = useState(() => new Date(Date.now() - 60 * 86_400_000).toISOString().slice(0, 10));
   const [result, setResult] = useState<WhatIfResult | null>(null);
   const [loading, setLoading] = useState(false);
   const { askAssistant } = useShell();
@@ -358,7 +475,7 @@ function WhatIf({ portfolioId }: { portfolioId: string }) {
     if (!symbol || !Number(amount)) return;
     setLoading(true);
     try {
-      setResult(await api<WhatIfResult>(`/api/portfolios/${portfolioId}/whatif`, { body: { symbol, amount: Number(amount) } }));
+      setResult(await api<WhatIfResult>(`/api/portfolios/${portfolioId}/whatif`, { body: { symbol, amount: Number(amount), date: when === 'past' ? date : null } }));
     } catch (error) {
       toast.error((error as Error).message);
     } finally {
@@ -394,18 +511,38 @@ function WhatIf({ portfolioId }: { portfolioId: string }) {
           <Field label="Amount ($)">
             <Input inputMode="decimal" value={amount} onChange={(event) => setAmount(event.target.value)} className="w-36" />
           </Field>
+          <Field label="Bought">
+            <Segmented
+              value={when}
+              onChange={setWhen}
+              options={[
+                { value: 'now', label: 'Right now' },
+                { value: 'past', label: 'On a date' },
+              ]}
+            />
+          </Field>
+          {when === 'past' ? (
+            <Field label="Purchase date">
+              <Input type="date" value={date} max={today} onChange={(event) => setDate(event.target.value)} className="w-40" />
+            </Field>
+          ) : null}
           {symbol ? <Badge tone="brand" className="mb-2 text-[12px]">{symbol}</Badge> : null}
-          <Button variant="primary" loading={loading} disabled={!symbol} onClick={() => void run()} className="ml-auto" icon={<FlaskConical className="size-3.5" />}>
+          <Button variant="primary" loading={loading} disabled={!symbol || (when === 'past' && !date)} onClick={() => void run()} className="ml-auto" icon={<FlaskConical className="size-3.5" />}>
             Compare
           </Button>
         </div>
       </Panel>
+      {result?.purchase ? <PastPurchase result={result} purchase={result.purchase} /> : null}
       {result ? (
         <div className="grid gap-4 xl:grid-cols-[1.4fr_1fr]">
           <Panel>
             <PanelHeader
-              kicker={`Adding ${money(result.amount, { digits: 0 })} of ${result.symbol}`}
-              title="Before vs. after"
+              kicker={
+                result.purchase
+                  ? `${money(result.amount, { digits: 0 })} of ${result.symbol} bought ${shortDate(Date.parse(result.purchase.date) / 1000)}, worth ${money(result.purchase.valueNow, { digits: 0 })} today`
+                  : `Adding ${money(result.amount, { digits: 0 })} of ${result.symbol}`
+              }
+              title={result.purchase ? 'Risk today, with and without it' : 'Before vs. after'}
               actions={
                 <Button
                   size="xs"

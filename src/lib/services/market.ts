@@ -6,7 +6,8 @@ import * as finnhub from '@/lib/data/providers/finnhub';
 import * as fmp from '@/lib/data/providers/fmp';
 import * as nasdaq from '@/lib/data/providers/nasdaq';
 import { fetchSubmissions } from '@/lib/data/providers/sec';
-import type { CompanyProfile, Filing, NewsItem, Quote } from '@/lib/data/types';
+import type { CompanyProfile, ExtendedQuote, Filing, NewsItem, Quote } from '@/lib/data/types';
+import { isMarketOpen } from '@/lib/services/prices';
 import { getSecuritiesBySymbols, getSecurity } from '@/lib/services/universe';
 
 export const INDEX_PROXIES = [
@@ -18,7 +19,10 @@ export const INDEX_PROXIES = [
 
 // ─── Quotes ─────────────────────────────────────────────────────────────────
 
-/** One live quote: Finnhub (real-time) when configured, otherwise Nasdaq (delayed). */
+/** Symbols Nasdaq files as funds: its quote API only answers for them under the "etf" asset class. */
+const knownFunds = new Set<string>(INDEX_PROXIES.map((item) => item.symbol));
+
+/** One live quote: Finnhub (real-time) when configured, otherwise Nasdaq (delayed), trying stocks and funds. */
 export async function getLiveQuote(symbol: string): Promise<Quote | null> {
   const upper = symbol.toUpperCase();
   return memo(`quote:${upper}`, 20_000, async () => {
@@ -26,8 +30,15 @@ export async function getLiveQuote(symbol: string): Promise<Quote | null> {
       const quote = await finnhub.fetchQuote(upper).catch(() => null);
       if (quote?.price) return quote;
     }
-    const assetClass = INDEX_PROXIES.some((item) => item.symbol === upper) ? 'etf' : 'stocks';
-    return nasdaq.fetchQuote(upper, assetClass).catch(() => null);
+    const order: Array<'stocks' | 'etf'> = knownFunds.has(upper) ? ['etf', 'stocks'] : ['stocks', 'etf'];
+    for (const assetClass of order) {
+      const quote = await nasdaq.fetchQuote(upper, assetClass).catch(() => null);
+      if (quote?.price) {
+        if (assetClass === 'etf') knownFunds.add(upper);
+        return quote;
+      }
+    }
+    return null;
   });
 }
 
@@ -51,11 +62,48 @@ export async function getQuotes(symbols: string[]): Promise<Record<string, Quote
       source: 'Nasdaq',
     };
   }
+  // Funds and anything else outside the stock universe: live quotes, a few at a time (every symbol, no cap).
   const missing = upper.filter((symbol) => !result[symbol]);
+  const queue = [...missing];
   await Promise.all(
-    missing.slice(0, 12).map(async (symbol) => {
-      const quote = await getLiveQuote(symbol);
-      if (quote) result[symbol] = quote;
+    Array.from({ length: Math.min(4, queue.length) }, async () => {
+      for (;;) {
+        const symbol = queue.shift();
+        if (!symbol) return;
+        const quote = await getLiveQuote(symbol);
+        if (quote) result[symbol] = quote;
+      }
+    }),
+  );
+  return result;
+}
+
+/**
+ * Pre-market and after-hours prices from Nasdaq (Finnhub's quote carries none), keyed by symbol.
+ * Empty during the regular session; symbols without extended trading are left out.
+ */
+export async function getExtendedQuotes(symbols: string[]): Promise<Record<string, ExtendedQuote>> {
+  const result: Record<string, ExtendedQuote> = {};
+  if (isMarketOpen()) return result;
+  const queue = [...new Set(symbols.map((symbol) => symbol.toUpperCase()))];
+  await Promise.all(
+    Array.from({ length: Math.min(4, queue.length) }, async () => {
+      for (;;) {
+        const symbol = queue.shift();
+        if (!symbol) return;
+        const extended = await memo(`extended:${symbol}`, 60_000, async () => {
+          const order: Array<'stocks' | 'etf'> = knownFunds.has(symbol) ? ['etf', 'stocks'] : ['stocks', 'etf'];
+          for (const assetClass of order) {
+            const quote = await nasdaq.fetchQuote(symbol, assetClass).catch(() => null);
+            if (quote?.price) {
+              if (assetClass === 'etf') knownFunds.add(symbol);
+              return quote.extended ?? null;
+            }
+          }
+          return null;
+        });
+        if (extended) result[symbol] = extended;
+      }
     }),
   );
   return result;

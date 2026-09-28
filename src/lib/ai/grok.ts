@@ -61,7 +61,8 @@ async function* viaResponses(messages: ChatMessage[], model: string, signal?: Ab
   const response = await fetch(`${BASE}/responses`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${env.xaiKey}` },
-    body: JSON.stringify({ model, input: messages, stream: true, store: false }),
+    // Server-side search lets Grok answer "why" questions (a debt raise, a guidance cut) that the numbers alone can't.
+    body: JSON.stringify({ model, input: messages, stream: true, store: false, tools: [{ type: 'web_search' }, { type: 'x_search' }] }),
     signal,
   });
   if (!response.ok) throw new GrokError(response.status, await errorText(response));

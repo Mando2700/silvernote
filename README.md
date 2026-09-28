@@ -40,7 +40,10 @@ Restart `npm run dev` after editing `.env.local`. Keys are read only on the serv
 - **Company pages** — price chart (1M to 10Y, line or candles, your thesis events and target price on the chart), key statistics, visual income statement, balance sheet and cash flow from SEC XBRL (annual and quarterly), SilverNote Score breakdown with every metric, peer and sector comparison, news and filings, and the research workspace.
 - **Watchlists** — several lists, custom columns, tags, notes, price and score alerts.
 - **Portfolio** — trade ledger, holdings with average cost and realized/unrealized P&L, allocation, sector exposure, beta, volatility, Sharpe, Sortino, max drawdown, VaR/CVaR, correlation matrix, concentration and risk contribution, time-weighted performance against a benchmark.
+- **Tax** — lot-level cost basis (FIFO, LIFO or HIFO) per portfolio, short- vs long-term gains, wash sales (disallowed loss and holding period carried into the replacement shares), realized gains and estimated tax by year, tax-loss harvesting ideas with wash-sale guard rails and same-industry replacements, gains worth holding until they turn long-term, and a Form 8949-style CSV. Taxable, tax-deferred and tax-free account types.
+- **Bonds** — individual Treasuries, agencies, corporates, munis and CDs valued on the live FRED Treasury curve plus the spread implied at purchase (or your quoted price): yield to maturity, accrued interest, duration, convexity, DV01, rate-shock repricing, an income calendar and a maturity ladder. Bonds count toward portfolio value.
 - **Simulations** — Monte Carlo (bootstrap or lognormal, in a web worker), stress tests replaying 2008, 2020 and 2022, and what-if trades.
+- **Backtest** — test rules such as “Score above 80 and momentum rising” across ten years. A background job rebuilds month-end SilverNote Scores for the largest companies from the SEC filings public at each date (no look-ahead); rules combine thresholds, trends, cross-sectional ranks and price returns, with exit rules, position limits, rebalancing, trading costs, and results against SPY and an equal-weight universe.
 - **Notes & theses** — per-company thesis, drivers, risks, catalysts and "what would prove me wrong", each change timestamped and versioned with a diff view, plus free-form notes.
 - **Pitches** — pre-filled from the workspace, score and filings; reorder and toggle sections, draft or rewrite any section with Grok, export a PDF or a PowerPoint deck.
 - **News** — headlines for everything you hold or watch, the wider market, and fresh SEC filings, with "Brief me" and one-click filing summaries.
@@ -63,7 +66,7 @@ Use Supabase when you want your data in a managed Postgres, or before running Si
    ```
 
    (The server also applies pending migrations on startup.)
-6. Restart the server, open `/login`, choose **Create the owner account**, and confirm the email Supabase sends. In the Supabase dashboard set **Authentication → URL configuration → Site URL** to where SilverNote runs, then turn off new sign-ups under **Authentication → Sign In / Providers** once your account exists.
+6. In Supabase, make sure **Confirm email** is on (**Authentication → Sign In / Providers → Email**): without it, anyone who knows `OWNER_EMAIL` could register it before you, and SilverNote refuses sign-ups that come back already signed in. Restart the server, open `/login`, choose **Create the owner account**, and confirm the email Supabase sends. In the Supabase dashboard set **Authentication → URL configuration → Site URL** to where SilverNote runs, then turn off new sign-ups under **Authentication → Sign In / Providers** once your account exists.
 
 Market data re-downloads into the new database on first start; your local data in `./.silvernote/db` is left untouched.
 
@@ -75,6 +78,7 @@ Market data re-downloads into the new database on first start; your local data i
 | SEC EDGAR | Company tickers and CIKs, XBRL frames (fundamentals for the whole market), companyfacts (standardized statements), submissions and filing documents |
 | FRED | Nasdaq Composite history for the 2008 stress test, 3-month Treasury bill as the risk-free rate |
 | open.er-api.com | FX rates for converting foreign filers' statements to USD |
+| Yahoo Finance (chart API) | Stock split history, to restate trades in today's share units (prices are split-adjusted); if unavailable, splits are inferred from prices |
 | Financial Modeling Prep | Company logos (public image endpoint, no key); profiles and statements when `FMP_API_KEY` is set |
 | Finnhub | Optional: real-time quotes, news, peers, estimates, analyst data |
 

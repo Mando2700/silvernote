@@ -153,7 +153,7 @@ export function Segmented<T extends string>({
 }) {
   const id = useId();
   return (
-    <div className={cn('inline-flex rounded-sm border border-line bg-surface-1 p-0.5', className)} role="tablist">
+    <div className={cn('inline-flex max-w-full overflow-x-auto rounded-sm border border-line bg-surface-1 p-0.5 [scrollbar-width:none]', className)} role="tablist">
       {options.map((option) => {
         const active = option.value === value;
         return (
@@ -164,7 +164,7 @@ export function Segmented<T extends string>({
             aria-selected={active}
             onClick={() => onChange(option.value)}
             className={cn(
-              'relative rounded-[3px] font-medium transition-colors',
+              'relative shrink-0 whitespace-nowrap rounded-[3px] font-medium transition-colors',
               size === 'xs' ? 'h-5.5 px-2 text-[11px]' : 'h-6.5 px-2.5 text-[12px]',
               active ? 'text-ink' : 'text-muted hover:text-ink-2',
             )}
