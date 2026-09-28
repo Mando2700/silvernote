@@ -75,3 +75,26 @@ describe('standardizeCompanyFacts', () => {
     expect(statements.ttm!.totalAssets).toBe(5000);
   });
 });
+
+describe('IFRS capital expenditure', () => {
+  // Nokia and SAP tag only the combined "PP&E and intangibles" purchase line, never plain PP&E.
+  const ifrsPayload: CompanyFactsPayload = {
+    cik: 924613,
+    entityName: 'Nokia Corporation',
+    facts: {
+      'ifrs-full': {
+        Revenue: { units: { EUR: [fact('2025-01-01', '2025-12-31', 19_889, '20-F', '2026-03-05')] } },
+        CashFlowsFromUsedInOperatingActivities: { units: { EUR: [fact('2025-01-01', '2025-12-31', 2_071, '20-F', '2026-03-05')] } },
+        PurchaseOfPropertyPlantAndEquipmentIntangibleAssetsOtherThanGoodwillInvestmentPropertyAndOtherNoncurrentAssets: {
+          units: { EUR: [fact('2025-01-01', '2025-12-31', 606, '20-F', '2026-03-05')] },
+        },
+      },
+    },
+  };
+
+  it('falls back to the combined purchase line so free cash flow is available', () => {
+    const [latest] = standardizeCompanyFacts(ifrsPayload, { symbol: 'NOK' }).annual;
+    expect(latest.capex).toBe(-606);
+    expect(latest.freeCashFlow).toBe(2_071 - 606);
+  });
+});

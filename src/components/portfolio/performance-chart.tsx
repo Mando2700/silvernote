@@ -1,6 +1,7 @@
 'use client';
 
 import { area, curveLinear, curveMonotoneX, line, scaleLinear } from 'd3';
+import { Maximize2, Minimize2 } from 'lucide-react';
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
 import { useId, useMemo, useState, type PointerEvent } from 'react';
 import useSWR from 'swr';
@@ -8,9 +9,12 @@ import useSWR from 'swr';
 import { useWidth } from '@/components/charts/svg';
 import { AnimatedNumber } from '@/components/motion/animated-number';
 import { useMarketColors } from '@/components/shell/providers';
+import { Button } from '@/components/ui/button';
+import { FullscreenOverlay } from '@/components/ui/fullscreen-overlay';
 import { Panel, Segmented, Skeleton } from '@/components/ui/primitives';
 import { moneyWeightedPath, replicateInIndex } from '@/lib/finance/performance';
 import { money, signedMoney, signedPct } from '@/lib/format';
+import { regularSession, sessionHours } from '@/lib/session';
 import { SERIES_COLORS } from '@/lib/theme';
 import { cn } from '@/lib/utils';
 
@@ -91,6 +95,7 @@ export function PerformanceChart({ portfolioId }: { portfolioId: string }) {
   const [mode, setMode] = useState<Mode>('value');
   const [compare, setCompare] = useState<Compare>('benchmark');
   const [pickedBasis, setBasis] = useState<Basis>('twr');
+  const [fullscreen, setFullscreen] = useState(false);
 
   if (!data) {
     return (
@@ -108,9 +113,9 @@ export function PerformanceChart({ portfolioId }: { portfolioId: string }) {
   // Nothing is added or withdrawn within a session, so both measures agree on 1D.
   const basis: Basis = range === '1D' ? 'twr' : pickedBasis;
 
-  return (
-    <Panel className="overflow-hidden">
-      <ChartBody points={points} benchmark={name} mode={mode} basis={basis} range={range} compare={data.benchmark === 'QQQ' ? 'benchmark' : compare} />
+  const body = (
+    <>
+      <ChartBody points={points} benchmark={name} mode={mode} basis={basis} range={range} compare={data.benchmark === 'QQQ' ? 'benchmark' : compare} height={fullscreen ? 520 : HEIGHT} />
       <div className="flex flex-wrap items-center justify-between gap-2 border-t border-line px-4 py-2.5">
         <Segmented size="xs" value={range} onChange={setRange} options={ranges.map((item) => ({ value: item.value, label: item.value === 'ALL' ? 'All' : item.value }))} />
         <div className="flex flex-wrap items-center gap-2">
@@ -148,10 +153,27 @@ export function PerformanceChart({ portfolioId }: { portfolioId: string }) {
               { value: 'return', label: 'Return vs index' },
             ]}
           />
+          <Button
+            size="sm"
+            variant="ghost"
+            icon={fullscreen ? <Minimize2 className="size-3.5" /> : <Maximize2 className="size-3.5" />}
+            onClick={() => setFullscreen((value) => !value)}
+            aria-label={fullscreen ? 'Exit full screen' : 'Full screen'}
+          />
         </div>
       </div>
-    </Panel>
+    </>
   );
+
+  if (fullscreen) {
+    return (
+      <FullscreenOverlay onClose={() => setFullscreen(false)}>
+        <Panel className="flex h-full flex-col overflow-y-auto">{body}</Panel>
+      </FullscreenOverlay>
+    );
+  }
+
+  return <Panel className="overflow-hidden">{body}</Panel>;
 }
 
 function ChartBody({
@@ -161,6 +183,7 @@ function ChartBody({
   basis,
   range,
   compare,
+  height = HEIGHT,
 }: {
   points: Point[];
   benchmark: string;
@@ -168,6 +191,7 @@ function ChartBody({
   basis: Basis;
   range: Range;
   compare: Compare;
+  height?: number;
 }) {
   const [ref, width] = useWidth<HTMLDivElement>();
   const [hover, setHover] = useState<number | null>(null);
@@ -211,19 +235,21 @@ function ChartBody({
   const tone = up ? palette.gain : palette.loss;
 
   const innerWidth = Math.max(0, width - MARGIN.left - MARGIN.right);
-  const innerHeight = HEIGHT - MARGIN.top - MARGIN.bottom;
+  const innerHeight = height - MARGIN.top - MARGIN.bottom;
   const values = [...primary, ...secondaries.flatMap((series) => series.values), ...(mode === 'return' ? [0] : [])];
   const min = Math.min(...values);
   const max = Math.max(...values);
   const pad = (max - min || Math.abs(max) || 1) * 0.12;
   const y = scaleLinear().domain([min - pad, max + pad]).range([innerHeight, 0]).nice(4);
-  const x = scaleLinear().domain([start.t, end.t]).range([0, innerWidth]);
+  // A session always spans open to close, so the line starts at the left and advances rightward as the day goes on.
+  const session = intraday ? regularSession(end.t) : null;
+  const x = scaleLinear().domain(session ? [Math.min(start.t, session.open), Math.max(end.t, session.close)] : [start.t, end.t]).range([0, innerWidth]);
 
   const curve = detailed ? curveLinear : curveMonotoneX;
   const linePath = line<number>().x((_, i) => x(points[i].t)).y((value) => y(value)).curve(curve);
   const areaPath = area<number>().x((_, i) => x(points[i].t)).y0(innerHeight).y1((value) => y(value)).curve(curve);
   const ticks = y.ticks(detailed ? 6 : 4);
-  const xTicks = innerWidth ? xTickValues(points, range, Math.max(2, Math.min(detailed ? 8 : 6, Math.floor(innerWidth / (intraday ? 80 : 100))))) : [];
+  const xTicks = innerWidth ? xTickValues(points, range, session, Math.max(2, Math.min(detailed ? 8 : 6, Math.floor(innerWidth / (intraday ? 80 : 100))))) : [];
   const drawKey = `${range}-${mode}-${basis}-${compare}-${points.length}`;
   // Daily points get markers on short ranges so each session is visible.
   const markers = (range === '1W' || range === '1M') && innerWidth / points.length > 8;
@@ -292,9 +318,9 @@ function ChartBody({
                   </div>
       </div>
 
-      <div ref={ref} className="relative mt-3 select-none" style={{ height: HEIGHT }}>
+      <div ref={ref} className="relative mt-3 select-none" style={{ height }}>
         {width > 0 ? (
-          <svg width={width} height={HEIGHT} className="overflow-visible">
+          <svg width={width} height={height} className="overflow-visible">
             <defs>
               <linearGradient id={`fill-${gradientId}`} x1="0" x2="0" y1="0" y2="1">
                 <stop offset="0%" stopColor={tone} stopOpacity={0.28} />
@@ -427,12 +453,11 @@ function ChartBody({
 }
 
 /** X-axis ticks at natural boundaries: every hour on 1D, every session on 1W, evenly spread otherwise. */
-function xTickValues(points: Point[], range: Range, count: number) {
+function xTickValues(points: Point[], range: Range, session: ReturnType<typeof regularSession> | null, count: number) {
   const first = points[0].t;
   const last = points[points.length - 1].t;
   if (range === '1D') {
-    const ticks: number[] = [];
-    for (let t = Math.ceil(first / 3600) * 3600; t <= last; t += 3600) ticks.push(t);
+    const ticks = session ? sessionHours(session) : [];
     const step = Math.max(1, Math.ceil(ticks.length / count));
     return ticks.filter((_, i) => i % step === 0);
   }

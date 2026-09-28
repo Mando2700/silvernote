@@ -13,6 +13,7 @@ import {
   type IChartApi,
   type ISeriesApi,
   type SeriesMarker,
+  TickMarkType,
   type Time,
   type UTCTimestamp,
 } from 'lightweight-charts';
@@ -22,6 +23,7 @@ import { useMarketColors } from '@/components/shell/providers';
 import type { Candle } from '@/lib/data/types';
 import { compactNumber, price, shortDate, signedPct } from '@/lib/format';
 import { SILVER, withAlpha, type MarketPalette } from '@/lib/theme';
+import { regularSession } from '@/lib/session';
 import { cn } from '@/lib/utils';
 
 export type ChartMarker = { t: number; label: string; tone?: 'brand' | 'muted' };
@@ -35,6 +37,10 @@ type PriceSeries = ISeriesApi<'Area'> | ISeriesApi<'Candlestick'>;
 const TRANSITION_MS = 430;
 // Candle bodies fill ~80% of a slot; half a body of padding lets the first and last candle meet the plot edge.
 const CANDLE_EDGE_PADDING_BARS = 0.4;
+
+function timeOfDay(t: number) {
+  return new Date(t * 1000).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+}
 
 function easeInOutCubic(value: number) {
   const x = Math.min(1, Math.max(0, value));
@@ -121,6 +127,7 @@ export function PriceChart({
   animationKey,
   rangeKey,
   onReachStart,
+  intraday = false,
   className,
 }: {
   candles: Candle[];
@@ -134,6 +141,8 @@ export function PriceChart({
   rangeKey?: string;
   /** Called when the view is zoomed or panned past the oldest loaded bar, to load more history. */
   onReachStart?: () => void;
+  /** Bars are sub-daily: show times on the axis and in the header. */
+  intraday?: boolean;
   className?: string;
 }) {
   const hostRef = useRef<HTMLDivElement>(null);
@@ -151,10 +160,26 @@ export function PriceChart({
   const onReachStartRef = useRef(onReachStart);
   // Bar count at the last history request, so one zoom-out asks for one page.
   const requestedAtRef = useRef(0);
+  // Debounces the reach-start check: a resize (e.g. layout settling on mount) can momentarily report
+  // a range past the edge before the chart's own re-fit corrects it, which must not count as the user scrolling there.
+  const reachTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Set while the chart's data or viewport is changed in code, whose range events are not the user reaching the start.
   const applyingRef = useRef(false);
   const market = useMarketColors();
   const sorted = useMemo(() => [...candles].sort((a, b) => a.t - b.t), [candles]);
+  // On 1D the axis runs to the closing bell: empty slots after the last bar so the line fills in from the left as the session goes on.
+  const futureSlots = useMemo(() => {
+    if (rangeKey !== '1d' || sorted.length < 2) return [];
+    const last = sorted[sorted.length - 1].t;
+    const step = last - sorted[sorted.length - 2].t;
+    const close = regularSession(last).close;
+    if (step <= 0 || last >= close) return [];
+    const slots: number[] = [];
+    for (let t = last + step; t <= close; t += step) slots.push(t);
+    return slots;
+  }, [sorted, rangeKey]);
+  const futureRef = useRef<number[]>([]);
+  futureRef.current = futureSlots;
 
   const renderBars = (bars: Candle[]) => {
     const priceSeries = priceRef.current;
@@ -162,10 +187,16 @@ export function PriceChart({
     const palette = marketRef.current;
     if (!priceSeries || !volume || !palette) return;
     if (modeRef.current === 'area') {
-      (priceSeries as ISeriesApi<'Area'>).setData(bars.map((bar) => ({ time: bar.t as UTCTimestamp, value: bar.c })));
+      (priceSeries as ISeriesApi<'Area'>).setData([
+        ...bars.map((bar) => ({ time: bar.t as UTCTimestamp, value: bar.c })),
+        ...futureRef.current.map((time) => ({ time: time as UTCTimestamp })),
+      ]);
     } else {
       (priceSeries as ISeriesApi<'Candlestick'>).setData(
-        bars.map((bar) => ({ time: bar.t as UTCTimestamp, open: bar.o, high: bar.h, low: bar.l, close: bar.c })),
+        [
+          ...bars.map((bar) => ({ time: bar.t as UTCTimestamp, open: bar.o, high: bar.h, low: bar.l, close: bar.c })),
+          ...futureRef.current.map((time) => ({ time: time as UTCTimestamp })),
+        ],
       );
     }
     volume.setData(
@@ -183,7 +214,7 @@ export function PriceChart({
     if (!chart || !count) return;
     const padding = modeRef.current === 'candles' ? CANDLE_EDGE_PADDING_BARS : 0;
     chart.priceScale('right').applyOptions({ autoScale: true });
-    chart.timeScale().setVisibleLogicalRange({ from: -padding, to: Math.max(count - 1, 1) + padding });
+    chart.timeScale().setVisibleLogicalRange({ from: -padding, to: Math.max(count + futureRef.current.length - 1, 1) + padding });
   };
 
   const cancelAnimation = () => {
@@ -237,13 +268,32 @@ export function PriceChart({
       setVisible(range ? { from: range.from, to: range.to } : null);
       const count = shownRef.current.bars.length;
       if (!range || !count || applyingRef.current || animationRef.current.frame !== null) return;
+      // Never scroll past the latest bar into empty future space.
+      const maxTo = count + futureRef.current.length - 1 + (modeRef.current === 'candles' ? CANDLE_EDGE_PADDING_BARS : 0);
+      if (range.to > maxTo + 0.01) {
+        const shift = range.to - maxTo;
+        chart.timeScale().setVisibleLogicalRange({ from: range.from - shift, to: maxTo });
+        return;
+      }
+      if (reachTimerRef.current !== null) {
+        clearTimeout(reachTimerRef.current);
+        reachTimerRef.current = null;
+      }
       if (range.from < -CANDLE_EDGE_PADDING_BARS - 1 && requestedAtRef.current !== count) {
-        requestedAtRef.current = count;
-        onReachStartRef.current?.();
+        reachTimerRef.current = setTimeout(() => {
+          reachTimerRef.current = null;
+          const settled = chart.timeScale().getVisibleLogicalRange();
+          if (settled && settled.from < -CANDLE_EDGE_PADDING_BARS - 1 && requestedAtRef.current !== count) {
+            requestedAtRef.current = count;
+            onReachStartRef.current?.();
+          }
+        }, 150);
       }
     };
     chart.timeScale().subscribeVisibleLogicalRangeChange(onRange);
     return () => {
+      if (reachTimerRef.current !== null) clearTimeout(reachTimerRef.current);
+      reachTimerRef.current = null;
       cancelAnimation();
       chart.remove();
       chartRef.current = null;
@@ -251,8 +301,25 @@ export function PriceChart({
       priceRef.current = null;
       shownRef.current = { bars: [], key: undefined, rangeKey: undefined };
     };
-     
-  }, [height]);
+    // `height` is only the initial size; later changes resize the host div and are picked up by
+    // autoSize's resize observer (see onResize above) instead of rebuilding the chart, which would
+    // otherwise reset the view and spuriously re-trigger onReachStart's older-history fetch.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    // Intraday bars read in the viewer's local time rather than the library's UTC default.
+    chartRef.current?.applyOptions({
+      timeScale: {
+        timeVisible: intraday,
+        tickMarkFormatter: intraday
+          ? (time: Time, tickMarkType: TickMarkType) =>
+              tickMarkType >= TickMarkType.Time ? timeOfDay(time as number) : new Date((time as number) * 1000).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+          : undefined,
+      },
+      localization: { timeFormatter: intraday ? (time: Time) => `${shortDate(time as number)} ${timeOfDay(time as number)}` : undefined },
+    });
+  }, [intraday]);
 
   // The price series is rebuilt when the chart style or palette changes; data swaps morph in the effect below.
   useEffect(() => {
@@ -301,8 +368,7 @@ export function PriceChart({
         // series already detached
       }
     };
-     
-  }, [mode, market, height]);
+  }, [mode, market]);
 
   useEffect(() => {
     if (!series || !sorted.length) return;
@@ -428,9 +494,24 @@ export function PriceChart({
   const last = sorted[sorted.length - 1];
   // Return over the visible bars, so zooming or loading older history keeps the figure honest.
   const clampIndex = (value: number) => Math.min(sorted.length - 1, Math.max(0, value));
-  const firstCandle = visible ? sorted[clampIndex(Math.ceil(visible.from))] : sorted[0];
-  const lastVisible = visible ? sorted[clampIndex(Math.floor(visible.to))] : last;
-  const shown = hover ?? (last ? { ...last } : null);
+  const firstIndex = visible ? clampIndex(Math.ceil(visible.from)) : 0;
+  const lastIndex = visible ? clampIndex(Math.floor(visible.to)) : sorted.length - 1;
+  const firstCandle = sorted[firstIndex];
+  const lastVisible = sorted[lastIndex];
+  // A line chart has no individual candle to select, and with nothing hovered there's no single
+  // bar to show either — in both cases fall back to open/high/low/close over the visible range.
+  const rangeShown =
+    firstCandle && lastVisible
+      ? {
+          t: lastVisible.t,
+          o: firstCandle.o,
+          h: Math.max(...sorted.slice(firstIndex, lastIndex + 1).map((bar) => bar.h)),
+          l: Math.min(...sorted.slice(firstIndex, lastIndex + 1).map((bar) => bar.l)),
+          c: lastVisible.c,
+          v: lastVisible.v,
+        }
+      : null;
+  const shown = mode === 'candles' && hover ? hover : rangeShown;
   const rangeReturn = firstCandle && lastVisible ? lastVisible.c / firstCandle.c - 1 : null;
 
   return (
@@ -438,7 +519,7 @@ export function PriceChart({
       <div className="pointer-events-none absolute top-0 left-0 z-10 flex flex-wrap items-baseline gap-x-3 gap-y-0.5 text-[11px]">
         {shown ? (
           <>
-            <span className="text-faint">{shortDate(shown.t)}</span>
+            <span className="text-faint">{intraday ? `${shortDate(shown.t)} ${timeOfDay(shown.t)}` : shortDate(shown.t)}</span>
             <span className="text-muted">
               O <span className="num text-ink-2">{price(shown.o)}</span>
             </span>

@@ -1,20 +1,28 @@
 import { route } from '@/lib/api';
 import { fetchIntraday } from '@/lib/data/providers/nasdaq';
 import { memo } from '@/lib/data/http';
-import { buildPositions, getPortfolio, getTransactions } from '@/lib/services/portfolio';
+import { getExtendedQuotes, getQuotes } from '@/lib/services/market';
+import { getHoldings, getPortfolio } from '@/lib/services/portfolio';
 
 export const dynamic = 'force-dynamic';
 
-const COMPARE = ['SPY', 'QQQ'];
+const COMPARE = ['SPY', 'QQQ', 'DIA'];
 
 /** Latest session at minute resolution for today's holdings, indexed to the prior close (= 100). */
 export const GET = route<{ id: string }>(async ({ user, params }) => {
   const portfolio = await getPortfolio(user.id, params.id);
-  const held = [...buildPositions(await getTransactions(portfolio.id))].filter(([, position]) => position.shares > 1e-9);
-  const symbols = [...new Set([...held.map(([symbol]) => symbol), ...COMPARE])];
+  const { holdings: positions, summary } = await getHoldings(portfolio);
+  const held = positions.filter((holding) => holding.shares > 1e-9);
+  const symbols = [...new Set([...held.map((holding) => holding.symbol), ...COMPARE])];
   const series = new Map(
     await Promise.all(symbols.map(async (symbol) => [symbol, await memo(`intraday:${symbol}`, 60_000, () => fetchIntraday(symbol))] as const)),
   );
+  // Prior closes come from the same quote feed as the portfolio's day change, so the chart ends where the headline number does.
+  const [quotes, extendedQuotes] = await Promise.all([getQuotes(COMPARE), getExtendedQuotes(COMPARE)]);
+  const indexBase = (symbol: string) => {
+    const extended = extendedQuotes[symbol];
+    return (extended && extended.closeChange !== null ? extended.close - extended.closeChange : quotes[symbol]?.previousClose) || series.get(symbol)?.previousClose || 1;
+  };
   const timeline = series.get('SPY')?.bars.map((bar) => bar.t) ?? [];
   if (!timeline.length || !held.length) return { points: [] };
 
@@ -29,17 +37,43 @@ export const GET = route<{ id: string }>(async ({ user, params }) => {
       return last;
     };
   };
-  const holdings = held.map(([symbol, position]) => ({ shares: position.shares, at: lookup(symbol), base: series.get(symbol)?.previousClose ?? 0 }));
-  const baseValue = holdings.reduce((sum, holding) => sum + holding.shares * holding.base, 0);
+  const holdings = held.map((holding) => ({
+    shares: holding.shares,
+    at: lookup(holding.symbol),
+    close: holding.price,
+    base: holding.price !== null ? holding.price - holding.dayChange / holding.shares : (series.get(holding.symbol)?.previousClose ?? 0),
+  }));
+  // Cash and bonds sit in the headline denominator, so they dilute the chart the same way.
+  const other = summary.cash + summary.fixedIncome;
+  const baseValue = holdings.reduce((sum, holding) => sum + holding.shares * holding.base, 0) + other;
   const spy = lookup('SPY');
   const qqq = lookup('QQQ');
-  const spyBase = series.get('SPY')?.previousClose || 1;
-  const qqqBase = series.get('QQQ')?.previousClose || 1;
+  const dia = lookup('DIA');
+  const spyBase = indexBase('SPY');
+  const qqqBase = indexBase('QQQ');
+  const diaBase = indexBase('DIA');
 
-  const points = [{ t: timeline[0] - 60, value: baseValue, invested: baseValue, twr: 100, benchmark: 100, nasdaq: 100 }];
+  const points = [{ t: timeline[0] - 60, value: baseValue, invested: baseValue, twr: 100, benchmark: 100, nasdaq: 100, dow: 100 }];
   for (const t of timeline) {
-    const value = holdings.reduce((sum, holding) => sum + holding.shares * (holding.at(t) || holding.base), 0);
-    points.push({ t, value, invested: baseValue, twr: baseValue ? (value / baseValue) * 100 : 100, benchmark: (spy(t) / spyBase) * 100, nasdaq: (qqq(t) / qqqBase) * 100 });
+    const value = holdings.reduce((sum, holding) => sum + holding.shares * (holding.at(t) || holding.base), 0) + other;
+    points.push({
+      t,
+      value,
+      invested: baseValue,
+      twr: baseValue ? (value / baseValue) * 100 : 100,
+      benchmark: (spy(t) / spyBase) * 100,
+      nasdaq: (qqq(t) / qqqBase) * 100,
+      dow: (dia(t) / diaBase) * 100,
+    });
   }
+
+  // The last minute bar is not the closing print: land the final point on the official close the headline uses.
+  const last = points[points.length - 1];
+  const closeOf = (symbol: string, fallback: number) => extendedQuotes[symbol]?.close ?? quotes[symbol]?.price ?? fallback;
+  last.value = holdings.reduce((sum, holding) => sum + holding.shares * (holding.close ?? holding.at(last.t) ?? holding.base), 0) + other;
+  last.twr = baseValue ? (last.value / baseValue) * 100 : 100;
+  last.benchmark = (closeOf('SPY', spy(last.t)) / spyBase) * 100;
+  last.nasdaq = (closeOf('QQQ', qqq(last.t)) / qqqBase) * 100;
+  last.dow = (closeOf('DIA', dia(last.t)) / diaBase) * 100;
   return { points };
 });

@@ -7,6 +7,7 @@ import Link from 'next/link';
 import { useMemo, useState } from 'react';
 import useSWR from 'swr';
 
+import { BRAND, LineChart, type LineSeries } from '@/components/charts/svg';
 import { MarketHeatmap, type HeatmapItem } from '@/components/charts/market-heatmap';
 import { AnimatedNumber } from '@/components/motion/animated-number';
 import { Delta } from '@/components/motion/delta';
@@ -19,6 +20,8 @@ import { CompanyLogo } from '@/components/ui/company-logo';
 import { EmptyState, Panel, PanelHeader, Segmented, Skeleton } from '@/components/ui/primitives';
 import { useExtendedQuotes } from '@/lib/extended-client';
 import { money, price, relativeTime, signedPct } from '@/lib/format';
+import { regularSession, sessionHours } from '@/lib/session';
+import { SERIES_COLORS } from '@/lib/theme';
 import { cn } from '@/lib/utils';
 
 const HeroCanvas = dynamic(() => import('@/components/hero/hero-canvas').then((module) => module.HeroCanvas), { ssr: false });
@@ -36,6 +39,12 @@ type DashboardData = {
   notes: Array<{ id: string; title: string; symbol: string | null; kind: string; at: string }>;
   news: Array<{ id: string; title: string; url: string; source: string; publishedAt: string; symbols: string[] }>;
 };
+
+type IntradayPoint = { t: number; value: number; invested: number; twr: number; benchmark: number; nasdaq: number; dow: number };
+
+function timeLabel(t: number) {
+  return new Date(t * 1000).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', timeZone: 'America/New_York' });
+}
 
 function greeting() {
   const hour = new Date().getHours();
@@ -207,6 +216,43 @@ function SectorBars({ sectors }: { sectors: DashboardData['sectors'] }) {
   );
 }
 
+/** Today's session, marked to market minute by minute against the prior close (= the same feed the full portfolio chart uses on 1D). */
+function PortfolioVsIndices({ portfolio }: { portfolio: NonNullable<DashboardData['portfolio']> }) {
+  const { data } = useSWR<{ points: IntradayPoint[] }>(`/api/portfolios/${portfolio.id}/intraday`, { refreshInterval: 60_000 });
+  const points = data?.points ?? [];
+  if (data && points.length < 2) return null;
+
+  const categories = points.map((point) => timeLabel(point.t));
+  // Fixed open-to-close axis: the lines start at the left and advance as the session progresses.
+  const session = points.length ? regularSession(points[points.length - 1].t) : null;
+  const time = session
+    ? {
+        values: points.map((point) => point.t),
+        domain: [Math.min(points[0].t, session.open), Math.max(points[points.length - 1].t, session.close)] as [number, number],
+        ticks: sessionHours(session).map((at) => ({ at, label: timeLabel(at) })),
+      }
+    : undefined;
+  const series: LineSeries[] = [
+    { label: portfolio.name, values: points.map((point) => point.twr - 100), color: BRAND, emphasis: true },
+    { label: 'S&P 500', values: points.map((point) => point.benchmark - 100), color: SERIES_COLORS[0] },
+    { label: 'Nasdaq 100', values: points.map((point) => point.nasdaq - 100), color: SERIES_COLORS[2] },
+    { label: 'Dow 30', values: points.map((point) => point.dow - 100), color: SERIES_COLORS[1], dashed: true },
+  ];
+
+  return (
+    <Panel>
+      <PanelHeader kicker="Today · intraday" title="Portfolio vs major indices" />
+      <div className="px-4 pb-4">
+        {points.length ? (
+          <LineChart categories={categories} series={series} format={(value) => `${value > 0 ? '+' : ''}${value.toFixed(2)}%`} height={220} zeroLine time={time} />
+        ) : (
+          <Skeleton className="h-[220px] w-full" />
+        )}
+      </div>
+    </Panel>
+  );
+}
+
 function MarketList({ rows, empty, extended }: { rows: MarketRow[]; empty: string; extended: ReturnType<typeof useExtendedQuotes> }) {
   if (!rows.length) return <div className="px-4 py-6 text-center text-[12px] text-muted">{empty}</div>;
   return (
@@ -249,6 +295,8 @@ export function Dashboard() {
           )}
         </div>
       </Panel>
+
+      {data?.portfolio ? <PortfolioVsIndices portfolio={data.portfolio} /> : null}
 
       <div className="grid gap-4 lg:grid-cols-3">
         <Panel>

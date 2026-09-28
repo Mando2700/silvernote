@@ -36,7 +36,7 @@ export type StatusPayload = {
 
 type JobInfo = { id: string; kind: string; status: string; total: number; done: number; message: string | null; error: string | null; finished_at: string | null };
 
-type IndexItem = { symbol: string; name: string; price: number | null; changePct: number | null; spark: number[] };
+type IndexItem = { symbol: string; name: string; price: number | null; changePct: number | null; spark: number[]; previousClose: number | null };
 
 export function useStatus() {
   const { data, mutate } = useSWR<StatusPayload>('/api/status', {
@@ -59,7 +59,17 @@ function IndexStrip() {
               <Delta value={item.changePct} alreadyPercent className="text-[11px]" />
             </span>
           </div>
-          <Sparkline values={item.spark} width={46} height={20} area={false} strokeWidth={1.25} pulse />
+          {/* Today's session with a hairline at the prior close; colored by today's move so it agrees with the % beside it. */}
+          <Sparkline
+            values={item.spark}
+            width={46}
+            height={20}
+            area={false}
+            strokeWidth={1.25}
+            pulse
+            baseline={item.previousClose ?? undefined}
+            color={item.changePct == null ? undefined : item.changePct >= 0 ? 'var(--color-gain)' : 'var(--color-loss)'}
+          />
         </Link>
       ))}
     </div>
@@ -100,7 +110,7 @@ function MarketClock() {
   const now = useSyncExternalStore(subscribeClock, readClock, () => 0);
   if (!now) return null;
   return (
-    <span className="num hidden font-mono text-[10.5px] tracking-wider text-ink-2 lg:inline" title="New York time">
+    <span className="num hidden border-l border-line pl-2 font-mono text-[10.5px] tracking-wider text-ink-2 lg:inline" title="New York time">
       {ET_TIME.format(now)} <span className="text-faint">ET</span>
     </span>
   );
@@ -109,9 +119,15 @@ function MarketClock() {
 function MarketStatus({ open }: { open: boolean | undefined }) {
   if (open === undefined) return null;
   return (
-    <div className={cn('flex items-center gap-2 rounded-full border bg-surface-2/80 px-2.5 py-0.5 backdrop-blur', open ? 'border-ion/25 shadow-[0_0_16px_-6px_rgba(159,216,255,0.6)]' : 'border-line')}>
-      <span className={cn('size-1.5 rounded-full', open ? 'animate-pulse-dot bg-ion' : 'bg-faint')} />
-      <span className="font-mono text-[10px] tracking-wider text-muted uppercase">{open ? 'US market open' : 'Market closed'}</span>
+    <div
+      className={cn(
+        'flex h-7 shrink-0 items-center gap-2 rounded-full border bg-surface-2/80 pr-3 pl-2.5 whitespace-nowrap backdrop-blur',
+        open ? 'border-ion/25 shadow-[0_0_16px_-6px_rgba(159,216,255,0.6)]' : 'border-line',
+      )}
+      title={open ? 'US market open' : 'US market closed'}
+    >
+      <span className={cn('size-1.5 shrink-0 rounded-full', open ? 'animate-pulse-dot bg-ion' : 'bg-faint')} />
+      <span className={cn('font-mono text-[10px] tracking-[0.14em] uppercase', open ? 'text-ink-2' : 'text-muted')}>{open ? 'Open' : 'Closed'}</span>
       <MarketClock />
     </div>
   );

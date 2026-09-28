@@ -211,7 +211,18 @@ const IFRS_SPECS: Spec[] = [
   d('depreciationAmortization', ifrs('DepreciationAndAmortisationExpense', 'DepreciationExpense', 'DepreciationPropertyPlantAndEquipment')),
   d('stockBasedCompensation', ifrs('AdjustmentsForSharebasedPayments')),
   d('operatingCashFlow', ifrs('CashFlowsFromUsedInOperatingActivities')),
-  d('capex', ifrs('PurchaseOfPropertyPlantAndEquipmentClassifiedAsInvestingActivities', 'PurchaseOfPropertyPlantAndEquipment'), -1),
+  // Many IFRS filers only tag a combined "PP&E and intangibles" line (Nokia, SAP) or "other long-term assets" (Shell).
+  d(
+    'capex',
+    ifrs(
+      'PurchaseOfPropertyPlantAndEquipmentClassifiedAsInvestingActivities',
+      'PurchaseOfPropertyPlantAndEquipment',
+      'PurchaseOfPropertyPlantAndEquipmentIntangibleAssetsOtherThanGoodwillInvestmentPropertyAndOtherNoncurrentAssets',
+      'PurchaseOfPropertyPlantAndEquipmentAndIntangibleAssetsOtherThanGoodwill',
+      'PurchaseOfOtherLongtermAssetsClassifiedAsInvestingActivities',
+    ),
+    -1,
+  ),
   d('acquisitions', ifrs('CashFlowsUsedInObtainingControlOfSubsidiariesOrOtherBusinessesClassifiedAsInvestingActivities'), -1),
   d('investingCashFlow', ifrs('CashFlowsFromUsedInInvestingActivities')),
   d('dividendsPaid', ifrs('DividendsPaidClassifiedAsFinancingActivities', 'DividendsPaid'), -1),
@@ -479,15 +490,39 @@ export function finalizePeriod(period: StatementPeriod, helpers: Map<string, num
   return period;
 }
 
+/** Latest period end reported in a taxonomy, or '' when it has none. */
+function latestEnd(facts: Record<string, { units: Record<string, XbrlFact[]> }> | undefined) {
+  let latest = '';
+  for (const concept of Object.values(facts ?? {})) {
+    for (const rows of Object.values(concept.units)) for (const row of rows) if (row.end > latest) latest = row.end;
+  }
+  return latest;
+}
+
+/**
+ * The taxonomy a company reports in today. A filer that switched (Toyota moved from US GAAP to IFRS in 2021)
+ * keeps years of the old taxonomy with more concepts, so recency decides once both are substantial.
+ */
+function pickTaxonomy(payload: CompanyFactsPayload): 'us-gaap' | 'ifrs-full' {
+  const gaap = payload.facts['us-gaap'];
+  const ifrs = payload.facts['ifrs-full'];
+  const gaapCount = Object.keys(gaap ?? {}).length;
+  const ifrsCount = Object.keys(ifrs ?? {}).length;
+  if (gaapCount >= 20 && ifrsCount >= 20) {
+    const gaapEnd = latestEnd(gaap);
+    const ifrsEnd = latestEnd(ifrs);
+    if (gaapEnd !== ifrsEnd) return ifrsEnd > gaapEnd ? 'ifrs-full' : 'us-gaap';
+  }
+  return ifrsCount > gaapCount ? 'ifrs-full' : 'us-gaap';
+}
+
 const ANCHOR_KEYS: SpecKey[] = ['revenue', 'netIncome', 'operatingCashFlow', 'totalInterestIncome', 'operatingIncome'];
 
 export function standardizeCompanyFacts(
   payload: CompanyFactsPayload,
   options: { symbol: string; maxAnnual?: number; maxQuarterly?: number },
 ): StandardizedStatements {
-  const usGaapCount = Object.keys(payload.facts['us-gaap'] ?? {}).length;
-  const ifrsCount = Object.keys(payload.facts['ifrs-full'] ?? {}).length;
-  const taxonomy = ifrsCount > usGaapCount ? 'ifrs-full' : 'us-gaap';
+  const taxonomy = pickTaxonomy(payload);
   const specs = taxonomy === 'ifrs-full' ? IFRS_SPECS : GAAP_SPECS;
   const currency = pickReportingCurrency(payload, taxonomy);
   const series = specs.map((spec) => new SpecSeries(spec, payload, currency));

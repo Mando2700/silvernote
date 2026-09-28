@@ -1,6 +1,6 @@
 'use client';
 
-import { ExternalLink, Sparkles } from 'lucide-react';
+import { ExternalLink, Maximize2, Minimize2, Sparkles } from 'lucide-react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useState, ViewTransition } from 'react';
 import useSWR from 'swr';
@@ -20,6 +20,7 @@ import { ScoreRing, type SubScoreSummary } from '@/components/motion/score-ring'
 import { useShell } from '@/components/shell/providers';
 import { Button, Magnetic } from '@/components/ui/button';
 import { CompanyLogo } from '@/components/ui/company-logo';
+import { FullscreenOverlay } from '@/components/ui/fullscreen-overlay';
 import { Badge, Panel, PanelHeader, Segmented, Skeleton, Tabs } from '@/components/ui/primitives';
 import { CompanyWorkspace, type WorkspaceData } from '@/components/workspace/company-workspace';
 import type { Candle, CompanyProfile, NewsItem, Quote } from '@/lib/data/types';
@@ -53,7 +54,7 @@ export type CompanyInitial = {
   scoreLabel: string | null;
 };
 
-const RANGES = ['1m', '3m', '6m', 'ytd', '1y', '3y', '5y', '10y'] as const;
+const RANGES = ['1d', '1w', '1m', '3m', '6m', 'ytd', '1y', '3y', '5y', '10y'] as const;
 
 function n(value: unknown) {
   return typeof value === 'number' && Number.isFinite(value) ? value : null;
@@ -119,6 +120,7 @@ function KeyStats({ data }: { data: CompanyPayload }) {
 function Overview({ data, onTab }: { data: CompanyPayload; onTab: (tab: Tab) => void }) {
   const [range, setRange] = useState<(typeof RANGES)[number]>('1y');
   const [mode, setMode] = useState<'area' | 'candles'>('area');
+  const [fullscreen, setFullscreen] = useState(false);
   const symbol = data.symbol;
   // Pages of older history loaded as the chart is zoomed out; a new symbol or range starts from one page.
   const [history, setHistory] = useState({ view: '', pages: 1 });
@@ -146,44 +148,72 @@ function Overview({ data, onTab }: { data: CompanyPayload; onTab: (tab: Tab) => 
 
   const annual = [...(statements?.annual ?? [])].reverse().slice(-6);
 
-  return (
-    <div className="grid gap-4 xl:grid-cols-[1.65fr_1fr]">
-      <div className="flex flex-col gap-4">
-        <Panel>
-          <div className="flex flex-wrap items-center justify-between gap-2 px-4 pt-3.5">
-            <Segmented size="xs" value={range} onChange={setRange} options={RANGES.map((value) => ({ value, label: value.toUpperCase() }))} />
-            <Segmented
-              size="xs"
-              value={mode}
-              onChange={setMode}
-              options={[
-                { value: 'area', label: 'Line' },
-                { value: 'candles', label: 'Candles' },
-              ]}
-            />
-          </div>
-          <div className="px-4 pt-2 pb-3">
-            {candles?.candles.length ? (
-              <PriceChart candles={candles.candles} mode={mode} height={340} animationKey={symbol} rangeKey={candles.range} onReachStart={loadOlder} markers={markers} targetPrice={workspace?.meta?.target_price ?? null} />
-            ) : (
-              <Skeleton className="h-[340px] w-full" />
-            )}
-            {markers.length || workspace?.meta?.target_price ? (
-              <div className="mt-2 flex items-center gap-4 text-[11px] text-muted">
-                {markers.length ? (
-                  <span className="flex items-center gap-1.5">
-                    <span className="size-2 rounded-full bg-brand" /> Thesis commits
-                  </span>
-                ) : null}
-                {workspace?.meta?.target_price ? (
-                  <span className="flex items-center gap-1.5">
-                    <span className="h-px w-4 border-t border-dashed border-brand-soft" /> Your target ${price(workspace.meta.target_price)}
-                  </span>
-                ) : null}
-              </div>
+  const chartBody = (
+    <>
+      <div className="flex flex-wrap items-center justify-between gap-2 px-4 pt-3.5">
+        <Segmented size="xs" value={range} onChange={setRange} options={RANGES.map((value) => ({ value, label: value.toUpperCase() }))} />
+        <div className="flex items-center gap-1.5">
+          <Segmented
+            size="xs"
+            value={mode}
+            onChange={setMode}
+            options={[
+              { value: 'area', label: 'Line' },
+              { value: 'candles', label: 'Candles' },
+            ]}
+          />
+          <Button
+            size="sm"
+            variant="ghost"
+            icon={fullscreen ? <Minimize2 className="size-3.5" /> : <Maximize2 className="size-3.5" />}
+            onClick={() => setFullscreen((value) => !value)}
+            aria-label={fullscreen ? 'Exit full screen' : 'Full screen'}
+          />
+        </div>
+      </div>
+      <div className="px-4 pt-2 pb-3">
+        {candles?.candles.length ? (
+          <PriceChart
+            candles={candles.candles}
+            mode={mode}
+            height={fullscreen ? 640 : 340}
+            animationKey={symbol}
+            rangeKey={candles.range}
+            intraday={['1d', '1w', '1m', '3m'].includes(candles.range)}
+            onReachStart={loadOlder}
+            markers={markers}
+            targetPrice={workspace?.meta?.target_price ?? null}
+          />
+        ) : (
+          <Skeleton className="h-[340px] w-full" />
+        )}
+        {markers.length || workspace?.meta?.target_price ? (
+          <div className="mt-2 flex items-center gap-4 text-[11px] text-muted">
+            {markers.length ? (
+              <span className="flex items-center gap-1.5">
+                <span className="size-2 rounded-full bg-brand" /> Thesis commits
+              </span>
+            ) : null}
+            {workspace?.meta?.target_price ? (
+              <span className="flex items-center gap-1.5">
+                <span className="h-px w-4 border-t border-dashed border-brand-soft" /> Your target ${price(workspace.meta.target_price)}
+              </span>
             ) : null}
           </div>
-        </Panel>
+        ) : null}
+      </div>
+    </>
+  );
+
+  return (
+    <div className="grid gap-4 xl:grid-cols-[1.65fr_1fr]">
+      {fullscreen ? (
+        <FullscreenOverlay onClose={() => setFullscreen(false)}>
+          <Panel className="flex h-full flex-col overflow-y-auto">{chartBody}</Panel>
+        </FullscreenOverlay>
+      ) : null}
+      <div className="flex flex-col gap-4">
+        {fullscreen ? null : <Panel>{chartBody}</Panel>}
         <KeyStats data={data} />
         {annual.length ? (
           <Panel>

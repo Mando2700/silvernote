@@ -3,6 +3,7 @@ import { q } from '@/lib/db';
 import { memo } from '@/lib/data/http';
 import { getMarketNews, getQuotes } from '@/lib/services/market';
 import { getHoldings, listPortfolios } from '@/lib/services/portfolio';
+import { SECTOR_UNIVERSE_SIZE, sectorPerformance } from '@/lib/finance/sectors';
 import { getUniverse } from '@/lib/services/screener';
 
 export const dynamic = 'force-dynamic';
@@ -13,18 +14,7 @@ async function marketSection() {
     const priced = universe.filter((entry) => entry.marketCap && entry.changePct !== null);
     const advancers = priced.filter((entry) => (entry.changePct ?? 0) > 0).length;
     const decliners = priced.filter((entry) => (entry.changePct ?? 0) < 0).length;
-    const sectorMap = new Map<string, { cap: number; weighted: number; count: number }>();
-    for (const entry of priced) {
-      const sector = entry.sector ?? 'Other';
-      const bucket = sectorMap.get(sector) ?? { cap: 0, weighted: 0, count: 0 };
-      bucket.cap += entry.marketCap ?? 0;
-      bucket.weighted += (entry.changePct ?? 0) * (entry.marketCap ?? 0);
-      bucket.count += 1;
-      sectorMap.set(sector, bucket);
-    }
-    const sectors = [...sectorMap.entries()]
-      .map(([sector, bucket]) => ({ sector, marketCap: bucket.cap, changePct: bucket.cap ? bucket.weighted / bucket.cap : null, count: bucket.count }))
-      .sort((a, b) => b.marketCap - a.marketCap);
+    const sectors = sectorPerformance(universe);
     const large = priced.filter((entry) => (entry.marketCap ?? 0) >= 2e9);
     const pick = (entry: (typeof universe)[number]) => ({
       symbol: entry.symbol,
@@ -42,7 +32,7 @@ async function marketSection() {
       .slice(0, 8)
       .map((entry) => ({ ...pick(entry), scoreLabel: entry.scoreLabel }));
     return {
-      heatmap: universe.slice(0, 520).map((entry) => ({ ...pick(entry), industry: entry.industry })),
+      heatmap: universe.slice(0, SECTOR_UNIVERSE_SIZE).map((entry) => ({ ...pick(entry), industry: entry.industry })),
       breadth: { advancers, decliners, unchanged: priced.length - advancers - decliners, total: priced.length },
       sectors,
       movers: { gainers: byChange.slice(0, 6).map(pick), losers: byChange.slice(-6).reverse().map(pick) },

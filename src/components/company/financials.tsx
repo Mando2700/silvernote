@@ -9,7 +9,7 @@ import { ColumnChart, LineChart, ScrollReveal, StackedColumns, Waterfall, type W
 import { Sparkline } from '@/components/motion/sparkline';
 import { Badge, EmptyState, Panel, PanelHeader, Segmented, Skeleton, Tabs } from '@/components/ui/primitives';
 import { Drawer } from '@/components/ui/overlay';
-import { compactNumber, isNum, pct, relativeTime } from '@/lib/format';
+import { compactNumber, isNum, pct, relativeTime, signedPct } from '@/lib/format';
 import { FEATURED, statementLayout, STATEMENT_TITLES, type LineDef } from '@/lib/finance/statement-layout';
 import type { Frequency, LineItemKey, StandardizedStatements, StatementKind, StatementPeriod } from '@/lib/finance/statement-types';
 import { luminance } from '@/lib/theme';
@@ -549,18 +549,45 @@ function StatementTable({
   );
 }
 
+type Growth = { text: string; note: string };
+
+/**
+ * Multi-year growth for a line. Compounding is an annual idea, so it reads annual statements even when the
+ * table shows quarters; companies with too few annual filings fall back to the same quarter N years earlier.
+ * Margins get the change in points; a base at or below zero has no CAGR, so the change is shown instead.
+ */
+function lineGrowth(def: LineDef, statements: StandardizedStatements, years: number): Growth {
+  const pick = (periods: StatementPeriod[]) => {
+    const end = periods.find((period) => value(period, def.key) !== null);
+    if (!end) return null;
+    const start = periods.find((period) => period.fiscalYear === end.fiscalYear - years && period.fiscalQuarter === end.fiscalQuarter && value(period, def.key) !== null);
+    return start ? { end, start } : null;
+  };
+  const pair = pick(statements.annual) ?? pick(statements.quarterly);
+  if (!pair) {
+    const available = statements.annual.filter((period) => value(period, def.key) !== null).length;
+    return { text: 'n/a', note: available ? `Only ${available} year${available === 1 ? '' : 's'} reported` : 'Not reported' };
+  }
+  const latest = value(pair.end, def.key) as number;
+  const base = value(pair.start, def.key) as number;
+  const note = `${pair.start.label} → ${pair.end.label}`;
+  if (def.format === 'percent') {
+    const delta = latest - base;
+    return { text: `${delta >= 0 ? '+' : '−'}${Math.abs(delta * 100).toFixed(1)} pts`, note };
+  }
+  // Outflows and losses are stored negative: when both ends are negative, compound the magnitude.
+  if ((latest > 0 && base > 0) || (latest < 0 && base < 0)) {
+    return { text: signedPct((Math.abs(latest) / Math.abs(base)) ** (1 / years) - 1, 1), note: latest < 0 ? `${note} · size of outflow` : note };
+  }
+  return { text: formatLine(latest - base, def, statements.currency).replace(/^(?!−)/, '+'), note: `${note} · change (no CAGR across zero)` };
+}
+
 function LineDetail({ def, statements, frequency, onClose }: { def: LineDef | null; statements: StandardizedStatements; frequency: Frequency; onClose: () => void }) {
   const periods = frequency === 'annual' ? statements.annual : statements.quarterly;
   const chronological = [...periods].reverse();
   const values = def ? chronological.map((period) => value(period, def.key)) : [];
-  const numeric = values.filter((item): item is number => item !== null);
-  const latest = numeric[numeric.length - 1] ?? null;
-  const cagr = (years: number) => {
-    if (!def || frequency !== 'annual' || numeric.length <= years) return null;
-    const start = numeric[numeric.length - 1 - years];
-    if (!latest || !start || start <= 0 || latest <= 0) return null;
-    return (latest / start) ** (1 / years) - 1;
-  };
+  const latest = def ? (periods.map((period) => value(period, def.key)).find((item) => item !== null) ?? null) : null;
+  const growth = def ? ([3, 5] as const).map((years) => ({ years, ...lineGrowth(def, statements, years) })) : [];
   return (
     <Drawer open={Boolean(def)} onClose={onClose} title={def?.label} width={520}>
       {def ? (
@@ -571,14 +598,13 @@ function LineDetail({ def, statements, frequency, onClose }: { def: LineDef | nu
               <div className="text-[11px] text-muted">Latest</div>
               <div className="mt-0.5 text-[15px] font-semibold text-ink">{formatLine(latest, def, statements.currency)}</div>
             </div>
-            <div className="rounded-sm border border-line bg-surface-1 p-2.5">
-              <div className="text-[11px] text-muted">3-year CAGR</div>
-              <div className="mt-0.5 text-[15px] font-semibold text-ink">{def.format === 'percent' ? '—' : pct(cagr(3))}</div>
-            </div>
-            <div className="rounded-sm border border-line bg-surface-1 p-2.5">
-              <div className="text-[11px] text-muted">5-year CAGR</div>
-              <div className="mt-0.5 text-[15px] font-semibold text-ink">{def.format === 'percent' ? '—' : pct(cagr(5))}</div>
-            </div>
+            {growth.map((item) => (
+              <div key={item.years} className="rounded-sm border border-line bg-surface-1 p-2.5">
+                <div className="text-[11px] text-muted">{item.years}-year {def.format === 'percent' ? 'change' : 'CAGR'}</div>
+                <div className="mt-0.5 text-[15px] font-semibold text-ink">{item.text}</div>
+                <div className="mt-0.5 truncate text-[10px] text-faint" title={item.note}>{item.note}</div>
+              </div>
+            ))}
           </div>
           <ColumnChart
             categories={chronological.map((period) => period.label)}

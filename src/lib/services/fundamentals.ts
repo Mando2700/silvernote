@@ -148,7 +148,7 @@ export async function ingestFundamentals(onProgress?: (done: number, total: numb
   }
 
   for (let index = 0; index < fundamentalsRows.length; index += 1000) {
-    await upsertFundamentals(fundamentalsRows.slice(index, index + 1000));
+    await upsertFundamentals(fundamentalsRows.slice(index, index + 1000), { onlyNewer: true });
   }
   for (let index = 0; index < statementRows.length; index += 300) {
     const chunk = statementRows.slice(index, index + 300).map((row) => ({ symbol: row.symbol, periods: row.periods }));
@@ -270,14 +270,19 @@ const FUNDAMENTAL_COLUMNS = [
   ['source', 'text'],
 ] as const;
 
-export async function upsertFundamentals(rows: Record<string, unknown>[]) {
+/**
+ * `onlyNewer` keeps a row that already covers a later fiscal year: US-GAAP frames stop at the last
+ * US-GAAP filing, so they must not overwrite IFRS data from a company that switched (e.g. Toyota).
+ */
+export async function upsertFundamentals(rows: Record<string, unknown>[], options: { onlyNewer?: boolean } = {}) {
   if (!rows.length) return;
   const columns = FUNDAMENTAL_COLUMNS.map(([name]) => name);
   const definitions = FUNDAMENTAL_COLUMNS.map(([name, type]) => `${name} ${type}`).join(', ');
   await q(
     `insert into public.fundamentals (symbol, ${columns.join(', ')}, updated_at)
      select symbol, ${columns.join(', ')}, now() from json_to_recordset($1::json) as t(symbol text, ${definitions})
-     on conflict (symbol) do update set ${columns.map((column) => `${column} = excluded.${column}`).join(', ')}, updated_at = now()`,
+     on conflict (symbol) do update set ${columns.map((column) => `${column} = excluded.${column}`).join(', ')}, updated_at = now()
+     ${options.onlyNewer ? 'where fundamentals.period_end is null or excluded.period_end >= fundamentals.period_end' : ''}`,
     [rows],
   );
 }

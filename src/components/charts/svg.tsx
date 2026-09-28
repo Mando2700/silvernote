@@ -245,6 +245,7 @@ export function LineChart({
   className,
   endLabels = true,
   zeroLine = false,
+  time,
 }: {
   categories: string[];
   series: LineSeries[];
@@ -253,6 +254,8 @@ export function LineChart({
   className?: string;
   endLabels?: boolean;
   zeroLine?: boolean;
+  /** Places points by time on a fixed axis (e.g. a whole session) instead of spreading them evenly, so a partial day fills in from the left. */
+  time?: { values: number[]; domain: [number, number]; ticks: Array<{ at: number; label: string }> };
 }) {
   const [ref, width] = useWidth<HTMLDivElement>();
   const [hover, setHover] = useState<number | null>(null);
@@ -265,7 +268,19 @@ export function LineChart({
   const { domain, ticks } = niceTicks(extent[0], extent[1] === extent[0] ? extent[0] + 1 : extent[1]);
   const y = scaleLinear().domain(domain).range([innerHeight, 0]);
   const step = categories.length > 1 ? innerWidth / (categories.length - 1) : 0;
-  const xAt = (index: number) => (categories.length > 1 ? index * step : innerWidth / 2);
+  const xTime = time ? scaleLinear().domain(time.domain).range([0, innerWidth]) : null;
+  const xAt = (index: number) => (time && xTime ? xTime(time.values[index] ?? time.domain[0]) : categories.length > 1 ? index * step : innerWidth / 2);
+  const nearest = (relative: number) => {
+    if (time && xTime) {
+      const at = xTime.invert(relative);
+      let best = 0;
+      time.values.forEach((value, index) => {
+        if (Math.abs(value - at) < Math.abs(time.values[best] - at)) best = index;
+      });
+      return best;
+    }
+    return Math.max(0, Math.min(categories.length - 1, Math.round(relative / (step || 1))));
+  };
   const colors = series.map((item, index) => item.color ?? (series.length === 1 ? BRAND : (SERIES_COLORS[index] ?? NEUTRAL_MARK)));
   // Space labels by their actual length so long date labels never collide.
   const longestLabel = categories.reduce((max, category) => Math.max(max, category.length), 0);
@@ -296,7 +311,7 @@ export function LineChart({
           if (!categories.length) return;
           const bounds = (event.currentTarget as HTMLDivElement).getBoundingClientRect();
           const relative = event.clientX - bounds.left - margin.left;
-          setHover(Math.max(0, Math.min(categories.length - 1, Math.round(relative / (step || 1)))));
+          setHover(nearest(relative));
         }}
         onPointerLeave={() => setHover(null)}
       >
@@ -311,7 +326,13 @@ export function LineChart({
                   </text>
                 </g>
               ))}
-              {categories.map((category, index) =>
+              {time
+                ? time.ticks.map((tick) => (
+                    <text key={tick.at} x={xTime?.(tick.at) ?? 0} y={innerHeight + 15} textAnchor="middle" fontSize={10} fill={AXIS_TEXT}>
+                      {tick.label}
+                    </text>
+                  ))
+                : categories.map((category, index) =>
                 index % labelEvery === 0 || index === categories.length - 1 ? (
                   <text key={index} x={xAt(index)} y={innerHeight + 15} textAnchor="middle" fontSize={10} fill={hover === index ? '#eceef1' : AXIS_TEXT}>
                     {category}

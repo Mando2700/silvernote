@@ -10,6 +10,7 @@ import { useMarketColors } from '@/components/shell/providers';
 import { Button } from '@/components/ui/button';
 import { CompanyLogo } from '@/components/ui/company-logo';
 import { Segmented } from '@/components/ui/primitives';
+import { sectorPerformance, SECTOR_UNIVERSE_SIZE } from '@/lib/finance/sectors';
 import { compactNumber, price, signedPct } from '@/lib/format';
 import { luminance, NEUTRAL_FILL } from '@/lib/theme';
 import { cn } from '@/lib/utils';
@@ -53,7 +54,7 @@ function useSize<T extends HTMLElement>() {
   return [ref, size] as const;
 }
 
-function layout(items: HeatmapItem[], width: number, height: number, focus: string | null) {
+function layout(items: HeatmapItem[], width: number, height: number, focus: string | null, stats: Map<string, number | null>) {
   const tiles: Tile[] = [];
   const sectors: SectorBox[] = [];
   if (!width || !height) return { tiles, sectors };
@@ -90,8 +91,7 @@ function layout(items: HeatmapItem[], width: number, height: number, focus: stri
     if (node.depth === 1) {
       const list = bySector.get(node.data.name) ?? [];
       const cap = list.reduce((total, item) => total + (item.marketCap ?? 0), 0);
-      const weighted = list.reduce((total, item) => total + (item.changePct ?? 0) * (item.marketCap ?? 0), 0);
-      sectors.push({ key: node.data.name, sector: node.data.name, x: rect.x0, y: rect.y0, w: rect.x1 - rect.x0, h: rect.y1 - rect.y0, change: cap ? weighted / cap : null, cap });
+      sectors.push({ key: node.data.name, sector: node.data.name, x: rect.x0, y: rect.y0, w: rect.x1 - rect.x0, h: rect.y1 - rect.y0, change: stats.get(node.data.name) ?? null, cap });
     }
     if (node.depth === 2 && node.data.item) {
       tiles.push({ key: node.data.item.symbol, symbol: node.data.item.symbol, item: node.data.item, x: rect.x0, y: rect.y0, w: rect.x1 - rect.x0, h: rect.y1 - rect.y0 });
@@ -111,10 +111,11 @@ export function MarketHeatmap({ items, height = 520, className }: { items: Heatm
 
   const visible = useMemo(() => {
     if (focus) return items.filter((item) => item.sector === focus).slice(0, 260);
-    return items.slice(0, 520);
+    return items.slice(0, SECTOR_UNIVERSE_SIZE);
   }, [items, focus]);
-  const { tiles, sectors } = useMemo(() => layout(visible, size.width, size.height, focus), [visible, size.width, size.height, focus]);
-  const allSectors = useMemo(() => layout(items.slice(0, 520), 1000, 600, null).sectors.sort((a, b) => b.cap - a.cap), [items]);
+  const sectorChange = useMemo(() => new Map(sectorPerformance(items).map((stat) => [stat.sector, stat.changePct])), [items]);
+  const { tiles, sectors } = useMemo(() => layout(visible, size.width, size.height, focus, sectorChange), [visible, size.width, size.height, focus, sectorChange]);
+  const allSectors = useMemo(() => layout(items.slice(0, SECTOR_UNIVERSE_SIZE), 1000, 600, null, sectorChange).sectors.sort((a, b) => b.cap - a.cap), [items, sectorChange]);
 
   const market = useMarketColors();
   // Diverging: loss ← gray → gain, saturating at ±3%.

@@ -21,7 +21,7 @@ type SetRow = {
 
 const DETAILED_TTL_MS = 3 * 86_400_000;
 /** Bump when standardization adds line items, so stored statements are rebuilt. */
-const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
 
 function assemble(symbol: string, rows: SetRow[]): StandardizedStatements | null {
   const annual = rows.find((row) => row.frequency === 'annual');

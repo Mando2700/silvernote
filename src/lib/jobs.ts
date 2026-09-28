@@ -8,7 +8,7 @@ import { ingestFundamentals } from '@/lib/services/fundamentals';
 import { buildScorePanel } from '@/lib/services/backtest';
 import { getCandles, isMarketOpen } from '@/lib/services/prices';
 import { computeUniverseScore } from '@/lib/services/scores';
-import { getCompanyStatements } from '@/lib/services/statements';
+import { getCompanyStatements, SCHEMA_VERSION } from '@/lib/services/statements';
 import { refreshUniverse, universeStatus } from '@/lib/services/universe';
 
 export type JobKind = 'universe' | 'fundamentals' | 'scores' | 'panel' | 'ibkr';
@@ -74,14 +74,19 @@ async function runScores(report: Reporter, job: Running, params: { minMarketCap?
         // Every listed common stock with a price is a target, not just companies that already have
         // universe (frames) statements — full filings are fetched on the way for the rest, and
         // computeUniverseScore falls back to a low-confidence, price-only score when none are found.
-        `select s.symbol, (st.symbol is not null) as has_statements from public.securities s
+        // Frames sets that stopped updating (a switch to IFRS) and detailed sets built by an older
+        // standardizer are refetched too, so the score never runs on stale or incomplete filings.
+        `select s.symbol, (st.symbol is not null
+            and not (st.source = 'sec-frames' and (st.periods->0->>'periodEnd')::date < now() - interval '15 months')
+            and not (st.source <> 'sec-frames' and coalesce((st.meta->>'schema')::int, 0) < $2)) as has_statements
+         from public.securities s
          left join public.statement_sets st on st.symbol = s.symbol and st.frequency = 'annual'
          left join public.scores sc on sc.symbol = s.symbol
          where s.listed and s.is_common and s.price is not null
            and coalesce(s.market_cap, 0) >= $1
            and (sc.calculated_at is null or sc.calculated_at < now() - interval '6 days')
          order by s.market_cap desc nulls last`,
-        [params.minMarketCap ?? 0],
+        [params.minMarketCap ?? 0, SCHEMA_VERSION],
       );
   const total = targets.length;
   let done = 0;
@@ -158,12 +163,22 @@ export async function latestJobs() {
   return byKind;
 }
 
+/** Last completed full run: a targeted run (a few symbols) must not postpone the universe-wide sweep. */
 async function lastFinished(kind: JobKind) {
   const row = await q1<{ finished_at: Date }>(
-    `select finished_at from public.jobs where kind = $1 and status = 'done' order by finished_at desc limit 1`,
+    `select finished_at from public.jobs where kind = $1 and status = 'done' and not (coalesce(params, '{}'::jsonb) ? 'symbols')
+     order by finished_at desc limit 1`,
     [kind],
   );
   return row?.finished_at ? new Date(row.finished_at).getTime() : 0;
+}
+
+async function unscoredCount() {
+  const row = await q1<{ count: number }>(
+    `select count(*)::int as count from public.securities s left join public.scores sc on sc.symbol = s.symbol
+     where s.listed and s.is_common and s.price is not null and sc.symbol is null`,
+  );
+  return row?.count ?? 0;
 }
 
 /**
@@ -190,8 +205,10 @@ export async function schedulerTick() {
       return;
     }
     const scoresAt = await lastFinished('scores');
-    if (Date.now() - scoresAt > week && !running.has('scores') && !running.has('fundamentals')) {
-      await startJob('scores', { minMarketCap: 0 });
+    if (!running.has('scores') && !running.has('fundamentals')) {
+      // Weekly full sweep, plus a catch-up (at most every 6 hours) for newly listed or missed companies.
+      const due = Date.now() - scoresAt > week || (Date.now() - scoresAt > 6 * 3_600_000 && (await unscoredCount()) > 0);
+      if (due) await startJob('scores', { minMarketCap: 0 });
     }
     if (Math.random() < 0.05) await purgeExpiredCache().catch(() => {});
   } catch (error) {

@@ -12,10 +12,10 @@ const day = (iso: string, o: number, h: number, l: number, c: number, v: number 
 });
 
 describe('candle density', () => {
-  it('uses daily bars up to a year, weekly for 3y, and monthly beyond', () => {
-    expect(['1m', '3m', '6m', 'ytd', '1y'].map(resolutionForRange)).toEqual(['day', 'day', 'day', 'day', 'day']);
-    expect(resolutionForRange('3y')).toBe('week');
-    expect(['5y', '10y'].map(resolutionForRange)).toEqual(['month', 'month']);
+  it('uses daily bars up to six months, weekly for 1y-3y, and monthly beyond', () => {
+    expect(['1d', '1w', '1m', '3m', '6m', 'ytd'].map(resolutionForRange)).toEqual(['5m', '15m', '1h', 'halfday', 'day', 'day']);
+    expect(['1y', '3y'].map(resolutionForRange)).toEqual(['2day', 'week']);
+    expect(['5y', '10y'].map(resolutionForRange)).toEqual(['2week', 'month']);
   });
 
   it('rolls daily sessions into Monday-anchored weekly bars', () => {

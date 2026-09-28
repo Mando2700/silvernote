@@ -1,8 +1,8 @@
 'use client';
 
-import { ArrowUp, Brain, Briefcase, Building2, Copy, Globe, Sparkles, Square, Zap } from 'lucide-react';
+import { ArrowUp, Brain, Briefcase, Building2, ChevronsUpDown, Copy, Globe, Sparkles, Square, Zap } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
-import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
+import { useCallback, useEffect, useId, useRef, useState, useSyncExternalStore } from 'react';
 import { toast } from 'sonner';
 import { mutate as globalMutate } from 'swr';
 
@@ -71,27 +71,89 @@ const MODES: Array<{ value: ChatMode; label: string; icon: typeof Zap; hint: str
   { value: 'thinking', label: 'Thinking', icon: Brain, hint: 'Thinking: grok-4 with full context. Deepest, ~15× the cost.' },
 ];
 
+const SPRING = { type: 'spring', stiffness: 520, damping: 38, mass: 0.7 } as const;
+
+/** Shows only the current mode; click to expand the others, pick one and it folds back. */
 function ModeSwitch({ mode, onChange, compact }: { mode: ChatMode; onChange: (mode: ChatMode) => void; compact?: boolean }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  const pillId = useId();
+
+  useEffect(() => {
+    if (!open) return;
+    const onPointer = (event: PointerEvent) => {
+      if (!ref.current?.contains(event.target as Node)) setOpen(false);
+    };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.stopPropagation();
+        setOpen(false);
+      }
+    };
+    window.addEventListener('pointerdown', onPointer);
+    window.addEventListener('keydown', onKey, true);
+    return () => {
+      window.removeEventListener('pointerdown', onPointer);
+      window.removeEventListener('keydown', onKey, true);
+    };
+  }, [open]);
+
+  const shown = open ? MODES : MODES.filter((item) => item.value === mode);
+
   return (
-    <div className="flex shrink-0 items-center gap-0.5 rounded-sm border border-line bg-surface-2/60 p-0.5" role="radiogroup" aria-label="Grok mode">
-      {MODES.map(({ value, label, icon: Icon, hint }) => (
-        <button
-          key={value}
-          type="button"
-          role="radio"
-          aria-checked={mode === value}
-          title={hint}
-          onClick={() => onChange(value)}
-          className={cn(
-            'flex h-6 items-center gap-1 rounded-xs px-1.5 font-mono text-[10px] tracking-[0.06em] transition-colors',
-            mode === value ? 'bg-white/[0.08] text-ink shadow-[inset_0_1px_0_rgba(255,255,255,0.06)]' : 'text-faint hover:text-ink-2',
-          )}
-        >
-          <Icon className={cn('size-3', mode === value && value === 'thinking' && 'text-ion')} />
-          <span className={compact ? 'sr-only' : 'hidden sm:inline'}>{label}</span>
-        </button>
-      ))}
-    </div>
+    <motion.div
+      ref={ref}
+      layout
+      transition={SPRING}
+      className={cn('flex shrink-0 items-center gap-0.5 overflow-hidden rounded-sm border p-0.5', open ? 'border-line-strong bg-surface-3' : 'border-line bg-surface-2/60')}
+      style={{ borderRadius: 5 }}
+      role="radiogroup"
+      aria-label="Grok mode"
+    >
+      <AnimatePresence initial={false} mode="popLayout">
+        {shown.map(({ value, label, icon: Icon, hint }) => {
+          const active = value === mode;
+          return (
+            <motion.button
+              key={value}
+              layout
+              type="button"
+              role="radio"
+              aria-checked={active}
+              title={open ? hint : `${hint} Click to change.`}
+              initial={{ opacity: 0, scale: 0.85, filter: 'blur(3px)' }}
+              animate={{ opacity: 1, scale: 1, filter: 'blur(0px)' }}
+              exit={{ opacity: 0, scale: 0.85, filter: 'blur(3px)' }}
+              transition={SPRING}
+              onClick={() => {
+                if (!open) return setOpen(true);
+                onChange(value);
+                setOpen(false);
+              }}
+              className={cn(
+                'relative flex h-6 items-center gap-1 rounded-xs px-1.5 font-mono text-[10px] tracking-[0.06em] transition-colors',
+                active ? 'text-ink' : 'text-faint hover:text-ink-2',
+              )}
+            >
+              {active ? (
+                <motion.span
+                  layoutId={pillId}
+                  transition={SPRING}
+                  className="absolute inset-0 rounded-xs bg-white/[0.08] shadow-[inset_0_1px_0_rgba(255,255,255,0.07)]"
+                />
+              ) : null}
+              <Icon className={cn('relative size-3', active && value === 'thinking' && 'text-ion drop-shadow-[0_0_4px_rgba(159,216,255,0.7)]')} />
+              <span className={cn('relative', compact && !open ? 'sr-only' : compact ? '' : 'hidden sm:inline')}>{label}</span>
+            </motion.button>
+          );
+        })}
+      </AnimatePresence>
+      {!open ? (
+        <motion.span layout="position" className="relative -ml-0.5 pr-1 text-faint" aria-hidden>
+          <ChevronsUpDown className="size-2.5" />
+        </motion.span>
+      ) : null}
+    </motion.div>
   );
 }
 

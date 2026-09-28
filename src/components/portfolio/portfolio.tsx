@@ -11,7 +11,7 @@ import useSWR from 'swr';
 import { CorrelationGrid } from '@/components/charts/correlation-grid';
 import { MarketHeatmap } from '@/components/charts/market-heatmap';
 import { PerformanceChart } from '@/components/portfolio/performance-chart';
-import { AnimatedNumber } from '@/components/motion/animated-number';
+import { RollingNumber } from '@/components/motion/rolling-number';
 import { BondsPanel } from '@/components/portfolio/bonds';
 import { ImportPhotosModal } from '@/components/portfolio/import-photos';
 import { TaxPanel } from '@/components/portfolio/tax';
@@ -76,26 +76,18 @@ function splitLabel(factor: number) {
   return factor >= 1 ? `${round(factor)}-for-1` : `1-for-${round(1 / factor)}`;
 }
 
-type HoldingSortKey = 'symbol' | 'shares' | 'avgCost' | 'price' | 'marketValue' | 'weight' | 'dayChange' | 'unrealized' | 'score';
-const HOLDING_SORT_DEFAULT_DIR: Record<HoldingSortKey, 'asc' | 'desc'> = { symbol: 'asc', shares: 'desc', avgCost: 'desc', price: 'desc', marketValue: 'desc', weight: 'desc', dayChange: 'desc', unrealized: 'desc', score: 'desc' };
+type HoldingSortKey = 'symbol' | 'shares' | 'avgCost' | 'price' | 'priceChange' | 'priceChangePct' | 'marketValue' | 'weight' | 'dayChange' | 'unrealized' | 'score';
+const HOLDING_SORT_DEFAULT_DIR: Record<HoldingSortKey, 'asc' | 'desc'> = { symbol: 'asc', shares: 'desc', avgCost: 'desc', price: 'desc', priceChange: 'desc', priceChangePct: 'desc', marketValue: 'desc', weight: 'desc', dayChange: 'desc', unrealized: 'desc', score: 'desc' };
 
 const SESSION_LABEL = { pre: 'Pre-market', post: 'After hours' } as const;
-
-/** A share's own move: signed price change and percent (already in percent units). */
-function PriceMove({ change, changePct }: { change: number | null; changePct: number | null | undefined }) {
-  return (
-    <span className="inline-flex items-center gap-1 text-[10.5px]">
-      <Delta value={change} kind="money" digits={2} className="text-[10.5px]" />
-      <Delta value={changePct} alreadyPercent className="text-[10.5px]" />
-    </span>
-  );
-}
 
 const HOLDING_COLUMNS: Record<HoldingSortKey, { label: string; align: 'left' | 'right' }> = {
   symbol: { label: 'Holding', align: 'left' },
   shares: { label: 'Shares', align: 'right' },
   avgCost: { label: 'Avg cost', align: 'right' },
   price: { label: 'Price', align: 'right' },
+  priceChange: { label: 'Change ($)', align: 'right' },
+  priceChangePct: { label: 'Change (%)', align: 'right' },
   marketValue: { label: 'Market value', align: 'right' },
   weight: { label: 'Weight', align: 'left' },
   dayChange: { label: 'Day P&L', align: 'right' },
@@ -126,15 +118,36 @@ function HoldingCell({ column, holding, extendedSession, showExtended }: { colum
     case 'price':
       return (
         <td className="num px-3 py-2 text-right text-ink" title={holding.priceAsOf ? `Quote as of ${new Date(holding.priceAsOf).toLocaleString()}` : 'No price available: valued at cost'}>
+          {holding.priced === false ? <span className="text-warning">—</span> : <span>{price(holding.price)}</span>}
+        </td>
+      );
+    case 'priceChange':
+      return (
+        <td className="num px-3 py-2 text-right">
           {holding.priced === false ? (
-            <span className="text-warning">—</span>
+            <span className="text-faint">—</span>
           ) : (
             <div className="flex flex-col items-end">
-              <span>{price(holding.price)}</span>
-              <PriceMove change={holding.shares > 0 ? holding.dayChange / holding.shares : null} changePct={holding.dayChangePct} />
+              <Delta value={holding.shares > 0 ? holding.dayChange / holding.shares : null} kind="money" digits={2} className="text-[10.5px]" />
               {extendedSession && holding.extendedPrice != null ? (
-                <span className="inline-flex items-center gap-1 text-[9.5px] text-muted" title={`${SESSION_LABEL[extendedSession]} ${price(holding.extendedPrice)}`}>
+                <span className="text-[9.5px] text-muted" title={`${SESSION_LABEL[extendedSession]} ${price(holding.extendedPrice)}`}>
                   <Delta value={holding.price !== null ? holding.extendedPrice - holding.price : null} kind="money" digits={2} className="text-[9.5px]" />
+                </span>
+              ) : null}
+            </div>
+          )}
+        </td>
+      );
+    case 'priceChangePct':
+      return (
+        <td className="num px-3 py-2 text-right">
+          {holding.priced === false ? (
+            <span className="text-faint">—</span>
+          ) : (
+            <div className="flex flex-col items-end">
+              <Delta value={holding.dayChangePct} alreadyPercent className="text-[10.5px]" />
+              {extendedSession && holding.extendedPrice != null ? (
+                <span className="text-[9.5px] text-muted" title={`${SESSION_LABEL[extendedSession]} ${price(holding.extendedPrice)}`}>
                   <Delta value={holding.extendedChangePct} alreadyPercent className="text-[9.5px]" />
                 </span>
               ) : null}
@@ -188,6 +201,8 @@ function sortHoldings(holdings: Holding[], sort: { key: HoldingSortKey | 'extend
   const factor = sort.dir === 'asc' ? 1 : -1;
   return holdings.slice().sort((a, b) => {
     if (sort.key === 'symbol') return factor * a.symbol.localeCompare(b.symbol);
+    if (sort.key === 'priceChange') return factor * ((a.shares > 0 ? a.dayChange / a.shares : 0) - (b.shares > 0 ? b.dayChange / b.shares : 0));
+    if (sort.key === 'priceChangePct') return factor * ((a.dayChangePct ?? 0) - (b.dayChangePct ?? 0));
     const av = a[sort.key];
     const bv = b[sort.key];
     if (typeof av !== 'number' && typeof bv !== 'number') return 0;
@@ -586,7 +601,7 @@ export function PortfolioView() {
           <div>
             <div className="kicker">{detail?.portfolio.name ?? '…'} · benchmark {detail?.portfolio.benchmark}</div>
             <div className="mt-2 text-[48px] leading-none font-semibold tracking-[-0.035em] text-ink">
-              <AnimatedNumber value={summary?.totalValue} format={(value) => money(value, { digits: 0 })} />
+              <RollingNumber value={summary?.totalValue} format={(value) => money(value, { digits: 0 })} />
             </div>
             <div className="mt-2 flex items-center gap-2 text-[13px]">
               <span className="text-muted">{showExtended && extendedSession ? SESSION_LABEL[extendedSession] : 'Today'}</span>
