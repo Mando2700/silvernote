@@ -1,5 +1,6 @@
 import 'server-only';
 
+import type { ToolDefinition } from '@/lib/ai/tools';
 import { env } from '@/lib/env';
 
 export type ChatMessage = { role: 'system' | 'user' | 'assistant'; content: string };
@@ -57,22 +58,49 @@ async function errorText(response: Response) {
   }
 }
 
-async function* viaResponses(messages: ChatMessage[], model: string, signal?: AbortSignal) {
-  const response = await fetch(`${BASE}/responses`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${env.xaiKey}` },
-    // Server-side search lets Grok answer "why" questions (a debt raise, a guidance cut) that the numbers alone can't.
-    body: JSON.stringify({ model, input: messages, stream: true, store: false, tools: [{ type: 'web_search' }, { type: 'x_search' }] }),
-    signal,
-  });
-  if (!response.ok) throw new GrokError(response.status, await errorText(response));
-  for await (const event of sse(response)) {
-    const type = String(event.type ?? '');
-    if (type === 'response.output_text.delta' && typeof event.delta === 'string') yield event.delta;
-    else if (type === 'error' || type === 'response.failed') {
-      const detail = (event.error as { message?: string } | undefined)?.message ?? (event.response as { error?: { message?: string } } | undefined)?.error?.message;
-      throw new GrokError(500, detail ?? 'Grok returned an error.');
+export type ToolRunner = { definitions: ToolDefinition[]; run: (name: string, args: string) => Promise<string> };
+
+type FunctionCall = { type: 'function_call'; call_id: string; name: string; arguments: string };
+
+/** Most tool rounds per answer, so a confused model can't loop forever. */
+const MAX_TOOL_ROUNDS = 8;
+
+async function* viaResponses(messages: ChatMessage[], model: string, signal?: AbortSignal, tools?: ToolRunner) {
+  const input: unknown[] = [...messages];
+  for (let round = 0; ; round += 1) {
+    // After the last allowed round, drop the functions so Grok has to answer with what it has.
+    const functions = tools && round < MAX_TOOL_ROUNDS ? tools.definitions : [];
+    const response = await fetch(`${BASE}/responses`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${env.xaiKey}` },
+      // Server-side search lets Grok answer "why" questions (a debt raise, a guidance cut) that the numbers alone can't.
+      body: JSON.stringify({ model, input, stream: true, store: false, tools: [{ type: 'web_search' }, { type: 'x_search' }, ...functions] }),
+      signal,
+    });
+    if (!response.ok) throw new GrokError(response.status, await errorText(response));
+    const calls = new Map<string, FunctionCall>();
+    let text = '';
+    for await (const event of sse(response)) {
+      const type = String(event.type ?? '');
+      if (type === 'response.output_text.delta' && typeof event.delta === 'string') {
+        text += event.delta;
+        yield event.delta;
+      } else if (type === 'response.output_item.done' || type === 'response.completed') {
+        const items = type === 'response.completed' ? ((event.response as { output?: unknown[] } | undefined)?.output ?? []) : [event.item];
+        for (const item of items as Array<Partial<FunctionCall>>) {
+          if (item?.type === 'function_call' && item.call_id && item.name) {
+            calls.set(item.call_id, { type: 'function_call', call_id: item.call_id, name: item.name, arguments: item.arguments ?? '{}' });
+          }
+        }
+      } else if (type === 'error' || type === 'response.failed') {
+        const detail = (event.error as { message?: string } | undefined)?.message ?? (event.response as { error?: { message?: string } } | undefined)?.error?.message;
+        throw new GrokError(500, detail ?? 'Grok returned an error.');
+      }
     }
+    if (!calls.size || !tools) return;
+    if (text) input.push({ role: 'assistant', content: text });
+    const outputs = await Promise.all([...calls.values()].map(async (call) => ({ type: 'function_call_output', call_id: call.call_id, output: await tools.run(call.name, call.arguments) })));
+    input.push(...calls.values(), ...outputs);
   }
 }
 
@@ -92,15 +120,16 @@ async function* viaChatCompletions(messages: ChatMessage[], model: string, signa
 }
 
 /**
- * Stream a Grok answer. Uses the Responses API (xAI's current endpoint) and falls back to the
- * legacy Chat Completions endpoint if the account or model doesn't support it.
+ * Stream a Grok answer. Uses the Responses API (xAI's current endpoint), running any SilverNote
+ * `tools` Grok calls along the way, and falls back to the legacy Chat Completions endpoint (no
+ * tools) if the account or model doesn't support it.
  */
-export async function* streamGrok(messages: ChatMessage[], options: { model?: string; signal?: AbortSignal } = {}) {
+export async function* streamGrok(messages: ChatMessage[], options: { model?: string; signal?: AbortSignal; tools?: ToolRunner } = {}) {
   if (!env.xaiKey) throw new GrokError(401, 'XAI_API_KEY is not set.');
   const model = options.model || env.xaiModel;
   let produced = false;
   try {
-    for await (const chunk of viaResponses(messages, model, options.signal)) {
+    for await (const chunk of viaResponses(messages, model, options.signal, options.tools)) {
       produced = true;
       yield chunk;
     }

@@ -1,0 +1,267 @@
+import 'server-only';
+
+import { evaluate } from '@/lib/ai/calc';
+import { money, snapshotLine } from '@/lib/ai/context';
+import type { StatementPeriod } from '@/lib/finance/statement-types';
+import { getPeerSymbols } from '@/lib/services/market';
+import { getCandles } from '@/lib/services/prices';
+import { getListings, METRIC_KEYS, type MetricKey, type UniverseEntry } from '@/lib/services/screener';
+import { getCompanyStatements } from '@/lib/services/statements';
+
+/**
+ * Functions Grok can call mid-answer to pull SilverNote data on demand, so questions like
+ * "market-cap-weighted 5y revenue CAGR of the 3 biggest peers of X" don't depend on what the
+ * pre-built DATA block happened to include.
+ */
+export type ToolDefinition = { type: 'function'; name: string; description: string; parameters: Record<string, unknown> };
+
+const symbolsParam = { type: 'array', items: { type: 'string' }, description: 'Tickers, e.g. ["MSFT", "CRM"].' };
+
+export const TOOLS: ToolDefinition[] = [
+  {
+    type: 'function',
+    name: 'get_companies',
+    description:
+      'Snapshot for up to 25 tickers: name, sector/industry, price, market value, latest fiscal-year revenue, revenue growth, 3y revenue CAGR, margins, P/E, P/S, EV/EBITDA, FCF yield, ROE, debt/equity, SilverNote Score.',
+    parameters: { type: 'object', properties: { symbols: symbolsParam }, required: ['symbols'] },
+  },
+  {
+    type: 'function',
+    name: 'get_peers',
+    description: "A company's peer group, sorted by market value (largest first), each with the same snapshot as get_companies.",
+    parameters: {
+      type: 'object',
+      properties: { symbol: { type: 'string' }, limit: { type: 'integer', description: 'Max peers, default 10, up to 20.' } },
+      required: ['symbol'],
+    },
+  },
+  {
+    type: 'function',
+    name: 'get_financials',
+    description:
+      'Reported financial statements (SEC XBRL, FMP fallback) for one or more tickers: annual or quarterly periods, newest first, with income, balance-sheet, cash-flow items and margins. Use for multi-year growth, CAGR, margins trends, etc.',
+    parameters: {
+      type: 'object',
+      properties: {
+        symbols: symbolsParam,
+        frequency: { type: 'string', enum: ['annual', 'quarterly'], description: 'Default annual.' },
+        periods: { type: 'integer', description: 'How many periods per company, default 6, up to 12.' },
+        items: {
+          type: 'array',
+          items: { type: 'string' },
+          description:
+            'Line items to return, e.g. ["revenue","operatingIncome","freeCashFlow"]. Omit for a standard set. Available: revenue, grossProfit, operatingIncome, netIncome, epsDiluted, sharesDiluted, ebitda, researchAndDevelopment, operatingCashFlow, capex, freeCashFlow, stockBasedCompensation, buybacks, dividendsPaid, acquisitions, cash, totalDebt, netDebt, totalAssets, totalEquity, deferredRevenue, grossMargin, operatingMargin, netMargin, fcfMargin, and more.',
+        },
+      },
+      required: ['symbols'],
+    },
+  },
+  {
+    type: 'function',
+    name: 'screen',
+    description: `Screen the US stock universe. Filter by sector/industry text and metric ranges, sort by any metric. Metrics: ${METRIC_KEYS.join(', ')}. Ratios are decimals (0.15 = 15%); marketCap/revenue in USD.`,
+    parameters: {
+      type: 'object',
+      properties: {
+        sector: { type: 'string', description: 'Case-insensitive substring match on sector.' },
+        industry: { type: 'string', description: 'Case-insensitive substring match on industry.' },
+        filters: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: { metric: { type: 'string' }, min: { type: 'number' }, max: { type: 'number' } },
+            required: ['metric'],
+          },
+        },
+        sort_by: { type: 'string', description: 'Metric to sort by, default marketCap.' },
+        order: { type: 'string', enum: ['desc', 'asc'] },
+        limit: { type: 'integer', description: 'Default 15, up to 40.' },
+      },
+    },
+  },
+  {
+    type: 'function',
+    name: 'get_price_history',
+    description: 'Split-adjusted daily closes for tickers (up to 10 years): total return and annualized return over the window, max drawdown, plus month-end closes.',
+    parameters: {
+      type: 'object',
+      properties: {
+        symbols: symbolsParam,
+        from: { type: 'string', description: 'Start date YYYY-MM-DD, default 1 year ago.' },
+        to: { type: 'string', description: 'End date YYYY-MM-DD, default today.' },
+      },
+      required: ['symbols'],
+    },
+  },
+  {
+    type: 'function',
+    name: 'calculate',
+    description:
+      'Exact arithmetic. Evaluate one or more expressions with + - * / ^ %, parentheses, and functions sqrt, ln, log, exp, abs, pow, min, max, sum, avg, round(x, digits), cagr(start, end, years). Use it for every non-trivial computation (weights, CAGRs, weighted averages) instead of doing math in your head.',
+    parameters: {
+      type: 'object',
+      properties: { expressions: { type: 'array', items: { type: 'string' }, description: 'e.g. ["cagr(12.5e9, 21.3e9, 4)", "(0.2*3.1 + 0.15*1.2)/(3.1+1.2)"]' } },
+      required: ['expressions'],
+    },
+  },
+];
+
+const DEFAULT_ITEMS = ['revenue', 'grossMargin', 'operatingIncome', 'operatingMargin', 'netIncome', 'epsDiluted', 'operatingCashFlow', 'capex', 'freeCashFlow', 'totalDebt', 'cash'];
+const RATIOS = new Set(['grossMargin', 'operatingMargin', 'ebitdaMargin', 'netMargin', 'fcfMargin']);
+
+const upper = (value: unknown) => String(value ?? '').trim().toUpperCase().replace('$', '');
+const clampInt = (value: unknown, fallback: number, max: number) => Math.max(1, Math.min(max, Math.round(Number(value) || fallback)));
+const list = (value: unknown) => (Array.isArray(value) ? value : []).map(upper).filter(Boolean);
+
+async function listingLookup() {
+  const listings = await getListings();
+  const bySymbol = new Map(listings.map((entry) => [entry.symbol, entry]));
+  return (symbol: string) => bySymbol.get(symbol) ?? bySymbol.get(symbol.replace('.', '-')) ?? bySymbol.get(symbol.replace('-', '.'));
+}
+
+function formatItem(key: string, value: number | null | undefined, currency: string) {
+  if (value == null || !Number.isFinite(value)) return `${key} n/a`;
+  if (RATIOS.has(key)) return `${key} ${(value * 100).toFixed(1)}%`;
+  if (key === 'epsDiluted' || key === 'epsBasic') return `${key} ${value.toFixed(2)}`;
+  if (key === 'sharesDiluted') return `${key} ${(value / 1e6).toFixed(1)}M`;
+  // Exact figures so Grok can compute from them without rounding drift.
+  return `${key} ${money(value, currency)} (${Math.round(value)})`;
+}
+
+async function getFinancials(args: Record<string, unknown>) {
+  const symbols = list(args.symbols).slice(0, 8);
+  const frequency = args.frequency === 'quarterly' ? 'quarterly' : 'annual';
+  const periods = clampInt(args.periods, 6, 12);
+  const items = Array.isArray(args.items) && args.items.length ? args.items.map(String).slice(0, 20) : DEFAULT_ITEMS;
+  const blocks = await Promise.all(
+    symbols.map(async (symbol) => {
+      const statements = await getCompanyStatements(symbol).catch(() => null);
+      const rows: StatementPeriod[] = statements?.[frequency]?.slice(0, periods) ?? [];
+      if (!rows.length) return `${symbol}: no ${frequency} statements available.`;
+      return [
+        `${symbol} ${frequency} (${statements!.currency}, source ${statements!.source}, newest first):`,
+        ...rows.map((period) => `- ${period.label} (ended ${period.periodEnd}): ${items.map((key) => formatItem(key, period[key as keyof StatementPeriod] as number | null, period.currency ?? statements!.currency)).join('; ')}`),
+      ].join('\n');
+    }),
+  );
+  return blocks.join('\n\n');
+}
+
+async function screen(args: Record<string, unknown>) {
+  const listings = await getListings();
+  const sector = String(args.sector ?? '').toLowerCase();
+  const industry = String(args.industry ?? '').toLowerCase();
+  const sortBy = (METRIC_KEYS as readonly string[]).includes(String(args.sort_by)) ? (args.sort_by as MetricKey) : 'marketCap';
+  const filters = (Array.isArray(args.filters) ? args.filters : []) as Array<{ metric?: string; min?: number; max?: number }>;
+  const unknown = filters.filter((filter) => !(METRIC_KEYS as readonly string[]).includes(String(filter.metric)));
+  if (unknown.length) return `Unknown metric(s): ${unknown.map((filter) => filter.metric).join(', ')}. Valid: ${METRIC_KEYS.join(', ')}.`;
+  const rows = listings
+    .filter((entry) => entry.primaryClass)
+    .filter((entry) => !sector || (entry.sector ?? '').toLowerCase().includes(sector))
+    .filter((entry) => !industry || (entry.industry ?? '').toLowerCase().includes(industry))
+    .filter((entry) =>
+      filters.every((filter) => {
+        const value = entry[filter.metric as MetricKey];
+        if (value == null) return false;
+        return (filter.min == null || value >= filter.min) && (filter.max == null || value <= filter.max);
+      }),
+    )
+    .filter((entry) => entry[sortBy] != null)
+    .sort((a, b) => (args.order === 'asc' ? 1 : -1) * ((a[sortBy] as number) - (b[sortBy] as number)));
+  const limit = clampInt(args.limit, 15, 40);
+  if (!rows.length) return 'No companies matched.';
+  return [`${rows.length} matches, sorted by ${sortBy} ${args.order === 'asc' ? 'ascending' : 'descending'} (showing ${Math.min(limit, rows.length)}):`, ...rows.slice(0, limit).map((entry, index) => `${index + 1}. ${snapshotLine(entry)}`)].join('\n');
+}
+
+async function priceHistory(args: Record<string, unknown>) {
+  const to = args.to ? new Date(String(args.to)) : new Date();
+  const from = args.from ? new Date(String(args.from)) : new Date(to.getTime() - 365 * 86_400_000);
+  if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime()) || from >= to) return 'Invalid date range.';
+  const years = Math.min(10, Math.ceil((Date.now() - from.getTime()) / (365.25 * 86_400_000)) + 1);
+  const symbols = list(args.symbols).slice(0, 8);
+  const blocks = await Promise.all(
+    symbols.map(async (symbol) => {
+      const candles = await getCandles(symbol, years).catch(() => []);
+      const ms = (t: number) => (t < 1e12 ? t * 1000 : t);
+      const window = candles.filter((candle) => ms(candle.t) >= from.getTime() && ms(candle.t) <= to.getTime() + 86_400_000);
+      if (window.length < 2) return `${symbol}: no price history for that window.`;
+      const first = window[0];
+      const last = window[window.length - 1];
+      const day = (candle: { t: number }) => new Date(ms(candle.t)).toISOString().slice(0, 10);
+      const span = (ms(last.t) - ms(first.t)) / (365.25 * 86_400_000);
+      let peak = first.c;
+      let drawdown = 0;
+      const monthEnds = new Map<string, number>();
+      for (const candle of window) {
+        peak = Math.max(peak, candle.c);
+        drawdown = Math.min(drawdown, candle.c / peak - 1);
+        monthEnds.set(day(candle).slice(0, 7), candle.c);
+      }
+      const total = last.c / first.c - 1;
+      return [
+        `${symbol}: ${day(first)} close ${first.c.toFixed(2)} → ${day(last)} close ${last.c.toFixed(2)}; total return ${(total * 100).toFixed(2)}%${span >= 1 ? `, annualized ${(((1 + total) ** (1 / span) - 1) * 100).toFixed(2)}%` : ''}; max drawdown ${(drawdown * 100).toFixed(2)}%.`,
+        `Month-end closes: ${[...monthEnds].slice(-60).map(([month, close]) => `${month} ${close.toFixed(2)}`).join(', ')}`,
+      ].join('\n');
+    }),
+  );
+  return blocks.join('\n\n');
+}
+
+async function run(name: string, args: Record<string, unknown>): Promise<string> {
+  switch (name) {
+    case 'get_companies': {
+      const find = await listingLookup();
+      return list(args.symbols)
+        .slice(0, 25)
+        .map((symbol) => {
+          const entry = find(symbol);
+          return entry ? `- ${snapshotLine(entry)}` : `- ${symbol}: not in the SilverNote universe.`;
+        })
+        .join('\n');
+    }
+    case 'get_peers': {
+      const symbol = upper(args.symbol);
+      const find = await listingLookup();
+      const peers = await getPeerSymbols(symbol, clampInt(args.limit, 10, 20));
+      const rows = peers.symbols.map(find).filter((entry): entry is UniverseEntry & { primaryClass: boolean } => Boolean(entry));
+      rows.sort((a, b) => (b.marketCap ?? 0) - (a.marketCap ?? 0));
+      if (!rows.length) return `No peers found for ${symbol}.`;
+      return [`Peers of ${symbol} (source: ${peers.source}), largest market value first:`, ...rows.map((entry, index) => `${index + 1}. ${snapshotLine(entry)}`)].join('\n');
+    }
+    case 'get_financials':
+      return getFinancials(args);
+    case 'screen':
+      return screen(args);
+    case 'get_price_history':
+      return priceHistory(args);
+    case 'calculate':
+      return (Array.isArray(args.expressions) ? args.expressions : [])
+        .slice(0, 40)
+        .map((expression) => {
+          try {
+            return `${expression} = ${evaluate(String(expression))}`;
+          } catch (error) {
+            return `${expression} → error: ${(error as Error).message}`;
+          }
+        })
+        .join('\n');
+    default:
+      return `Unknown tool ${name}.`;
+  }
+}
+
+/** Run one tool call from Grok. Never throws: errors go back to the model as text so it can recover. */
+export async function runTool(name: string, rawArguments: string): Promise<string> {
+  let args: Record<string, unknown> = {};
+  try {
+    args = rawArguments ? (JSON.parse(rawArguments) as Record<string, unknown>) : {};
+  } catch {
+    return 'Arguments were not valid JSON.';
+  }
+  try {
+    const output = await run(name, args);
+    return output.length > 24_000 ? `${output.slice(0, 24_000)}\n…(truncated)` : output;
+  } catch (error) {
+    return `Tool ${name} failed: ${(error as Error).message}`;
+  }
+}

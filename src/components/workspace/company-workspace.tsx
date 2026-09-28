@@ -4,12 +4,13 @@ import { diffWords } from 'diff';
 import { GitCompareArrows, History, Pencil, Presentation, Sparkles } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
 import { useRouter } from 'next/navigation';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import useSWR from 'swr';
 
 import { useShell } from '@/components/shell/providers';
 import { Button } from '@/components/ui/button';
+import { MarkdownToolbar } from '@/components/ui/markdown-toolbar';
 import { Drawer } from '@/components/ui/overlay';
 import { Badge, Input, Panel, PanelHeader, Select, Skeleton, Textarea } from '@/components/ui/primitives';
 import { api, revalidate } from '@/lib/client';
@@ -54,6 +55,7 @@ function SectionCard({ symbol, section, version, count, onCommitted, onHistory }
   const [draft, setDraft] = useState('');
   const [note, setNote] = useState('');
   const [saving, setSaving] = useState(false);
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
 
   const startEditing = () => {
     let initial = version?.content ?? '';
@@ -122,7 +124,8 @@ function SectionCard({ symbol, section, version, count, onCommitted, onHistory }
       <div className="px-3.5 pt-2 pb-3.5">
         {editing ? (
           <div className="flex flex-col gap-2">
-            <Textarea autoFocus value={draft} onChange={(event) => setDraft(event.target.value)} className="min-h-40 font-mono text-[12.5px]" placeholder="Markdown supported. Be specific: numbers, dates, what you expect to see." />
+            <MarkdownToolbar textareaRef={textareaRef} value={draft} onChange={setDraft} />
+            <Textarea ref={textareaRef} autoFocus value={draft} onChange={(event) => setDraft(event.target.value)} className="min-h-40 font-mono text-[12.5px]" placeholder="Markdown supported. Be specific: numbers, dates, what you expect to see." />
             <div className="flex items-center gap-2">
               <Input value={note} onChange={(event) => setNote(event.target.value)} placeholder="What changed in your view? (optional)" className="h-7.5 flex-1 text-[12px]" />
               <Button size="sm" variant="ghost" onClick={() => setEditing(false)}>

@@ -10,11 +10,13 @@ import useSWR from 'swr';
 import { MarketHeatmap, type HeatmapItem } from '@/components/charts/market-heatmap';
 import { AnimatedNumber } from '@/components/motion/animated-number';
 import { Delta } from '@/components/motion/delta';
+import { ExtendedMove } from '@/components/motion/extended-move';
 import { ScoreRing } from '@/components/motion/score-ring';
 import { Page } from '@/components/shell/page';
 import { Button, Magnetic } from '@/components/ui/button';
 import { CompanyLogo } from '@/components/ui/company-logo';
 import { EmptyState, Panel, PanelHeader, Segmented, Skeleton } from '@/components/ui/primitives';
+import { useExtendedQuotes } from '@/lib/extended-client';
 import { money, price, relativeTime, signedPct } from '@/lib/format';
 import { cn } from '@/lib/utils';
 
@@ -182,7 +184,7 @@ function SectorBars({ sectors }: { sectors: DashboardData['sectors'] }) {
   );
 }
 
-function MarketList({ rows, empty }: { rows: MarketRow[]; empty: string }) {
+function MarketList({ rows, empty, extended }: { rows: MarketRow[]; empty: string; extended: ReturnType<typeof useExtendedQuotes> }) {
   if (!rows.length) return <div className="px-4 py-6 text-center text-[12px] text-muted">{empty}</div>;
   return (
     <div className="flex flex-col">
@@ -191,7 +193,10 @@ function MarketList({ rows, empty }: { rows: MarketRow[]; empty: string }) {
           <CompanyLogo symbol={row.symbol} size="sm" />
           <span className="font-mono text-[12px] font-semibold text-ink group-hover:text-white">{row.symbol}</span>
           <span className="truncate text-[12px] text-muted">{row.name}</span>
-          <span className="num text-[12px] text-ink-2">{price(row.price)}</span>
+          <span className="num flex flex-col items-end gap-0.5 text-[12px] text-ink-2">
+            {price(row.price)}
+            <ExtendedMove quote={extended[row.symbol]} />
+          </span>
           <Delta value={row.changePct} alreadyPercent className="justify-end text-[12px]" />
         </Link>
       ))}
@@ -202,6 +207,7 @@ function MarketList({ rows, empty }: { rows: MarketRow[]; empty: string }) {
 export function Dashboard() {
   const { data, isLoading } = useSWR<DashboardData>('/api/dashboard', { refreshInterval: 60_000 });
   const [moverTab, setMoverTab] = useState<'gainers' | 'losers'>('gainers');
+  const extended = useExtendedQuotes(data ? [...data.movers[moverTab], ...(data.watchlist?.items ?? [])].map((row) => row.symbol) : []);
   const heatmapItems = useMemo(() => data?.heatmap ?? [], [data]);
 
   return (
@@ -238,7 +244,7 @@ export function Dashboard() {
               />
             }
           />
-          <MarketList rows={data ? data.movers[moverTab] : []} empty="No price data yet." />
+          <MarketList rows={data ? data.movers[moverTab] : []} empty="No price data yet." extended={extended} />
         </Panel>
 
         <Panel>
@@ -272,7 +278,10 @@ export function Dashboard() {
                 <Link key={item.symbol} href={`/company/${item.symbol}`} className="group grid grid-cols-[20px_52px_1fr_64px_30px] items-center gap-3 border-t border-line px-4 py-2 hover:bg-white/[0.025]">
                   <CompanyLogo symbol={item.symbol} size="sm" />
                   <span className="font-mono text-[12px] font-semibold text-ink group-hover:text-white">{item.symbol}</span>
-                  <span className="num text-[12px] text-ink-2">{price(item.price)}</span>
+                  <span className="num flex flex-col items-end gap-0.5 text-[12px] text-ink-2">
+                    {price(item.price)}
+                    <ExtendedMove quote={extended[item.symbol]} />
+                  </span>
                   <Delta value={item.changePct} alreadyPercent className="justify-end text-[12px]" />
                   <span className="num text-right text-[11px] text-muted">{item.score ?? '—'}</span>
                 </Link>

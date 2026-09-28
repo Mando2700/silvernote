@@ -28,6 +28,7 @@ import { exportPdf, exportSlides, type ExportPitch } from '@/components/pitch/ex
 import { Page } from '@/components/shell/page';
 import { Button, Magnetic } from '@/components/ui/button';
 import { CompanyLogo } from '@/components/ui/company-logo';
+import { MarkdownToolbar } from '@/components/ui/markdown-toolbar';
 import { Menu } from '@/components/ui/overlay';
 import { Badge, Input, Panel, Segmented, Skeleton, Switch } from '@/components/ui/primitives';
 import { api, revalidate } from '@/lib/client';
@@ -518,6 +519,7 @@ function SectionEditor({
   const [mode, setMode] = useState<'write' | 'split' | 'preview'>('split');
   const [instruction, setInstruction] = useState('');
   const [askOpen, setAskOpen] = useState(false);
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const html = useMemo(() => renderMarkdown(section.content), [section.content]);
   const words = section.content.trim() ? section.content.trim().split(/\s+/).length : 0;
 
@@ -593,9 +595,15 @@ function SectionEditor({
           </motion.form>
         ) : null}
       </AnimatePresence>
+      {mode !== 'preview' ? (
+        <div className="border-b border-line px-4 py-2">
+          <MarkdownToolbar textareaRef={textareaRef} value={section.content} onChange={(next) => onChange({ content: next })} />
+        </div>
+      ) : null}
       <div className={cn('grid min-h-0 flex-1', mode === 'split' ? 'md:grid-cols-2' : 'grid-cols-1')}>
         {mode !== 'preview' ? (
           <textarea
+            ref={textareaRef}
             value={section.content}
             onChange={(event) => onChange({ content: event.target.value })}
             readOnly={drafting}

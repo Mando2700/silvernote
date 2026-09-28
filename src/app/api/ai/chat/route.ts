@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { body, route } from '@/lib/api';
 import { buildContext, SYSTEM_PROMPT, type AssistantContext } from '@/lib/ai/context';
 import { GrokError, streamGrok, type ChatMessage } from '@/lib/ai/grok';
+import { runTool, TOOLS } from '@/lib/ai/tools';
 import { q, q1 } from '@/lib/db';
 import { env } from '@/lib/env';
 
@@ -70,7 +71,11 @@ export const POST = route(async ({ request, user }) => {
             ...history.reverse().map((message) => ({ role: message.role, content: message.content.replace(FILING_DIRECTIVE, '') })),
             { role: 'user', content: input.message.replace(FILING_DIRECTIVE, '(filing text included in DATA)') },
           ];
-          for await (const chunk of streamGrok(messages, { model: settings?.data?.aiModel ?? undefined, signal: request.signal })) push(chunk);
+          for await (const chunk of streamGrok(messages, {
+            model: settings?.data?.aiModel ?? undefined,
+            signal: request.signal,
+            tools: { definitions: TOOLS, run: runTool },
+          })) push(chunk);
         }
       } catch (error) {
         const message =

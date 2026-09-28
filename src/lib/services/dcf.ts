@@ -71,17 +71,31 @@ export async function getDcfInputs(symbol: string) {
   // Some items (leases especially) are only tagged in the annual report's notes: fall back to the latest annual.
   const point = (key: 'leaseLiabilities' | 'minorityInterest' | 'preferredStock') => periodValue(balance, key) ?? periodValue(latest, key);
 
-  const history = [...annual].reverse().map((period) => ({
-    label: period.label,
-    revenue: periodValue(period, 'revenue'),
-    ebit: operatingProfit(period),
-    ebitMargin: ratio(operatingProfit(period), periodValue(period, 'revenue')),
-    da: periodValue(period, 'depreciationAmortization'),
-    capex: periodValue(period, 'capex') === null ? null : Math.abs(periodValue(period, 'capex') as number),
-    sbc: periodValue(period, 'stockBasedCompensation'),
-    freeCashFlow: periodValue(period, 'freeCashFlow'),
-    taxRate: ratio(periodValue(period, 'taxExpense'), periodValue(period, 'pretaxIncome')),
-  }));
+  // Net working capital level (same definition as the balance-sheet snapshot below), so consecutive years can be diffed.
+  const nwcOf = (period: StatementPeriod) =>
+    (periodValue(period, 'receivables') ?? 0) +
+    (periodValue(period, 'inventory') ?? 0) -
+    (periodValue(period, 'accountsPayable') ?? 0) -
+    (periodValue(period, 'deferredRevenue') ?? 0);
+  const historyPeriods = [...annual].reverse();
+  const history = historyPeriods.map((period, index) => {
+    const ebit = operatingProfit(period);
+    const taxRate = ratio(periodValue(period, 'taxExpense'), periodValue(period, 'pretaxIncome'));
+    const previous = historyPeriods[index - 1];
+    return {
+      label: period.label,
+      revenue: periodValue(period, 'revenue'),
+      ebit,
+      ebitMargin: ratio(ebit, periodValue(period, 'revenue')),
+      nopat: ebit !== null && taxRate !== null ? (ebit > 0 ? ebit * (1 - taxRate) : ebit) : null,
+      da: periodValue(period, 'depreciationAmortization'),
+      capex: periodValue(period, 'capex') === null ? null : Math.abs(periodValue(period, 'capex') as number),
+      changeNwc: previous ? nwcOf(period) - nwcOf(previous) : null,
+      sbc: periodValue(period, 'stockBasedCompensation'),
+      freeCashFlow: periodValue(period, 'freeCashFlow'),
+      taxRate,
+    };
+  });
 
   // Historical ratios → suggested defaults.
   const revenueOf = (period: StatementPeriod) => periodValue(period, 'revenue');

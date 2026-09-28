@@ -20,6 +20,8 @@ export const SYSTEM_PROMPT = `You are Grok, the research assistant inside Silver
 How to work:
 - Company-specific figures (prices, financials, multiples, holdings, scores, headlines) come from the DATA block below. Never invent figures, quotes, or filings.
 - Derive what you can. If a metric isn't listed but follows from DATA, compute it and show the one-line math (e.g. P/FCF = 1 / FCF yield; PEG = P/E ÷ growth %; medians given as yields invert to multiples). Only say something is unavailable when it truly can't be computed, and then say what would be needed.
+- You have SilverNote data tools: get_companies, get_peers, get_financials, screen, get_price_history, and calculate. DATA is only a starting point — whenever a question needs figures it doesn't contain (another company, a peer set, more years of statements, a screen of the universe, price returns), call the tools instead of saying the data isn't available or reaching for memory. Prefer these tools over web search for any number SilverNote has.
+- Multi-step quantitative asks ("market-cap-weighted 3y revenue CAGR of X's 3 biggest peers", "median FCF margin of software names over $50B", "which of my holdings grew EPS fastest over 5 years") are expected work: gather the inputs with tools, do every non-trivial computation with calculate, and state your choices ("biggest" = largest market value; weights = market value unless told otherwise; period = last N fiscal years). Show a compact table of inputs and weights, then the formula and result. If the request is ambiguous, pick the most sensible reading, say which, and offer the alternative in one line.
 - You can search the web and X. When DATA shows *what* changed but not *why* (a debt jump, a margin swing, a stock move, an acquisition, guidance), search for the reason — filings, press releases, earnings calls, reputable news — and cite sources. Don't say "no reason given in the data" without searching first. Skip searching when DATA already answers the question.
 - Use your own knowledge freely for everything that isn't a live number: what companies do, competitive positioning, industry structure, finance concepts, how metrics work, history. When a number you cite comes from your knowledge rather than DATA, mark it "(from memory, may be stale)".
 - Read follow-ups in light of the conversation. A bare list of tickers means "cover these"; short questions refer to what was just discussed. Answer the question asked — don't refuse because DATA is thin.
@@ -29,7 +31,7 @@ How to work:
 - When drafting pitch sections, write in a crisp sell-side style the investor can edit.
 - Money moves are the investor's decisions; when you suggest trades, frame them as considerations with risks, in one line at most.`;
 
-function money(value: number | null | undefined, currency = 'USD') {
+export function money(value: number | null | undefined, currency = 'USD') {
   if (value === null || value === undefined || !Number.isFinite(value)) return 'n/a';
   return `${value < 0 ? '-' : ''}${currency === 'USD' ? '$' : `${currency} `}${compactNumber(Math.abs(value), 2)}`;
 }
@@ -54,19 +56,28 @@ function periodLine(period: StatementPeriod, currency: string) {
 }
 
 /** One dense line of market data for a listing, used for peers and tickers named in a question. */
-function snapshotLine(entry: UniverseEntry) {
-  return `${entry.symbol} (${entry.name}; ${entry.sector ?? 'n/a'} / ${entry.industry ?? 'n/a'}): price ${entry.price ?? 'n/a'}, market value ${money(entry.marketCap)}, P/E ${entry.pe?.toFixed(1) ?? 'n/a'}, P/S ${entry.ps?.toFixed(1) ?? 'n/a'}, EV/EBITDA ${entry.evEbitda?.toFixed(1) ?? 'n/a'}, FCF yield ${pct(entry.fcfYield)}, revenue growth ${pct(entry.revenueGrowth)}, 3y CAGR ${pct(entry.revenueCagr3)}, gross margin ${pct(entry.grossMargin)}, operating margin ${pct(entry.operatingMargin)}, ROE ${pct(entry.roe)}, debt/equity ${entry.debtToEquity?.toFixed(2) ?? 'n/a'}, SilverNote Score ${entry.score ?? 'n/a'}`;
+export function snapshotLine(entry: UniverseEntry) {
+  return `${entry.symbol} (${entry.name}; ${entry.sector ?? 'n/a'} / ${entry.industry ?? 'n/a'}): price ${entry.price ?? 'n/a'}, market value ${money(entry.marketCap)}, P/E ${entry.pe?.toFixed(1) ?? 'n/a'}, P/S ${entry.ps?.toFixed(1) ?? 'n/a'}, EV/EBITDA ${entry.evEbitda?.toFixed(1) ?? 'n/a'}, FCF yield ${pct(entry.fcfYield)}, revenue FY${entry.fiscalYear ?? '?'} ${money(entry.revenue)}, revenue growth ${pct(entry.revenueGrowth)}, 3y revenue CAGR ${pct(entry.revenueCagr3)}, gross margin ${pct(entry.grossMargin)}, operating margin ${pct(entry.operatingMargin)}, ROE ${pct(entry.roe)}, debt/equity ${entry.debtToEquity?.toFixed(2) ?? 'n/a'}, SilverNote Score ${entry.score ?? 'n/a'}`;
 }
 
 async function peersBlock(symbol: string, listings: UniverseEntry[]) {
   const peers = await getPeerSymbols(symbol, 8).catch(() => ({ symbols: [] as string[], source: 'none' }));
-  const rows = peers.symbols.map((peer) => listings.find((entry) => entry.symbol === peer)).filter((entry): entry is UniverseEntry => Boolean(entry));
+  const rows = peers.symbols
+    .map((peer) => listings.find((entry) => entry.symbol === peer))
+    .filter((entry): entry is UniverseEntry => Boolean(entry))
+    .sort((a, b) => (b.marketCap ?? 0) - (a.marketCap ?? 0));
   if (!rows.length) return null;
-  return [`PEERS OF ${symbol} (source: ${peers.source}; latest fiscal year, today's price):`, ...rows.map((entry) => `- ${snapshotLine(entry)}`)].join('\n');
+  return [
+    `PEERS OF ${symbol} (source: ${peers.source}; largest market value first; latest fiscal year, today's price):`,
+    ...rows.map((entry, index) => `- #${index + 1} ${snapshotLine(entry)}`),
+  ].join('\n');
 }
 
 // Uppercase words that are finance jargon rather than tickers.
-const NOT_TICKERS = new Set(['A', 'I', 'AI', 'CEO', 'CFO', 'EPS', 'FCF', 'ROE', 'ROIC', 'PE', 'EV', 'EBIT', 'EBITDA', 'DCF', 'GAAP', 'USA', 'US', 'IPO', 'ETF', 'SEC', 'YOY', 'TTM', 'FY', 'Q', 'OK', 'IT', 'ALL', 'ARE', 'ON', 'OR', 'SO', 'BE', 'GO', 'NOW', 'NEW', 'ONE', 'VS', 'WACC', 'CAGR', 'NAV', 'M', 'B', 'K']);
+const NOT_TICKERS = new Set(['A', 'I', 'AI', 'CEO', 'CFO', 'EPS', 'FCF', 'ROE', 'ROIC', 'PE', 'EV', 'EBIT', 'EBITDA', 'DCF', 'GAAP', 'USA', 'US', 'IPO', 'ETF', 'SEC', 'YOY', 'TTM', 'FY', 'Q', 'IT', 'VS', 'WACC', 'CAGR', 'NAV', 'M', 'B', 'K']);
+// Everyday words that are also tickers (NOW = ServiceNow, ON = onsemi). Written in capitals inside an otherwise
+// normal sentence ("peers of NOW") they mean the ticker; in an all-caps message they're just words.
+const ENGLISH_TICKERS = new Set(['NOW', 'ON', 'ALL', 'ARE', 'OR', 'SO', 'BE', 'GO', 'NEW', 'ONE', 'OK']);
 
 /** Data for companies the question names by ticker (e.g. "compare with $MSFT and NVDA"), beyond the one in view. */
 export async function mentionedContext(message: string, exclude: string | null) {
@@ -77,13 +88,15 @@ export async function mentionedContext(message: string, exclude: string | null) 
   const known = (token: string) => bySymbol.has(token.toUpperCase().replace('-', '.'));
   const words = message.split(/[\s,;]+/).filter(Boolean);
   const tickerList = words.length >= 2 && words.filter((word) => /^\$?[A-Za-z.\-]{1,6}$/.test(word) && known(word.replace('$', ''))).length / words.length >= 0.75;
+  const letters = message.replace(/[^A-Za-z]/g, '');
+  const shouting = letters.length > 0 && letters.replace(/[^A-Z]/g, '').length / letters.length > 0.6;
   const symbols: string[] = [];
   for (const raw of candidates) {
     const explicit = raw.startsWith('$') || tickerList;
     const token = raw.replace('$', '');
     // Plain words count only when written in capitals and at least two letters, so "meta" or the P in "P/E"
     // are not read as tickers; "$F" still works.
-    if (!explicit && (token !== token.toUpperCase() || token.length < 2 || NOT_TICKERS.has(token))) continue;
+    if (!explicit && (token !== token.toUpperCase() || token.length < 2 || NOT_TICKERS.has(token) || (shouting && ENGLISH_TICKERS.has(token)))) continue;
     const symbol = token.toUpperCase().replace('-', '.');
     const entry = bySymbol.get(symbol) ?? bySymbol.get(symbol.replace('.', '-'));
     if (entry && entry.symbol !== exclude && !symbols.includes(entry.symbol)) symbols.push(entry.symbol);

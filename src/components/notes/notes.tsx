@@ -13,6 +13,7 @@ import { ScoreRing } from '@/components/motion/score-ring';
 import { Page } from '@/components/shell/page';
 import { Button } from '@/components/ui/button';
 import { CompanyLogo } from '@/components/ui/company-logo';
+import { MarkdownToolbar } from '@/components/ui/markdown-toolbar';
 import { Drawer } from '@/components/ui/overlay';
 import { Badge, EmptyState, Input, Panel, PanelHeader, Segmented, Skeleton } from '@/components/ui/primitives';
 import { DiffView } from '@/components/workspace/company-workspace';
@@ -39,6 +40,7 @@ function NoteEditor({ id, onChanged, onDeleted }: { id: string; onChanged: () =>
   const [compare, setCompare] = useState<string | null>(null);
   const loadedId = useRef<string | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
 
   useEffect(() => {
     if (!data || loadedId.current === data.id) return;
@@ -167,9 +169,22 @@ function NoteEditor({ id, onChanged, onDeleted }: { id: string; onChanged: () =>
           className="h-7 text-[12px]"
         />
       </div>
+      {mode !== 'preview' ? (
+        <div className="border-b border-line px-4 py-2">
+          <MarkdownToolbar
+            textareaRef={textareaRef}
+            value={content}
+            onChange={(next) => {
+              setContent(next);
+              touch();
+            }}
+          />
+        </div>
+      ) : null}
       <div className={cn('grid min-h-0 flex-1', mode === 'split' ? 'grid-cols-2 divide-x divide-line' : 'grid-cols-1')}>
         {mode !== 'preview' ? (
           <textarea
+            ref={textareaRef}
             value={content}
             onChange={(event) => {
               setContent(event.target.value);

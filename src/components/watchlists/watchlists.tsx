@@ -11,6 +11,7 @@ import useSWR from 'swr';
 import { AlertButton } from '@/components/company/actions';
 import { METRIC_BY_KEY, METRIC_COLUMNS, type MetricKey } from '@/components/explorer/columns';
 import { Delta } from '@/components/motion/delta';
+import { ExtendedMove } from '@/components/motion/extended-move';
 import { ScoreRing } from '@/components/motion/score-ring';
 import { Page } from '@/components/shell/page';
 import { Button } from '@/components/ui/button';
@@ -19,6 +20,8 @@ import { Menu, Modal } from '@/components/ui/overlay';
 import { Badge, EmptyState, Field, Input, Panel, PanelHeader, Segmented, Skeleton, Switch } from '@/components/ui/primitives';
 import { TickerSearch } from '@/components/ui/ticker-search';
 import { api, revalidate } from '@/lib/client';
+import { useColumnDrag } from '@/lib/column-drag';
+import { useExtendedQuotes } from '@/lib/extended-client';
 import { price, relativeTime, signedPct } from '@/lib/format';
 import { useLivePrices } from '@/lib/live-client';
 import { cn } from '@/lib/utils';
@@ -40,6 +43,7 @@ type ListDetail = { id: string; name: string; description: string | null; column
 type AlertRow = { id: string; symbol: string; kind: string; threshold: number; active: boolean; triggered_at: string | null; created_at: string };
 type EventRow = { id: string; symbol: string; message: string; created_at: string };
 
+const ALWAYS_COLUMNS = ['price', 'changePct'];
 const EXTRA_COLUMNS = [{ key: 'sinceAdded', label: 'Since added' }] as const;
 const KIND_LABEL: Record<string, string> = {
   price_above: 'Price above',
@@ -176,10 +180,14 @@ export function Watchlists() {
   const tagFilter = tagChoice.list === selectedId ? tagChoice.tag : null;
   const setTagFilter = (tag: string | null) => setTagChoice({ list: selectedId, tag });
 
-  const columns = (detail?.columns ?? []).filter((key) => key === 'sinceAdded' || key in METRIC_BY_KEY);
+  const savedColumns = (detail?.columns ?? []).filter((key) => key === 'sinceAdded' || key in METRIC_BY_KEY);
+  // Price and Day always show; lists saved before they could be reordered start with them first.
+  const columns = [...ALWAYS_COLUMNS.filter((key) => !savedColumns.includes(key)), ...savedColumns];
   const allTags = useMemo(() => [...new Set((detail?.items ?? []).flatMap((item) => item.tags))].sort(), [detail]);
   const items = (detail?.items ?? []).filter((item) => !tagFilter || item.tags.includes(tagFilter));
-  const live = useLivePrices(useMemo(() => (detail?.items ?? []).map((item) => item.symbol), [detail]));
+  const symbols = useMemo(() => (detail?.items ?? []).map((item) => item.symbol), [detail]);
+  const live = useLivePrices(symbols);
+  const extended = useExtendedQuotes(symbols);
 
   const go = (next: { id?: string | null; tab?: string }) => {
     const search = new URLSearchParams();
@@ -211,9 +219,12 @@ export function Watchlists() {
 
   const setColumns = async (next: string[]) => {
     if (!selectedId) return;
+    if (detail) void refreshDetail({ ...detail, columns: next }, { revalidate: false });
     await api(`/api/watchlists/${selectedId}`, { method: 'PATCH', body: { columns: next } });
     void refreshDetail();
   };
+
+  const columnDrag = useColumnDrag(columns, (next) => void setColumns(next));
 
   return (
     <Page
@@ -329,11 +340,14 @@ export function Watchlists() {
                     <thead>
                       <tr className="border-y border-line bg-surface-1 text-left text-[11px] text-muted">
                         <th className="px-4 py-2 font-medium">Company</th>
-                        <th className="px-3 py-2 text-right font-medium">Price</th>
-                        <th className="px-3 py-2 text-right font-medium">Day</th>
-                        {columns.map((key) => (
-                          <th key={key} className="px-3 py-2 text-right font-medium">
-                            {key === 'sinceAdded' ? 'Since added' : METRIC_BY_KEY[key as MetricKey].short ?? METRIC_BY_KEY[key as MetricKey].label}
+                        {columnDrag.order.map((key) => (
+                          <th
+                            key={key}
+                            {...columnDrag.headerProps(key)}
+                            title="Drag to reorder"
+                            className={cn('cursor-grab px-3 py-2 text-right font-medium whitespace-nowrap select-none active:cursor-grabbing', columnDrag.dragged === key && 'opacity-40')}
+                          >
+                            {key === 'sinceAdded' ? 'Since added' : key === 'changePct' ? 'Day' : METRIC_BY_KEY[key as MetricKey].short ?? METRIC_BY_KEY[key as MetricKey].label}
                           </th>
                         ))}
                         <th className="px-3 py-2 font-medium">Tags</th>
@@ -362,11 +376,27 @@ export function Watchlists() {
                               </ViewTransition>
                               {item.note ? <div className="mt-0.5 max-w-72 truncate text-[11px] text-faint">{item.note}</div> : null}
                             </td>
-                            <td className="num px-3 py-2 text-right text-ink">{price(live[item.symbol]?.price ?? item.metrics?.price)}</td>
-                            <td className="px-3 py-2 text-right">
-                              <Delta value={live[item.symbol]?.changePct ?? item.metrics?.changePct} alreadyPercent className="justify-end text-[12px]" />
-                            </td>
-                            {columns.map((key) => {
+                            {columnDrag.order.map((key) => {
+                              if (key === 'price') {
+                                const quote = extended[item.symbol];
+                                return (
+                                  <td key={key} className="num px-3 py-2 text-right text-ink">
+                                    <div className="flex flex-col items-end gap-0.5">
+                                      {/* Outside regular hours the live feed carries extended trades, so the regular close comes from the extended quote. */}
+                                      <span>{price(quote?.close ?? live[item.symbol]?.price ?? item.metrics?.price)}</span>
+                                      <ExtendedMove quote={quote} />
+                                    </div>
+                                  </td>
+                                );
+                              }
+                              if (key === 'changePct') {
+                                const quote = extended[item.symbol];
+                                return (
+                                  <td key={key} className="px-3 py-2 text-right">
+                                    <Delta value={quote ? quote.closeChangePct : (live[item.symbol]?.changePct ?? item.metrics?.changePct)} alreadyPercent className="justify-end text-[12px]" />
+                                  </td>
+                                );
+                              }
                               if (key === 'sinceAdded') {
                                 return (
                                   <td key={key} className="px-3 py-2 text-right" title={item.added_price ? `Added at $${price(item.added_price)} ${relativeTime(item.added_at)}` : undefined}>

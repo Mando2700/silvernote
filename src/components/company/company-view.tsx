@@ -15,6 +15,7 @@ import { PeersPanel } from '@/components/company/peers-panel';
 import { ScorePanel } from '@/components/company/score-panel';
 import { AnimatedNumber } from '@/components/motion/animated-number';
 import { Delta } from '@/components/motion/delta';
+import { ExtendedMove } from '@/components/motion/extended-move';
 import { ScoreRing, type SubScoreSummary } from '@/components/motion/score-ring';
 import { useShell } from '@/components/shell/providers';
 import { Button, Magnetic } from '@/components/ui/button';
@@ -22,6 +23,7 @@ import { CompanyLogo } from '@/components/ui/company-logo';
 import { Badge, Panel, PanelHeader, Segmented, Skeleton, Tabs } from '@/components/ui/primitives';
 import { CompanyWorkspace, type WorkspaceData } from '@/components/workspace/company-workspace';
 import type { Candle, CompanyProfile, NewsItem, Quote } from '@/lib/data/types';
+import { useExtendedQuotes } from '@/lib/extended-client';
 import { compactNumber, money, multiple, pct, price, relativeTime } from '@/lib/format';
 import type { StandardizedStatements } from '@/lib/finance/statement-types';
 import { useLivePrices } from '@/lib/live-client';
@@ -289,6 +291,7 @@ export function CompanyView({ initial }: { initial: CompanyInitial }) {
   const livePrice = streamed?.price ?? data?.quote?.price ?? data?.security?.price ?? initial.price;
   const change = streamed?.change ?? data?.quote?.change ?? data?.security?.change ?? null;
   const changePct = streamed?.changePct ?? data?.quote?.changePct ?? data?.security?.change_pct ?? initial.changePct;
+  const extended = useExtendedQuotes([symbol])[symbol];
   const isBank = /bank|savings institution|thrift/i.test(`${data?.security?.industry ?? initial.industry ?? ''}`);
 
   useEffect(() => {
@@ -316,12 +319,19 @@ export function CompanyView({ initial }: { initial: CompanyInitial }) {
           </ViewTransition>
           <div className="flex items-center gap-3">
             <div className="text-[32px] leading-none font-semibold tracking-[-0.03em] text-ink">
-              <AnimatedNumber value={livePrice} from="near" format={(value) => price(value)} />
+              {/* Outside regular hours the stream carries extended trades: headline the regular close, extended move beside it. */}
+              <AnimatedNumber value={extended ? extended.close : livePrice} from="near" format={(value) => price(value)} />
             </div>
             <div className="flex flex-col text-[13px]">
-              <Delta value={change} kind="money" />
-              <Delta value={changePct} alreadyPercent />
+              <Delta value={extended ? extended.closeChange : change} kind="money" />
+              <Delta value={extended ? extended.closeChangePct : changePct} alreadyPercent />
             </div>
+            {extended ? (
+              <div className="flex flex-col text-[11.5px]">
+                <span className="text-muted">{extended.session === 'pre' ? 'Pre-market' : 'After hours'}</span>
+                <ExtendedMove quote={extended} className="text-[12px] [&>span]:text-[12px]" />
+              </div>
+            ) : null}
           </div>
           <div className="text-[11px] text-faint">
             {streamed ? (

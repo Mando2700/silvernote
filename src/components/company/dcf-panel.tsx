@@ -13,6 +13,8 @@ import { cn } from '@/lib/utils';
 
 const YEARS = 5;
 
+type HistoryYear = DcfInputs['history'][number];
+
 /** Everything the user can edit. Rates are stored as fractions (0.08 = 8%). */
 type Model = {
   growth: number[];
@@ -220,7 +222,35 @@ function Toggle({ checked, onChange, label }: { checked: boolean; onChange: (val
   );
 }
 
+/** Type a target final-year margin and fade every year toward it, starting from the current year-1 margin. */
+function FadeMarginControl({ onApply }: { onApply: (target: number) => void }) {
+  const [text, setText] = useState('');
+  const apply = () => {
+    const target = Number(text);
+    if (text.trim() !== '' && Number.isFinite(target)) onApply(target / 100);
+  };
+  return (
+    <span className="flex items-center gap-1.5 text-[11.5px] text-muted">
+      Fade margin to
+      <Input
+        inputMode="decimal"
+        placeholder="year 5 %"
+        value={text}
+        onChange={(event) => setText(event.target.value)}
+        onKeyDown={(event) => event.key === 'Enter' && apply()}
+        className="h-6 w-16 text-right font-mono text-[11.5px] tabular-nums"
+      />
+      <Button size="xs" variant="ghost" onClick={apply} disabled={text.trim() === '' || !Number.isFinite(Number(text))}>
+        Apply
+      </Button>
+    </span>
+  );
+}
+
 const cell = 'px-3 py-1.5 text-right font-mono tabular-nums';
+
+const revenueGrowth = (previous: number | null | undefined, current: number | null | undefined) =>
+  previous && current ? current / previous - 1 : null;
 
 export function DcfPanel({ symbol }: { symbol: string }) {
   const { data, isLoading } = useSWR<DcfInputs>(`/api/company/${symbol}/dcf`);
@@ -403,13 +433,18 @@ export function DcfPanel({ symbol }: { symbol: string }) {
         <PanelHeader
           kicker="Forecast"
           title="Free cash flow to the firm"
-          actions={<Badge tone="outline">Growth seeded from {data.forecasts.growthSeed}</Badge>}
+          actions={
+            <div className="flex items-center gap-2">
+              <FadeMarginControl onApply={(target) => update({ ebitMargin: fade(model.ebitMargin[0] ?? target, target, YEARS) })} />
+              <Badge tone="outline">Growth seeded from {data.forecasts.growthSeed}</Badge>
+            </div>
+          }
         />
         <div className="overflow-x-auto">
           <table className="w-full min-w-[760px] border-collapse text-[12.5px]">
             <thead>
               <tr className="bg-surface-1">
-                <th className="sticky left-0 z-10 bg-surface-1 px-3 py-2 text-left font-medium text-muted">{data.currency}</th>
+                <th className="sticky left-0 z-10 bg-surface-1 px-3 py-2 text-left font-medium whitespace-nowrap text-muted">{data.currency}</th>
                 {data.history.map((year) => (
                   <th key={year.label} className="px-3 py-2 text-right font-mono text-[11px] font-medium text-faint">{year.label}</th>
                 ))}
@@ -421,21 +456,23 @@ export function DcfPanel({ symbol }: { symbol: string }) {
             </thead>
             <tbody>
               <tr className="border-t border-line">
-                <td className="sticky left-0 bg-surface-1 px-3 py-1.5 text-ink-2">Revenue</td>
+                <td className="sticky left-0 bg-surface-1 px-3 py-1.5 whitespace-nowrap text-ink-2">Revenue</td>
                 {data.history.map((year) => <td key={year.label} className={cn(cell, 'text-faint')}>{m(year.revenue)}</td>)}
                 <td className={cell}>{m(data.baseRevenue)}</td>
                 {result.years.map((year) => <td key={year.year} className={cell}>{m(year.revenue)}</td>)}
               </tr>
               <tr className="border-t border-line">
-                <td className="sticky left-0 bg-surface-1 px-3 py-1.5 text-ink-2">Revenue growth</td>
-                {data.history.map((year) => <td key={year.label} className={cell} />)}
-                <td className={cell} />
+                <td className="sticky left-0 bg-surface-1 px-3 py-1.5 whitespace-nowrap text-ink-2">Revenue growth</td>
+                {data.history.map((year, index) => (
+                  <td key={year.label} className={cn(cell, 'text-faint')}>{pct(revenueGrowth(data.history[index - 1]?.revenue, year.revenue))}</td>
+                ))}
+                <td className={cn(cell, 'text-faint')}>{pct(revenueGrowth(data.history.at(-1)?.revenue, data.baseRevenue))}</td>
                 {model.growth.map((value, index) => (
                   <td key={index} className="px-1.5 py-1"><PctInput value={value} onChange={(next) => setYear('growth', index, next)} /></td>
                 ))}
               </tr>
               <tr className="border-t border-line">
-                <td className="sticky left-0 bg-surface-1 px-3 py-1.5 text-ink-2">EBIT margin</td>
+                <td className="sticky left-0 bg-surface-1 px-3 py-1.5 whitespace-nowrap text-ink-2">EBIT margin</td>
                 {data.history.map((year) => <td key={year.label} className={cn(cell, 'text-faint')}>{pct(year.ebitMargin)}</td>)}
                 <td className={cell} />
                 {model.ebitMargin.map((value, index) => (
@@ -444,20 +481,18 @@ export function DcfPanel({ symbol }: { symbol: string }) {
               </tr>
               {(
                 [
-                  ['EBIT', (y) => y.ebit],
-                  ['NOPAT (after tax)', (y) => y.nopat],
-                  ['+ D&A', (y) => y.da],
-                  ['− Capex', (y) => -y.capex],
-                  ['− Change in working capital', (y) => -y.changeNwc],
-                  ...(model.deductSbc ? [] : [['+ Stock-based comp', (y: DcfYear) => y.sbc] as const]),
-                ] as Array<readonly [string, (year: DcfYear) => number]>
-              ).map(([label, pick]) => (
+                  ['EBIT', (y) => y.ebit, (h) => h.ebit],
+                  ['NOPAT (after tax)', (y) => y.nopat, (h) => h.nopat],
+                  ['+ D&A', (y) => y.da, (h) => h.da],
+                  ['− Capex', (y) => -y.capex, (h) => (h.capex === null ? null : -h.capex)],
+                  ['− Change in working capital', (y) => -y.changeNwc, (h) => (h.changeNwc === null ? null : -h.changeNwc)],
+                  ...(model.deductSbc ? [] : [['+ Stock-based comp', (y: DcfYear) => y.sbc, (h: HistoryYear) => h.sbc] as const]),
+                ] as Array<readonly [string, (year: DcfYear) => number, (year: HistoryYear) => number | null]>
+              ).map(([label, pick, pickHistory]) => (
                 <tr key={label} className="border-t border-line">
-                  <td className="sticky left-0 bg-surface-1 px-3 py-1.5 text-muted">{label}</td>
+                  <td className="sticky left-0 bg-surface-1 px-3 py-1.5 whitespace-nowrap text-muted">{label}</td>
                   {data.history.map((year) => (
-                    <td key={year.label} className={cn(cell, 'text-faint')}>
-                      {label === 'EBIT' ? m(year.ebit) : label === '+ D&A' ? m(year.da) : label === '− Capex' ? m(year.capex === null ? null : -year.capex) : label === '+ Stock-based comp' ? m(year.sbc) : ''}
-                    </td>
+                    <td key={year.label} className={cn(cell, 'text-faint')}>{m(pickHistory(year))}</td>
                   ))}
                   <td className={cell} />
                   {result.years.map((year) => <td key={year.year} className={cn(cell, 'text-ink-2')}>{m(pick(year))}</td>)}

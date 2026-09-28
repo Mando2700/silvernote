@@ -19,8 +19,13 @@ export function useChat(initialThreadId: string | null = null) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [streaming, setStreaming] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
+  // The thread on screen. A new conversation gets its id mid-stream and the page then asks to load it;
+  // reloading from the server there would replace the answer still streaming in.
+  const shownRef = useRef<string | null>(initialThreadId);
 
   const load = useCallback(async (id: string | null) => {
+    if (id && id === shownRef.current) return;
+    shownRef.current = id;
     setThreadId(id);
     if (!id) {
       setMessages([]);
@@ -55,7 +60,10 @@ export function useChat(initialThreadId: string | null = null) {
           throw new Error(error.error ?? 'Request failed');
         }
         const newThread = response.headers.get('X-Thread-Id');
-        if (newThread) setThreadId(newThread);
+        if (newThread) {
+          shownRef.current = newThread;
+          setThreadId(newThread);
+        }
         const reader = response.body.getReader();
         const decoder = new TextDecoder();
         for (;;) {

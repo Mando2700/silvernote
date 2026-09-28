@@ -9,6 +9,7 @@ import { toast } from 'sonner';
 import useSWR from 'swr';
 
 import { MarketHeatmap } from '@/components/charts/market-heatmap';
+import { ExtendedMove } from '@/components/motion/extended-move';
 import { ScoreRing } from '@/components/motion/score-ring';
 import { Page } from '@/components/shell/page';
 import { Button } from '@/components/ui/button';
@@ -16,6 +17,8 @@ import { CompanyLogo } from '@/components/ui/company-logo';
 import { Menu, Modal } from '@/components/ui/overlay';
 import { Badge, EmptyState, Field, Input, Panel, Segmented, Select, Skeleton, Switch } from '@/components/ui/primitives';
 import { api } from '@/lib/client';
+import { useColumnDrag } from '@/lib/column-drag';
+import { useExtendedQuotes } from '@/lib/extended-client';
 import { compactNumber } from '@/lib/format';
 import type { ScreenDefinition } from '@/lib/schemas';
 import { cn } from '@/lib/utils';
@@ -221,6 +224,10 @@ export function Explorer() {
   const scrollRef = useRef<HTMLDivElement>(null);
   // eslint-disable-next-line react-hooks/incompatible-library -- TanStack Virtual is not compiler-compatible; this list re-renders on scroll by design.
   const virtualizer = useVirtualizer({ count: filtered.length, getScrollElement: () => scrollRef.current, estimateSize: () => ROW_HEIGHT, overscan: 12 });
+  const columnDrag = useColumnDrag(screen.columns, (columns) => setScreen({ ...screen, columns }));
+  // Extended-hours moves only for the rows on screen: each symbol is its own upstream request.
+  const visibleSymbols = screen.columns.includes('price') ? virtualizer.getVirtualItems().map((item) => filtered[item.index]?.symbol).filter(Boolean) : [];
+  const extended = useExtendedQuotes(visibleSymbols);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: 0 });
@@ -537,13 +544,14 @@ export function Explorer() {
                       {[
                         { key: 'symbol' as const, label: 'Company', width: widthFor('symbol', FIXED[0].width), fallback: FIXED[0].width, align: 'left' },
                         { key: 'sector' as const, label: 'Sector', width: widthFor('sector', FIXED[1].width), fallback: FIXED[1].width, align: 'left' },
-                        ...screen.columns.map((key) => ({ key, label: METRIC_BY_KEY[key].short ?? METRIC_BY_KEY[key].label, width: widthFor(key, METRIC_BY_KEY[key].width), fallback: METRIC_BY_KEY[key].width, align: 'right' as const })),
+                        ...columnDrag.order.map((key) => ({ key, label: METRIC_BY_KEY[key].short ?? METRIC_BY_KEY[key].label, width: widthFor(key, METRIC_BY_KEY[key].width), fallback: METRIC_BY_KEY[key].width, align: 'right' as const })),
                       ].map((column, index) => {
                         const sortable = column.key !== 'sector';
                         const active = screen.sort.key === column.key;
                         return (
                           <div
                             key={column.key}
+                            {...(index > 1 ? columnDrag.headerProps(column.key as MetricKey) : {})}
                             onClick={() => sortable && toggleSort(column.key as ScreenState['sort']['key'])}
                             className={cn(
                               'relative flex shrink-0 items-center gap-1 px-2.5 text-[11px] font-medium whitespace-nowrap',
@@ -551,6 +559,8 @@ export function Explorer() {
                               sortable && 'cursor-pointer',
                               active ? 'text-ink' : 'text-muted hover:text-ink-2',
                               index === 0 && 'sticky left-0 z-10 bg-surface-2',
+                              index > 1 && 'active:cursor-grabbing',
+                              columnDrag.dragged === column.key && 'opacity-40',
                             )}
                             style={{ width: column.width }}
                           >
@@ -584,7 +594,7 @@ export function Explorer() {
                             <div className="shrink-0 truncate px-2.5 text-[11.5px] text-muted" style={{ width: widthFor('sector', FIXED[1].width) }}>
                               {row.sector ?? '—'}
                             </div>
-                            {screen.columns.map((key) => {
+                            {columnDrag.order.map((key) => {
                               const column = METRIC_BY_KEY[key];
                               const width = widthFor(key, column.width);
                               const value = row[key];
@@ -606,6 +616,14 @@ export function Explorer() {
                                     ) : (
                                       <span className="text-faint">—</span>
                                     )}
+                                  </div>
+                                );
+                              }
+                              if (key === 'price' && extended[row.symbol]) {
+                                return (
+                                  <div key={key} className="num flex shrink-0 flex-col items-end justify-center gap-0.5 px-2.5 text-right text-[12px] leading-none text-ink-2" style={{ width }}>
+                                    <span>{typeof value === 'number' ? column.format(value) : '—'}</span>
+                                    <ExtendedMove quote={extended[row.symbol]} />
                                   </div>
                                 );
                               }
