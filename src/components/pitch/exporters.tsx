@@ -44,23 +44,41 @@ function inlineRuns(tokens: Token[] | undefined, fallback: string): Run[] {
     }
   };
   walk(tokens, {});
-  return runs.map((run) => ({ ...run, text: run.text.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'") }));
+  return splitMarkers(runs.map((run) => ({ ...run, text: run.text.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'") })));
 }
+
+/** Literal `**bold**` left inside text (e.g. after a soft line break) becomes a real bold run. */
+function splitMarkers(runs: Run[]): Run[] {
+  const out: Run[] = [];
+  for (const run of runs) {
+    const parts = run.text.split('**');
+    if (parts.length < 3) {
+      out.push({ ...run, text: run.text.replace(/\*\*/g, '') });
+      continue;
+    }
+    parts.forEach((part, index) => {
+      if (part) out.push({ ...run, text: part, bold: index % 2 === 1 ? true : run.bold });
+    });
+  }
+  return out;
+}
+
+const stripMarks = (text: string) => text.replace(/\*\*|__/g, '').replace(/^\s*#+\s*/, '');
 
 /** Markdown → a small block model both exporters can render. */
 export function toBlocks(markdown: string): Block[] {
   const blocks: Block[] = [];
   for (const token of marked.lexer(markdown ?? '')) {
-    if (token.type === 'heading') blocks.push({ type: 'heading', text: (token as Tokens.Heading).text, level: (token as Tokens.Heading).depth });
+    if (token.type === 'heading') blocks.push({ type: 'heading', text: stripMarks((token as Tokens.Heading).text), level: (token as Tokens.Heading).depth });
     else if (token.type === 'paragraph') blocks.push({ type: 'paragraph', runs: inlineRuns((token as Tokens.Paragraph).tokens, (token as Tokens.Paragraph).text) });
     else if (token.type === 'list') {
       const list = token as Tokens.List;
       blocks.push({ type: 'list', ordered: list.ordered, items: list.items.map((item) => inlineRuns(item.tokens.flatMap((child) => ('tokens' in child && Array.isArray(child.tokens) ? child.tokens : [child])), item.text)) });
     } else if (token.type === 'table') {
       const table = token as Tokens.Table;
-      blocks.push({ type: 'table', header: table.header.map((cell) => cell.text), rows: table.rows.map((row) => row.map((cell) => cell.text)) });
+      blocks.push({ type: 'table', header: table.header.map((cell) => stripMarks(cell.text)), rows: table.rows.map((row) => row.map((cell) => stripMarks(cell.text))) });
     } else if (token.type === 'blockquote') {
-      blocks.push({ type: 'quote', runs: [{ text: (token as Tokens.Blockquote).text }] });
+      blocks.push({ type: 'quote', runs: [{ text: stripMarks((token as Tokens.Blockquote).text) }] });
     } else if (token.type === 'code') {
       blocks.push({ type: 'paragraph', runs: [{ text: (token as Tokens.Code).text }] });
     }
@@ -120,7 +138,11 @@ function recommendationColor(recommendation: string, palette: { up: string; down
 // ─── PDF ────────────────────────────────────────────────────────────────────
 
 export async function exportPdf(pitch: ExportPitch) {
-  const [{ Document, Page, Text, View, Image, StyleSheet, pdf }, logo] = await Promise.all([import('@react-pdf/renderer'), logoDataUrl(pitch.symbol)]);
+  download(await buildPdf(pitch, await logoDataUrl(pitch.symbol)), `${fileBase(pitch)}.pdf`);
+}
+
+export async function buildPdf(pitch: ExportPitch, logo: string | null): Promise<Blob> {
+  const { Document, Page, Text, View, Image, StyleSheet, pdf } = await import('@react-pdf/renderer');
   const SILVER = '#cdd4de';
   const STEEL = '#7a828e';
   const INK = '#15171b';
@@ -128,31 +150,41 @@ export async function exportPdf(pitch: ExportPitch) {
   const UP = '#3ddba4';
   const DOWN = '#ff6e66';
   const styles = StyleSheet.create({
-    page: { paddingTop: 48, paddingBottom: 56, paddingHorizontal: 52, fontFamily: 'Helvetica', fontSize: 10.5, color: INK, lineHeight: 1.5 },
+    page: { paddingTop: 54, paddingBottom: 64, paddingHorizontal: 56, fontFamily: 'Helvetica', fontSize: 10.5, color: INK, lineHeight: 1.6 },
     cover: { padding: 0, backgroundColor: '#0b0c0f', color: '#eceef1', fontFamily: 'Helvetica' },
-    coverInner: { padding: 56, flex: 1, justifyContent: 'space-between' },
+    coverAccent: { height: 4, backgroundColor: SILVER },
+    coverInner: { paddingHorizontal: 60, paddingTop: 64, paddingBottom: 48, flex: 1, justifyContent: 'space-between' },
     brand: { fontSize: 10, letterSpacing: 3, color: SILVER, fontFamily: 'Helvetica-Bold' },
     brandRow: { flexDirection: 'row', alignItems: 'center' },
-    logoTile: { width: 40, height: 40, borderRadius: 8, backgroundColor: '#f3f5f8', padding: 6, marginRight: 14, alignItems: 'center', justifyContent: 'center' },
-    coverTitle: { fontSize: 28, fontFamily: 'Helvetica-Bold', marginTop: 18, lineHeight: 1.15 },
-    coverSub: { fontSize: 13, color: '#b9bdc6', marginTop: 10 },
-    statRow: { flexDirection: 'row', marginTop: 28 },
-    stat: { marginRight: 34 },
-    statLabel: { fontSize: 8.5, color: '#858a95', letterSpacing: 1.2, textTransform: 'uppercase' },
-    statValue: { fontSize: 17, fontFamily: 'Helvetica-Bold', marginTop: 4 },
-    sectionTitle: { fontSize: 15, fontFamily: 'Helvetica-Bold', marginBottom: 8, color: INK },
-    sectionRule: { height: 2, width: 36, backgroundColor: STEEL, marginBottom: 12 },
-    heading: { fontSize: 11.5, fontFamily: 'Helvetica-Bold', marginTop: 8, marginBottom: 4 },
-    paragraph: { marginBottom: 6 },
-    bulletRow: { flexDirection: 'row', marginBottom: 3 },
-    bullet: { width: 12, color: STEEL },
-    quote: { borderLeftWidth: 2, borderLeftColor: STEEL, paddingLeft: 8, color: MUTED, marginBottom: 6 },
-    table: { marginVertical: 6, borderTopWidth: 1, borderTopColor: '#d9dbe0' },
-    tr: { flexDirection: 'row', borderBottomWidth: 1, borderBottomColor: '#e6e8ec' },
-    th: { flex: 1, padding: 4, fontSize: 8.5, color: MUTED, fontFamily: 'Helvetica-Bold' },
-    td: { flex: 1, padding: 4, fontSize: 9 },
-    footer: { position: 'absolute', bottom: 26, left: 52, right: 52, flexDirection: 'row', justifyContent: 'space-between', fontSize: 8, color: MUTED },
-    section: { marginBottom: 18 },
+    logoTile: { width: 44, height: 44, borderRadius: 9, backgroundColor: '#f3f5f8', padding: 7, marginRight: 14, alignItems: 'center', justifyContent: 'center' },
+    coverTitle: { fontSize: 34, fontFamily: 'Helvetica-Bold', marginTop: 120, lineHeight: 1.15 },
+    coverSub: { fontSize: 14, color: '#b9bdc6', marginTop: 14 },
+    statRow: { flexDirection: 'row', marginTop: 36, paddingTop: 22, borderTopWidth: 1, borderTopColor: '#252a32' },
+    stat: { marginRight: 32 },
+    statLabel: { fontSize: 8, color: '#858a95', letterSpacing: 1.4, textTransform: 'uppercase' },
+    statValue: { fontSize: 19, fontFamily: 'Helvetica-Bold', marginTop: 5 },
+    scoreBox: { marginTop: 30, padding: 16, borderRadius: 8, backgroundColor: '#12141a', borderWidth: 1, borderColor: '#252a32' },
+    scoreRow: { flexDirection: 'row', alignItems: 'center', marginTop: 7 },
+    scoreName: { width: 120, fontSize: 9, color: '#b9bdc6' },
+    scoreTrack: { flex: 1, height: 4, borderRadius: 2, backgroundColor: '#252a32' },
+    scoreValue: { width: 26, textAlign: 'right', fontSize: 9, color: '#eceef1', fontFamily: 'Helvetica-Bold' },
+    coverFoot: { fontSize: 8.5, color: '#858a95', lineHeight: 1.5 },
+    sectionHead: { flexDirection: 'row', alignItems: 'baseline', marginBottom: 12, paddingBottom: 6, borderBottomWidth: 1, borderBottomColor: '#dfe2e7' },
+    sectionNum: { fontSize: 10, fontFamily: 'Helvetica-Bold', color: STEEL, width: 26, letterSpacing: 1 },
+    sectionTitle: { fontSize: 17, fontFamily: 'Helvetica-Bold', color: INK },
+    heading: { fontSize: 11.5, fontFamily: 'Helvetica-Bold', marginTop: 10, marginBottom: 3, color: INK },
+    paragraph: { marginBottom: 7, color: '#2b2f36' },
+    lead: { marginBottom: 10, padding: 10, paddingLeft: 12, backgroundColor: '#f2f4f7', borderLeftWidth: 3, borderLeftColor: STEEL, borderRadius: 2 },
+    bulletRow: { flexDirection: 'row', marginBottom: 3.5 },
+    bullet: { width: 14, color: STEEL, fontFamily: 'Helvetica-Bold' },
+    quote: { borderLeftWidth: 2, borderLeftColor: STEEL, paddingLeft: 10, color: MUTED, marginBottom: 7 },
+    table: { marginVertical: 8, borderWidth: 1, borderColor: '#e1e4e9', borderRadius: 3 },
+    trHead: { flexDirection: 'row', backgroundColor: '#f2f4f7', borderBottomWidth: 1, borderBottomColor: '#e1e4e9' },
+    tr: { flexDirection: 'row', borderBottomWidth: 1, borderBottomColor: '#eceef1' },
+    th: { flex: 1, paddingVertical: 5, paddingHorizontal: 7, fontSize: 8.5, color: MUTED, fontFamily: 'Helvetica-Bold' },
+    td: { flex: 1, paddingVertical: 5, paddingHorizontal: 7, fontSize: 9.5 },
+    footer: { position: 'absolute', bottom: 28, left: 56, right: 56, flexDirection: 'row', justifyContent: 'space-between', fontSize: 8, color: MUTED, paddingTop: 8, borderTopWidth: 1, borderTopColor: '#e6e8ec' },
+    section: { marginBottom: 22 },
   });
 
   const RunsText = ({ runs }: { runs: Run[] }) => (
@@ -165,13 +197,13 @@ export async function exportPdf(pitch: ExportPitch) {
     </Text>
   );
 
-  const BlockView = ({ block }: { block: Block }) => {
+  const BlockView = ({ block, lead }: { block: Block; lead?: boolean }) => {
     switch (block.type) {
       case 'heading':
         return <Text style={styles.heading}>{block.text}</Text>;
       case 'paragraph':
         return (
-          <View style={styles.paragraph}>
+          <View style={lead ? [styles.paragraph, styles.lead] : styles.paragraph}>
             <RunsText runs={block.runs} />
           </View>
         );
@@ -197,7 +229,7 @@ export async function exportPdf(pitch: ExportPitch) {
       case 'table':
         return (
           <View style={styles.table} wrap={false}>
-            <View style={styles.tr}>
+            <View style={styles.trHead}>
               {block.header.map((cell, index) => (
                 <Text key={index} style={[styles.th, index > 0 ? { textAlign: 'right' } : {}]}>
                   {cell}
@@ -208,7 +240,7 @@ export async function exportPdf(pitch: ExportPitch) {
               <View key={rowIndex} style={styles.tr}>
                 {row.map((cell, index) => (
                   <Text key={index} style={[styles.td, index > 0 ? { textAlign: 'right' } : {}]}>
-                    {cell.replace(/\*\*/g, '')}
+                    {cell}
                   </Text>
                 ))}
               </View>
@@ -228,6 +260,7 @@ export async function exportPdf(pitch: ExportPitch) {
   const doc = (
     <Document title={pitch.title} author="SilverNote" subject={`${pitch.symbol} investment pitch`}>
       <Page size="A4" style={styles.cover}>
+        <View style={styles.coverAccent} />
         <View style={styles.coverInner}>
           <View>
             <View style={styles.brandRow}>
@@ -268,20 +301,39 @@ export async function exportPdf(pitch: ExportPitch) {
               ) : null}
             </View>
           </View>
-          <Text style={{ fontSize: 9, color: '#858a95' }}>
-            {date} · Market value ${compact(facts?.marketCap)} · Figures from SEC filings and market data; not investment advice.
-          </Text>
+          <View>
+            {facts?.score?.components.length ? (
+              <View style={styles.scoreBox}>
+                <Text style={styles.statLabel}>
+                  SilverNote Score · {facts.score.label}
+                </Text>
+                {facts.score.components.slice(0, 6).map((component) => (
+                  <View key={component.name} style={styles.scoreRow}>
+                    <Text style={styles.scoreName}>{component.name}</Text>
+                    <View style={styles.scoreTrack}>
+                      <View style={{ width: `${Math.max(0, Math.min(100, component.score))}%`, height: 4, borderRadius: 2, backgroundColor: SILVER }} />
+                    </View>
+                    <Text style={styles.scoreValue}>{Math.round(component.score)}</Text>
+                  </View>
+                ))}
+              </View>
+            ) : null}
+            <Text style={[styles.coverFoot, { marginTop: 22 }]}>
+              {date} · Market value ${compact(facts?.marketCap)}
+              {'\n'}Figures from SEC filings and market data; not investment advice.
+            </Text>
+          </View>
         </View>
       </Page>
       <Page size="A4" style={styles.page}>
-        {included.map((section) => (
+        {included.map((section, sectionIndex) => (
           <View key={section.kind} style={styles.section}>
-            <View wrap={false}>
+            <View wrap={false} style={styles.sectionHead}>
+              <Text style={styles.sectionNum}>{String(sectionIndex + 1).padStart(2, '0')}</Text>
               <Text style={styles.sectionTitle}>{section.title}</Text>
-              <View style={styles.sectionRule} />
             </View>
             {toBlocks(section.content).map((block, index) => (
-              <BlockView key={index} block={block} />
+              <BlockView key={index} block={block} lead={section.kind === 'summary' && index === 0} />
             ))}
           </View>
         ))}
@@ -295,7 +347,7 @@ export async function exportPdf(pitch: ExportPitch) {
     </Document>
   );
 
-  download(await pdf(doc).toBlob(), `${fileBase(pitch)}.pdf`);
+  return pdf(doc).toBlob();
 }
 
 // ─── Slides (PPTX) ──────────────────────────────────────────────────────────

@@ -1,7 +1,7 @@
 'use client';
 
 import { ExternalLink, Maximize2, Minimize2, Sparkles } from 'lucide-react';
-import { useRouter, useSearchParams } from 'next/navigation';
+import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useState, ViewTransition } from 'react';
 import useSWR from 'swr';
 
@@ -17,6 +17,7 @@ import { AnimatedNumber } from '@/components/motion/animated-number';
 import { Delta } from '@/components/motion/delta';
 import { ExtendedMove } from '@/components/motion/extended-move';
 import { ScoreRing, type SubScoreSummary } from '@/components/motion/score-ring';
+import { usePageActive, useSearchParams } from '@/components/shell/keep-alive';
 import { useShell } from '@/components/shell/providers';
 import { Button, Magnetic } from '@/components/ui/button';
 import { CompanyLogo } from '@/components/ui/company-logo';
@@ -28,6 +29,7 @@ import { useExtendedQuotes } from '@/lib/extended-client';
 import { compactNumber, money, multiple, pct, price, relativeTime } from '@/lib/format';
 import type { StandardizedStatements } from '@/lib/finance/statement-types';
 import { useLivePrices } from '@/lib/live-client';
+import { pushRecentStock } from '@/lib/recent-stocks';
 import { cn } from '@/lib/utils';
 
 type Tab = 'overview' | 'financials' | 'dcf' | 'score' | 'peers' | 'news' | 'workspace';
@@ -305,6 +307,7 @@ export function CompanyView({ initial }: { initial: CompanyInitial }) {
   const symbol = initial.symbol;
   const router = useRouter();
   const searchParams = useSearchParams();
+  const active = usePageActive();
   const tab = (searchParams.get('tab') as Tab) ?? 'overview';
   const { data, mutate } = useSWR<CompanyPayload>(`/api/company/${symbol}`, { refreshInterval: 30_000 });
   const { askAssistant, setAssistantContext } = useShell();
@@ -323,6 +326,12 @@ export function CompanyView({ initial }: { initial: CompanyInitial }) {
   const changePct = streamed?.changePct ?? data?.quote?.changePct ?? data?.security?.change_pct ?? initial.changePct;
   const extended = useExtendedQuotes([symbol])[symbol];
   const isBank = /bank|savings institution|thrift/i.test(`${data?.security?.industry ?? initial.industry ?? ''}`);
+
+  // Feeds the sidebar's Recent list with the view you are on now, tab included, so it can be reopened as you left it.
+  const tabQuery = searchParams.get('tab');
+  useEffect(() => {
+    if (active) pushRecentStock({ symbol, name, href: `/company/${symbol}${tabQuery ? `?tab=${encodeURIComponent(tabQuery)}` : ''}` });
+  }, [active, symbol, name, tabQuery]);
 
   useEffect(() => {
     setAssistantContext({ type: 'company', symbol, name });

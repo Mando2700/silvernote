@@ -3,7 +3,7 @@
 import { ArrowUpRight, Briefcase, Eye, FileText, Newspaper, Search, Sparkles, X } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
 import Link from 'next/link';
-import { useRouter, useSearchParams } from 'next/navigation';
+import { useRouter } from 'next/navigation';
 import { useMemo, useState } from 'react';
 import useSWR from 'swr';
 
@@ -15,6 +15,7 @@ import { Badge, EmptyState, Input, Panel, PanelHeader, Skeleton, Tabs } from '@/
 import type { Filing, NewsItem } from '@/lib/data/types';
 import { relativeTime, shortDate } from '@/lib/format';
 import { cn } from '@/lib/utils';
+import { useSearchParams } from '@/components/shell/keep-alive';
 
 type Scope = 'mine' | 'market' | 'filings';
 type UserSymbol = { symbol: string; name: string | null; held: boolean; watched: boolean };

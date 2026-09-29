@@ -7,7 +7,8 @@ import { NextResponse, type NextRequest } from 'next/server';
  * Supabase settings) it does nothing; the dev/prod servers bind to 127.0.0.1 instead.
  */
 
-const PUBLIC_PREFIXES = ['/login', '/auth/'];
+// Shared portfolio links (/s/<token>) and their passcode check are for people without a SilverNote account.
+const PUBLIC_PREFIXES = ['/login', '/auth/', '/s/', '/api/share/'];
 
 function copyCookies(from: NextResponse, to: NextResponse) {
   for (const cookie of from.cookies.getAll()) to.cookies.set(cookie);

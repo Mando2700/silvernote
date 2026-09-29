@@ -1,7 +1,7 @@
 'use client';
 
 import { Plus, Trash2 } from 'lucide-react';
-import { useRouter, useSearchParams } from 'next/navigation';
+import { useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import useSWR from 'swr';
 
@@ -13,6 +13,7 @@ import { formatCost, formatTokens, type ChatMode } from '@/lib/ai/pricing';
 import { api } from '@/lib/client';
 import { relativeTime } from '@/lib/format';
 import { cn } from '@/lib/utils';
+import { useSearchParams } from '@/components/shell/keep-alive';
 
 type Thread = { id: string; title: string; context: ChatContext; updated_at: string };
 

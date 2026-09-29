@@ -58,9 +58,9 @@ function ShellProvider({ children }: { children: ReactNode }) {
   const [assistantOpen, setAssistantOpen] = useState(false);
   const [assistantContext, setAssistantContext] = useState<AssistantContextValue>({ type: 'general' });
   const [pendingPrompt, setPendingPrompt] = useState<{ id: number; text: string } | null>(null);
-  // The sign-in page has no session yet, so there is nothing to load there.
+  // The sign-in page and shared portfolio links are visited without a session, so there is nothing to load there.
   const pathname = usePathname();
-  const { data, mutate } = useSWR<Preferences>(pathname?.startsWith('/login') ? null : '/api/settings');
+  const { data, mutate } = useSWR<Preferences>(pathname?.startsWith('/login') || pathname?.startsWith('/s/') ? null : '/api/settings');
   const prefs = useMemo(() => ({ ...DEFAULT_PREFS, ...(data ?? {}) }), [data]);
 
   useEffect(() => {

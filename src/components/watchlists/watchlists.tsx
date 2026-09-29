@@ -3,7 +3,7 @@
 import { Bell, Columns3, Eye, MoreHorizontal, Pencil, Plus, Tag, Trash2, X } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
 import Link from 'next/link';
-import { useRouter, useSearchParams } from 'next/navigation';
+import { useRouter } from 'next/navigation';
 import { useMemo, useState, ViewTransition } from 'react';
 import { toast } from 'sonner';
 import useSWR from 'swr';
@@ -25,6 +25,7 @@ import { useExtendedQuotes } from '@/lib/extended-client';
 import { price, relativeTime, signedPct } from '@/lib/format';
 import { useLivePrices } from '@/lib/live-client';
 import { cn } from '@/lib/utils';
+import { useSearchParams } from '@/components/shell/keep-alive';
 
 type ListSummary = { id: string; name: string; description: string | null; count: number; columns: string[] };
 type Item = {

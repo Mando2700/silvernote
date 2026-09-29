@@ -3,7 +3,7 @@
 import { Eye, FilePlus2, GitCompareArrows, History, Maximize2, Minimize2, Pencil, Pin, PinOff, Search, Trash2 } from 'lucide-react';
 import { motion } from 'motion/react';
 import Link from 'next/link';
-import { useRouter, useSearchParams } from 'next/navigation';
+import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import useSWR from 'swr';
@@ -23,6 +23,7 @@ import { dateTime, price, relativeTime } from '@/lib/format';
 import { renderMarkdown } from '@/lib/markdown';
 import { THESIS_SECTION_META, type ThesisSection } from '@/lib/schemas';
 import { cn } from '@/lib/utils';
+import { useSearchParams } from '@/components/shell/keep-alive';
 
 type NoteSummary = { id: string; symbol: string | null; title: string; snippet: string; tags: string[]; pinned: boolean; updated_at: string; versions: number };
 type NoteDetail = NoteSummary & { content: string; created_at: string; versions: Array<{ id: string; title: string; content: string; created_at: string }> };

@@ -3,7 +3,7 @@
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { ArrowDown, ArrowUp, Bookmark, ChevronLeft, ChevronRight, Columns3, Download, Filter as FilterIcon, LayoutGrid, Plus, RotateCcw, Save, Search, Table2, Trash2, X } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
-import { useRouter, useSearchParams } from 'next/navigation';
+import { useRouter } from 'next/navigation';
 import { useDeferredValue, useEffect, useMemo, useRef, useState, ViewTransition } from 'react';
 import { toast } from 'sonner';
 import useSWR from 'swr';
@@ -24,6 +24,7 @@ import type { ScreenDefinition } from '@/lib/schemas';
 import { cn } from '@/lib/utils';
 
 import { CAP_BUCKETS, EMPTY_SCREEN, METRIC_BY_KEY, METRIC_COLUMNS, PRESETS, type ExplorerRow, type Filter, type MetricKey, type ScreenState } from './columns';
+import { useSearchParams } from '@/components/shell/keep-alive';
 
 type UniversePayload = { fields: string[]; rows: unknown[][]; generatedAt: string };
 type SavedScreen = { id: string; name: string; definition: ScreenDefinition };

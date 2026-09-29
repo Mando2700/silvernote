@@ -3,7 +3,7 @@
 import { ArrowUpRight, Plus, Presentation } from 'lucide-react';
 import { motion } from 'motion/react';
 import Link from 'next/link';
-import { useRouter, useSearchParams } from 'next/navigation';
+import { useRouter } from 'next/navigation';
 import { useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import useSWR from 'swr';
@@ -19,6 +19,7 @@ import { TickerSearch } from '@/components/ui/ticker-search';
 import { api, revalidate } from '@/lib/client';
 import { price, relativeTime } from '@/lib/format';
 import { cn } from '@/lib/utils';
+import { useSearchParams } from '@/components/shell/keep-alive';
 
 type PitchRow = {
   id: string;

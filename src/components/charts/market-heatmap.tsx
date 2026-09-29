@@ -258,8 +258,9 @@ export function MarketHeatmap({ items, height = 520, className }: { items: Heatm
                 transition={{ duration: 0.1 }}
                 className="pointer-events-none absolute z-30 w-56 rounded-sm border border-line-strong bg-surface-3/95 p-2.5 shadow-[0_18px_40px_-12px_rgba(0,0,0,0.95)] backdrop-blur"
                 style={{
-                  left: Math.min(hover.x + 14, size.width - 232),
-                  top: Math.min(hover.y + 14, size.height - 120),
+                  // Flip to the other side of the cursor rather than sliding over it.
+                  left: hover.x + 14 + 224 > size.width ? Math.max(4, hover.x - 14 - 224) : hover.x + 14,
+                  top: hover.y + 14 + 120 > size.height ? Math.max(4, hover.y - 14 - 120) : hover.y + 14,
                 }}
               >
                 <div className="flex items-baseline justify-between gap-2">

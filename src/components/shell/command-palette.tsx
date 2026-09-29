@@ -7,6 +7,7 @@ import {
   Eye,
   FilePlus2,
   FlaskConical,
+  GraduationCap,
   History,
   LayoutDashboard,
   Newspaper,
@@ -57,6 +58,11 @@ const PAGES = [
   { href: '/notes', label: 'Notes & theses', icon: NotebookPen, keywords: 'journal thesis workspace' },
   { href: '/pitches', label: 'Pitches', icon: Presentation, keywords: 'pitch deck export pdf slides' },
   { href: '/assistant', label: 'Grok assistant', icon: Sparkles, keywords: 'ai chat grok ask' },
+  { href: '/learn', label: 'Learn', icon: GraduationCap, keywords: 'learn course lesson academy dcf wacc sharpe monte carlo lbo m&a quiz' },
+  { href: '/learn/practice', label: 'Practice lab', icon: GraduationCap, keywords: 'learn drills practice problems paper lbo wacc exercises' },
+  { href: '/learn/interview', label: 'Interview prep', icon: GraduationCap, keywords: 'learn interview technicals flashcards banking questions' },
+  { href: '/learn/pitch', label: 'Pitch studio', icon: GraduationCap, keywords: 'learn pitch practice grade rating stock pitch' },
+  { href: '/learn/examples', label: 'Case library', icon: GraduationCap, keywords: 'learn cases examples buffett burry ackman einhorn theses' },
   { href: '/settings', label: 'Settings', icon: Settings2, keywords: 'preferences keys data' },
 ];
 

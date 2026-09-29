@@ -5,6 +5,7 @@ import {
   Compass,
   Eye,
   FlaskConical,
+  GraduationCap,
   History,
   LayoutDashboard,
   Newspaper,
@@ -14,14 +15,18 @@ import {
   Presentation,
   Settings2,
   Sparkles,
+  X,
 } from 'lucide-react';
 import { motion } from 'motion/react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 
 import { BrandMark, Wordmark } from '@/components/shell/brand';
+import { useKeepAliveLinks } from '@/components/shell/keep-alive';
 import { useShell } from '@/components/shell/providers';
 import { useStatus, type StatusPayload } from '@/components/shell/topbar';
+import { CompanyLogo } from '@/components/ui/company-logo';
+import { removeRecentStock, useRecentStocks } from '@/lib/recent-stocks';
 import { cn } from '@/lib/utils';
 
 const NAV = [
@@ -41,7 +46,56 @@ const NAV = [
     { href: '/pitches', label: 'Pitches', icon: Presentation },
     { href: '/assistant', label: 'Grok', icon: Sparkles },
   ] },
+  { group: 'Academy', items: [
+    { href: '/learn', label: 'Learn', icon: GraduationCap },
+  ] },
 ] as const;
+
+/** Stocks opened this session, newest first. Each link returns to the exact view (tab included) and the deck restores its state. */
+function RecentStocks({ collapsed }: { collapsed: boolean }) {
+  const recent = useRecentStocks();
+  const pathname = usePathname();
+  const { close } = useKeepAliveLinks();
+  if (!recent.length) return null;
+  const current = pathname.match(/^\/company\/([^/?]+)/)?.[1]?.toUpperCase();
+  return (
+    <div className="mb-4">
+      {!collapsed ? <div className="kicker mb-1.5 px-2.5 text-[9.5px]">Recent</div> : <div className="mx-auto mb-2 h-px w-6 bg-line" />}
+      {recent.map((stock) => {
+        const active = stock.symbol === current;
+        return (
+          <div key={stock.symbol} className="group/recent relative mb-0.5">
+            <Link
+              href={stock.href}
+              title={collapsed ? `${stock.symbol} · ${stock.name}` : stock.name}
+              className={cn(
+                'flex h-8 items-center gap-2.5 rounded-sm text-[13px] transition-colors',
+                collapsed ? 'justify-center px-0' : 'pr-7 pl-2.5',
+                active ? 'bg-white/[0.05] text-ink' : 'text-muted hover:bg-white/[0.03] hover:text-ink-2',
+              )}
+              aria-current={active ? 'page' : undefined}
+            >
+              <CompanyLogo symbol={stock.symbol} size="xs" />
+              {!collapsed ? <span className="truncate font-mono text-[12px] tracking-tight">{stock.symbol}</span> : null}
+            </Link>
+            {!collapsed && !active ? (
+              <button
+                onClick={() => {
+                  close(`/company/${stock.symbol}`);
+                  removeRecentStock(stock.symbol);
+                }}
+                className="absolute top-1/2 right-1.5 grid size-5 -translate-y-1/2 place-items-center rounded-xs text-faint opacity-0 transition-opacity group-hover/recent:opacity-100 hover:bg-white/10 hover:text-ink focus-visible:opacity-100"
+                aria-label={`Remove ${stock.symbol} from recent`}
+              >
+                <X className="size-3" />
+              </button>
+            ) : null}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
 
 /** One-line data pipeline readout: syncing while a job runs, a warning when the last run failed. */
 function PipelineStatus({ status }: { status: StatusPayload }) {
@@ -64,6 +118,7 @@ export function Sidebar({ collapsed, onToggle, user }: { collapsed: boolean; onT
   const pathname = usePathname();
   const { setAssistantOpen } = useShell();
   const { status } = useStatus();
+  const { resolveHref } = useKeepAliveLinks();
   const isActive = (href: string) => (href === '/' ? pathname === '/' : pathname.startsWith(href));
 
   return (
@@ -94,7 +149,8 @@ export function Sidebar({ collapsed, onToggle, user }: { collapsed: boolean; onT
               return (
                 <Link
                   key={item.href}
-                  href={item.href}
+                  // Back to the URL you left this section on (its tab, selection, thread) while that page is still alive.
+                  href={active ? item.href : resolveHref(item.href)}
                   title={collapsed ? item.label : undefined}
                   className={cn(
                     'group/nav relative mb-0.5 flex h-8 items-center gap-2.5 rounded-sm text-[13px] transition-colors',
@@ -129,6 +185,7 @@ export function Sidebar({ collapsed, onToggle, user }: { collapsed: boolean; onT
             })}
           </div>
         ))}
+        <RecentStocks collapsed={collapsed} />
       </nav>
 
       {!collapsed && status ? <PipelineStatus status={status} /> : null}

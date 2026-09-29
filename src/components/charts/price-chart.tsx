@@ -17,7 +17,7 @@ import {
   type Time,
   type UTCTimestamp,
 } from 'lightweight-charts';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 
 import { useMarketColors } from '@/components/shell/providers';
 import type { Candle } from '@/lib/data/types';
@@ -224,7 +224,9 @@ export function PriceChart({
     animation.range = null;
   };
 
-  useEffect(() => {
+  // A layout effect so a kept-alive (hidden) page tears the chart down in the same commit that hides it,
+  // before display:none makes the resize observer paint a chart that is about to be disposed.
+  useLayoutEffect(() => {
     const host = hostRef.current;
     if (!host) return;
     const chart = createChart(host, {

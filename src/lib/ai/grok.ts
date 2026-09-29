@@ -219,6 +219,51 @@ export async function completeGrokVisionJson(input: {
   return text;
 }
 
+/**
+ * One non-streaming text request that must answer with JSON matching `schema` (xAI structured
+ * outputs). Returns the raw JSON text; callers validate it.
+ */
+export async function completeGrokJson(input: {
+  system: string;
+  prompt: string;
+  schemaName: string;
+  schema: Record<string, unknown>;
+  model?: string;
+  maxTokens?: number;
+  timeoutMs?: number;
+}) {
+  if (!env.xaiKey) throw new GrokError(401, 'XAI_API_KEY is not set.');
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), input.timeoutMs ?? 90_000);
+  let response: Response;
+  try {
+    response = await fetch(`${BASE}/chat/completions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${env.xaiKey}` },
+      body: JSON.stringify({
+        model: input.model || env.xaiFastModel,
+        max_tokens: input.maxTokens ?? 3000,
+        messages: [
+          { role: 'system', content: input.system },
+          { role: 'user', content: input.prompt },
+        ],
+        response_format: { type: 'json_schema', json_schema: { name: input.schemaName, schema: input.schema, strict: true } },
+      }),
+      signal: controller.signal,
+    });
+  } catch (error) {
+    if (controller.signal.aborted) throw new GrokError(504, 'Grok took too long to answer. Try again.');
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
+  if (!response.ok) throw new GrokError(response.status, await errorText(response));
+  const payload = (await response.json()) as { choices?: Array<{ message?: { content?: string | null } }> };
+  const text = payload.choices?.[0]?.message?.content?.trim();
+  if (!text) throw new GrokError(502, 'Grok returned no output.');
+  return text;
+}
+
 export async function listModels() {
   if (!env.xaiKey) return [];
   const response = await fetch(`${BASE}/models`, { headers: { Authorization: `Bearer ${env.xaiKey}` } });

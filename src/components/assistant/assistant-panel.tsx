@@ -21,7 +21,15 @@ export function AssistantPanel() {
   const [mode, setMode] = useChatMode();
   const [quickDraft, setQuickDraft] = useState<Draft | null>(null);
   // Whichever was prepared last: an "Ask Grok" action elsewhere in the app, or a quick action here.
-  const draft = pendingPrompt && (!quickDraft || pendingPrompt.id > quickDraft.id) ? pendingPrompt : quickDraft;
+  const latestDraft = pendingPrompt && (!quickDraft || pendingPrompt.id > quickDraft.id) ? pendingPrompt : quickDraft;
+  // A draft is used once: after it was sent (or the panel was closed) it must not come back on reopen.
+  const [usedDraftId, setUsedDraftId] = useState<number | null>(null);
+  const draft = latestDraft && latestDraft.id !== usedDraftId ? latestDraft : null;
+  const draftIdRef = useRef<number | null>(null);
+  draftIdRef.current = latestDraft?.id ?? null;
+  useEffect(() => {
+    if (!assistantOpen && draftIdRef.current !== null) setUsedDraftId(draftIdRef.current);
+  }, [assistantOpen]);
   const lastContextKey = useRef<string>('');
   const contextKey = assistantContext.type === 'company' ? `c:${assistantContext.symbol}` : assistantContext.type === 'portfolio' ? `p:${assistantContext.id}` : 'g';
 
@@ -105,7 +113,10 @@ export function AssistantPanel() {
           </div>
           <div className="relative border-t border-line p-3">
             <Composer
-              onSend={(text) => void chat.send(text, assistantContext, { mode })}
+              onSend={(text) => {
+                setUsedDraftId(latestDraft?.id ?? null);
+                void chat.send(text, assistantContext, { mode });
+              }}
               onStop={chat.stop}
               streaming={chat.streaming}
               autoFocus

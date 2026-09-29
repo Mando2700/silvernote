@@ -189,23 +189,43 @@ export function Menu({
   align?: 'start' | 'end';
 }) {
   const [open, setOpen] = useState(false);
+  const [pos, setPos] = useState<{ top: number; left?: number; right?: number }>({ top: 0 });
   const ref = useRef<HTMLDivElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const mounted = useMounted();
   useEffect(() => {
     if (!open) return;
     const close = (event: PointerEvent) => {
-      if (!ref.current?.contains(event.target as Node)) setOpen(false);
+      const target = event.target as Node;
+      if (!ref.current?.contains(target) && !menuRef.current?.contains(target)) setOpen(false);
     };
+    const dismiss = () => setOpen(false);
     window.addEventListener('pointerdown', close);
-    return () => window.removeEventListener('pointerdown', close);
+    window.addEventListener('resize', dismiss);
+    window.addEventListener('scroll', dismiss, true);
+    return () => {
+      window.removeEventListener('pointerdown', close);
+      window.removeEventListener('resize', dismiss);
+      window.removeEventListener('scroll', dismiss, true);
+    };
   }, [open]);
   useEscape(open, () => setOpen(false));
+  const toggle = () => {
+    const rect = ref.current?.getBoundingClientRect();
+    if (rect) setPos({ top: rect.bottom + 6, ...(align === 'end' ? { right: window.innerWidth - rect.right } : { left: rect.left }) });
+    setOpen((value) => !value);
+  };
   return (
     <div ref={ref} className="relative">
-      {trigger({ open, toggle: () => setOpen((value) => !value) })}
+      {trigger({ open, toggle })}
+      {mounted
+        ? createPortal(
       <AnimatePresence>
         {open ? (
           <motion.div
-            className={cn('panel absolute z-[60] mt-1.5 min-w-44 bg-surface-3 p-1 shadow-[0_20px_50px_-15px_rgba(0,0,0,0.9)]', align === 'end' ? 'right-0' : 'left-0')}
+            ref={menuRef}
+            style={pos}
+            className="panel fixed z-[200] min-w-44 bg-surface-3 p-1 shadow-[0_20px_50px_-15px_rgba(0,0,0,0.9)]"
             initial={{ opacity: 0, y: -4, scale: 0.98 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: -4, scale: 0.98 }}
@@ -234,7 +254,10 @@ export function Menu({
             )}
           </motion.div>
         ) : null}
-      </AnimatePresence>
+      </AnimatePresence>,
+            document.body,
+          )
+        : null}
     </div>
   );
 }

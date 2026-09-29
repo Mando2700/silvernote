@@ -121,6 +121,43 @@ function niceTicks(min: number, max: number, count = 4) {
   return { domain: scale.domain() as [number, number], ticks: scale.ticks(count) };
 }
 
+/** A caller-supplied y domain (e.g. one being animated) is used as is; otherwise the data's nice domain. */
+function axis(override: [number, number] | undefined, fallback: () => [number, number]) {
+  return override ? { domain: override, ticks: scaleLinear().domain(override).ticks(4) } : niceTicks(...fallback());
+}
+
+export function columnDomain(series: ColumnSeries[]): [number, number] {
+  const values = series.flatMap((item) => item.values).filter((value): value is number => typeof value === 'number');
+  return niceTicks(Math.min(0, ...values), Math.max(0, ...values)).domain;
+}
+
+export function lineDomain(series: LineSeries[], zeroLine = false): [number, number] {
+  const values = series.flatMap((item) => item.values).filter((value): value is number => typeof value === 'number');
+  const extent = values.length ? [Math.min(...values, zeroLine ? 0 : Infinity), Math.max(...values, zeroLine ? 0 : -Infinity)] : [0, 1];
+  return niceTicks(extent[0], extent[1] === extent[0] ? extent[0] + 1 : extent[1]).domain;
+}
+
+function waterfallBars(steps: WaterfallStep[]) {
+  const result: Array<WaterfallStep & { from: number; to: number }> = [];
+  let running = 0;
+  for (const step of steps) {
+    if (typeof step.value !== 'number') continue;
+    if (step.kind === 'start' || step.kind === 'total') {
+      running = step.value;
+      result.push({ ...step, from: 0, to: step.value });
+    } else {
+      result.push({ ...step, from: running, to: running + step.value });
+      running += step.value;
+    }
+  }
+  return result;
+}
+
+export function waterfallDomain(steps: WaterfallStep[]): [number, number] {
+  const all = waterfallBars(steps).flatMap((bar) => [bar.from, bar.to]);
+  return niceTicks(Math.min(0, ...all), Math.max(0, ...all)).domain;
+}
+
 export type ColumnSeries = { label: string; values: Array<number | null>; color?: string };
 
 /** Grouped columns over categories (periods). Supports negatives around a zero baseline. */
@@ -131,6 +168,7 @@ export function ColumnChart({
   height = 220,
   highlightLast = false,
   className,
+  yDomain,
 }: {
   categories: string[];
   series: ColumnSeries[];
@@ -138,14 +176,14 @@ export function ColumnChart({
   height?: number;
   highlightLast?: boolean;
   className?: string;
+  yDomain?: [number, number];
 }) {
   const [ref, width] = useWidth<HTMLDivElement>();
   const [hover, setHover] = useState<number | null>(null);
   const margin = { top: 10, right: 8, bottom: 22, left: 52 };
   const innerWidth = Math.max(0, width - margin.left - margin.right);
   const innerHeight = height - margin.top - margin.bottom;
-  const values = series.flatMap((item) => item.values).filter((value): value is number => typeof value === 'number');
-  const { domain, ticks } = niceTicks(Math.min(0, ...values), Math.max(0, ...values));
+  const { domain, ticks } = axis(yDomain, () => columnDomain(series));
   const y = scaleLinear().domain(domain).range([innerHeight, 0]);
   const x = scaleBand<number>().domain(categories.map((_, index) => index)).range([0, innerWidth]).paddingInner(0.28).paddingOuter(0.12);
   const groupWidth = x.bandwidth();
@@ -246,6 +284,7 @@ export function LineChart({
   endLabels = true,
   zeroLine = false,
   time,
+  yDomain,
 }: {
   categories: string[];
   series: LineSeries[];
@@ -256,6 +295,7 @@ export function LineChart({
   zeroLine?: boolean;
   /** Places points by time on a fixed axis (e.g. a whole session) instead of spreading them evenly, so a partial day fills in from the left. */
   time?: { values: number[]; domain: [number, number]; ticks: Array<{ at: number; label: string }> };
+  yDomain?: [number, number];
 }) {
   const [ref, width] = useWidth<HTMLDivElement>();
   const [hover, setHover] = useState<number | null>(null);
@@ -263,9 +303,7 @@ export function LineChart({
   const margin = { top: 10, right: showEnd ? 64 : 10, bottom: 22, left: 52 };
   const innerWidth = Math.max(0, width - margin.left - margin.right);
   const innerHeight = height - margin.top - margin.bottom;
-  const values = series.flatMap((item) => item.values).filter((value): value is number => typeof value === 'number');
-  const extent = values.length ? [Math.min(...values, zeroLine ? 0 : Infinity), Math.max(...values, zeroLine ? 0 : -Infinity)] : [0, 1];
-  const { domain, ticks } = niceTicks(extent[0], extent[1] === extent[0] ? extent[0] + 1 : extent[1]);
+  const { domain, ticks } = axis(yDomain, () => lineDomain(series, zeroLine));
   const y = scaleLinear().domain(domain).range([innerHeight, 0]);
   const step = categories.length > 1 ? innerWidth / (categories.length - 1) : 0;
   const xTime = time ? scaleLinear().domain(time.domain).range([0, innerWidth]) : null;
@@ -362,19 +400,28 @@ export function LineChart({
                   })
                 : null}
               {showEnd
-                ? series.map((item, index) => {
-                    const lastIndex = item.values.map((value) => typeof value === 'number').lastIndexOf(true);
-                    if (lastIndex < 0) return null;
-                    const value = item.values[lastIndex] as number;
-                    return (
-                      <g key={item.label}>
-                        <circle cx={xAt(lastIndex)} cy={y(value)} r={3.5} fill={colors[index]} stroke="#0f1115" strokeWidth={2} />
-                        <text x={innerWidth + 8} y={y(value)} dy="0.32em" fontSize={10.5} fill="#b9bdc6" className="num">
-                          {format(value)}
+                ? (() => {
+                    const ends = series
+                      .map((item, index) => {
+                        const lastIndex = item.values.map((value) => typeof value === 'number').lastIndexOf(true);
+                        if (lastIndex < 0) return null;
+                        const value = item.values[lastIndex] as number;
+                        return { index, lastIndex, value, y: y(value), labelY: y(value) };
+                      })
+                      .filter((end): end is NonNullable<typeof end> => end !== null)
+                      .sort((a, b) => a.y - b.y);
+                    // Push overlapping labels apart so close end values stay legible.
+                    const gap = 13;
+                    for (let i = 1; i < ends.length; i++) ends[i].labelY = Math.max(ends[i].labelY, ends[i - 1].labelY + gap);
+                    return ends.map((end) => (
+                      <g key={series[end.index].label}>
+                        <circle cx={xAt(end.lastIndex)} cy={end.y} r={3.5} fill={colors[end.index]} stroke="#0f1115" strokeWidth={2} />
+                        <text x={innerWidth + 8} y={end.labelY} dy="0.32em" fontSize={10.5} fill={colors[end.index]} className="num">
+                          {format(end.value)}
                         </text>
                       </g>
-                    );
-                  })
+                    ));
+                  })()
                 : null}
             </g>
           </svg>
@@ -400,30 +447,26 @@ export function LineChart({
 export type WaterfallStep = { label: string; value: number | null; kind: 'start' | 'delta' | 'total'; emphasis?: boolean };
 
 /** Bridge from a starting amount through additions/deductions to subtotals. */
-export function Waterfall({ steps, format, height = 240, className }: { steps: WaterfallStep[]; format: (value: number) => string; height?: number; className?: string }) {
+export function Waterfall({
+  steps,
+  format,
+  height = 240,
+  className,
+  yDomain,
+}: {
+  steps: WaterfallStep[];
+  format: (value: number) => string;
+  height?: number;
+  className?: string;
+  yDomain?: [number, number];
+}) {
   const [ref, width] = useWidth<HTMLDivElement>();
   const [hover, setHover] = useState<number | null>(null);
-  const usable = steps.filter((step) => typeof step.value === 'number');
-  const bars = useMemo(() => {
-    const result: Array<WaterfallStep & { from: number; to: number }> = [];
-    let running = 0;
-    for (const step of usable) {
-      const value = step.value as number;
-      if (step.kind === 'start' || step.kind === 'total') {
-        running = value;
-        result.push({ ...step, from: 0, to: value });
-      } else {
-        result.push({ ...step, from: running, to: running + value });
-        running += value;
-      }
-    }
-    return result;
-  }, [usable]);
+  const bars = useMemo(() => waterfallBars(steps), [steps]);
   const margin = { top: 16, right: 8, bottom: 34, left: 52 };
   const innerWidth = Math.max(0, width - margin.left - margin.right);
   const innerHeight = height - margin.top - margin.bottom;
-  const all = bars.flatMap((bar) => [bar.from, bar.to]);
-  const { domain, ticks } = niceTicks(Math.min(0, ...all), Math.max(0, ...all));
+  const { domain, ticks } = axis(yDomain, () => waterfallDomain(steps));
   const y = scaleLinear().domain(domain).range([innerHeight, 0]);
   const x = scaleBand<number>().domain(bars.map((_, index) => index)).range([0, innerWidth]).paddingInner(0.3).paddingOuter(0.1);
   const barWidth = Math.min(40, x.bandwidth());

@@ -1,9 +1,9 @@
 'use client';
 
-import { ArrowDown, ArrowUp, Briefcase, ImagePlus, MoreHorizontal, Pencil, Plus, Sparkles, Trash2 } from 'lucide-react';
+import { ArrowDown, ArrowUp, Briefcase, ImagePlus, MoreHorizontal, Pencil, Plus, Share2, Sparkles, Trash2 } from 'lucide-react';
 import { motion } from 'motion/react';
 import Link from 'next/link';
-import { useRouter, useSearchParams } from 'next/navigation';
+import { useRouter } from 'next/navigation';
 import { useEffect, useMemo, useState, ViewTransition } from 'react';
 import { toast } from 'sonner';
 import useSWR from 'swr';
@@ -14,6 +14,7 @@ import { PerformanceChart } from '@/components/portfolio/performance-chart';
 import { RollingNumber } from '@/components/motion/rolling-number';
 import { BondsPanel } from '@/components/portfolio/bonds';
 import { ImportPhotosModal } from '@/components/portfolio/import-photos';
+import { ShareStudio } from '@/components/portfolio/share/share-studio';
 import { TaxPanel } from '@/components/portfolio/tax';
 import { Delta } from '@/components/motion/delta';
 import { ScoreRing } from '@/components/motion/score-ring';
@@ -30,6 +31,7 @@ import { api, revalidate } from '@/lib/client';
 import { type LivePrice, useLivePrices } from '@/lib/live-client';
 import { fixed, money, pct, price, shortDate, signedPct } from '@/lib/format';
 import { cn } from '@/lib/utils';
+import { useSearchParams } from '@/components/shell/keep-alive';
 
 type PortfolioListItem = { id: string; name: string; benchmark: string; cash: number; summary: Summary };
 type Summary = { totalValue: number; invested: number; fixedIncome: number; bonds: number; cash: number; costBasis: number; unrealized: number; unrealizedPct: number | null; realized: number; dayChange: number; dayChangePct: number | null; extended?: { session: 'pre' | 'post'; change: number; changePct: number | null } | null; positions: number; unpriced?: string[]; pricesAsOf?: number | null };
@@ -414,6 +416,8 @@ export function PortfolioView() {
   const [creating, setCreating] = useState(false);
   const [editing, setEditing] = useState(false);
   const [importing, setImporting] = useState(false);
+  // The studio mounts on first use and then stays, so it closes with its exit animation and remembers nothing it should not.
+  const [sharing, setSharing] = useState<'closed' | 'open' | 'dismissed'>('closed');
   const [form, setForm] = useState({ name: '', benchmark: 'SPY', cash: '' });
   // The table only renders once data has loaded on the client, so reading storage here cannot mismatch the server render.
   const [columnOrder, setColumnOrder] = useState<HoldingSortKey[]>(() => {
@@ -548,6 +552,9 @@ export function PortfolioView() {
             onClick={() => detail && askAssistant(`Review my portfolio "${detail.portfolio.name}": concentration, factor and sector risks, what is driving risk, and 3 concrete ideas to improve risk-adjusted returns.`, { type: 'portfolio', id: detail.portfolio.id, name: detail.portfolio.name })}
           >
             Review with Grok
+          </Button>
+          <Button variant="outline" icon={<Share2 className="size-3.5" />} disabled={!detail} onClick={() => setSharing('open')}>
+            Share
           </Button>
           <Menu
             trigger={({ toggle }) => <Button variant="ghost" icon={<MoreHorizontal className="size-4" />} onClick={toggle} aria-label="Portfolio options" />}
@@ -877,6 +884,7 @@ export function PortfolioView() {
         </div>
       </Modal>
       {importModal}
+      {detail && sharing !== 'closed' ? <ShareStudio open={sharing === 'open'} onClose={() => setSharing('dismissed')} detail={detail} /> : null}
     </Page>
   );
 }

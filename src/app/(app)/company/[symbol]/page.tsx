@@ -3,6 +3,7 @@ import { notFound } from 'next/navigation';
 
 import { CompanyView } from '@/components/company/company-view';
 import { Page } from '@/components/shell/page';
+import { KeepAlive } from '@/components/shell/keep-alive';
 import { q1 } from '@/lib/db';
 import { getSecurity } from '@/lib/services/universe';
 
@@ -24,20 +25,23 @@ export default async function CompanyPage({ params }: PageProps<'/company/[symbo
     getSecurity(symbol),
     q1<{ overall: number; label: string }>('select overall, label from public.scores where symbol = $1', [symbol]),
   ]);
+  // The app shell keeps this view mounted (state and scroll intact) after you navigate away.
   return (
-    <Page>
-      <CompanyView
-        initial={{
-          symbol,
-          name: security?.name ?? symbol,
-          sector: security?.sector ?? null,
-          industry: security?.industry ?? null,
-          price: security?.price ?? null,
-          changePct: security?.change_pct ?? null,
-          score: score?.overall ?? null,
-          scoreLabel: score?.label ?? null,
-        }}
-      />
-    </Page>
+    <KeepAlive>
+      <Page>
+        <CompanyView
+          initial={{
+            symbol,
+            name: security?.name ?? symbol,
+            sector: security?.sector ?? null,
+            industry: security?.industry ?? null,
+            price: security?.price ?? null,
+            changePct: security?.change_pct ?? null,
+            score: score?.overall ?? null,
+            scoreLabel: score?.label ?? null,
+          }}
+        />
+      </Page>
+    </KeepAlive>
   );
 }

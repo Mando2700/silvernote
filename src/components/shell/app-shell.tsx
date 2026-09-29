@@ -3,6 +3,7 @@
 import dynamic from 'next/dynamic';
 import { useSyncExternalStore, type ReactNode } from 'react';
 
+import { KeepAliveProvider, KeepAliveViews } from '@/components/shell/keep-alive';
 import { Ambient, RouteProgress, usePanelSpotlight } from '@/components/shell/ambient';
 import { CommandPalette } from '@/components/shell/command-palette';
 import { Sidebar } from '@/components/shell/sidebar';
@@ -47,16 +48,21 @@ export function AppShell({ user, children }: { user: { email: string | null; loc
   usePanelSpotlight();
 
   return (
-    <div className="relative flex min-h-dvh">
-      <Ambient />
-      <RouteProgress />
-      <Sidebar collapsed={collapsed} onToggle={toggle} user={user} />
-      <div className="relative z-10 flex min-w-0 flex-1 flex-col">
-        <Topbar />
-        <main className="mx-auto w-full max-w-[1680px] flex-1 px-5 py-5">{children}</main>
+    <KeepAliveProvider>
+      <div className="relative flex min-h-dvh">
+        <Ambient />
+        <RouteProgress />
+        <Sidebar collapsed={collapsed} onToggle={toggle} user={user} />
+        <div className="relative z-10 flex min-w-0 flex-1 flex-col">
+          <Topbar />
+          <main className="mx-auto w-full max-w-[1680px] flex-1 px-5 py-5">
+            {children}
+            <KeepAliveViews />
+          </main>
+        </div>
+        <CommandPalette />
+        <AssistantPanel />
       </div>
-      <CommandPalette />
-      <AssistantPanel />
-    </div>
+    </KeepAliveProvider>
   );
 }
