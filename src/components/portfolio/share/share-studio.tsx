@@ -7,7 +7,7 @@ import useSWR from 'swr';
 
 import { loadLogos, logoSymbols, renderShareImage, SHARE_FORMATS, SHARE_TEMPLATES, SHARE_THEMES, type ShareFormat, type ShareImageConfig, type ShareImageEnv, type ShareTemplate, type ShareTheme } from '@/components/portfolio/share/share-canvas';
 import { CreateLinkButton, DEFAULT_LINK_SETTINGS, LinkList, LinkSettingsForm, type LinkSettings } from '@/components/portfolio/share/share-links';
-import { Group, PrivacyControls, RangePicker, ToggleRow } from '@/components/portfolio/share/share-controls';
+import { copyText, Group, PrivacyControls, RangePicker, ToggleRow } from '@/components/portfolio/share/share-controls';
 import { SharedPortfolio } from '@/components/portfolio/share/shared-view';
 import { useMarketColors } from '@/components/shell/providers';
 import { Button } from '@/components/ui/button';
@@ -23,7 +23,7 @@ export type ShareStudioDetail = {
   summary: { fixedIncome: number };
 };
 
-type Performance = { points: Array<{ t: number; twr: number; benchmark: number }> };
+type Performance = { points: Array<{ t: number; twr: number; benchmark: number; nasdaq?: number }> };
 
 const DEFAULT_IMAGE: ShareImageConfig = { template: 'summary', format: 'square', theme: 'silver', caption: '', mark: true, date: true, colors: 'color' };
 const TEMPLATE_ICON: Record<ShareTemplate, ComponentType<{ className?: string }>> = { summary: LayoutDashboard, holdings: List, allocation: PieChart, performance: LineChart, sectors: BarChart3 };
@@ -97,7 +97,11 @@ export function ShareStudio({ open, onClose, detail }: { open: boolean; onClose:
     [detail, performance, asOf],
   );
   const effective = useMemo(() => normalizeShareOptions(options), [options]);
-  const view = useMemo(() => buildShareView(source, effective, title), [source, effective, title]);
+  // The image is laid out by its template, so the link's page sections (set on the Link tab) must not blank it.
+  const view = useMemo(
+    () => buildShareView(source, tab === 'image' ? { ...effective, sections: { allocation: true, holdings: true, sectors: true, performance: true } } : effective, title),
+    [source, effective, title, tab],
+  );
 
   const patchOptions = (patch: Partial<ShareOptions>) =>
     setOptions((current) => {
@@ -171,12 +175,8 @@ export function ShareStudio({ open, onClose, detail }: { open: boolean; onClose:
       await navigator.share({ files: [file], title: view.title });
     });
   const copySummary = async () => {
-    try {
-      await navigator.clipboard.writeText(shareSummaryText(view));
-      toast.success('Summary copied');
-    } catch {
-      toast.error('Could not copy the summary.');
-    }
+    if (await copyText(shareSummaryText(view))) toast.success('Summary copied');
+    else toast.error('Could not copy the summary.');
   };
 
   const local = typeof window !== 'undefined' && ['localhost', '127.0.0.1', '[::1]'].includes(window.location.hostname);
@@ -285,6 +285,7 @@ export function ShareStudio({ open, onClose, detail }: { open: boolean; onClose:
                     </div>
                   ) : null}
                   <div className="divide-y divide-line rounded-sm border border-line px-3 py-1">
+                    {showRange ? <ToggleRow label="Compare with Nasdaq 100" checked={options.nasdaq} onChange={(nasdaq) => patchOptions({ nasdaq })} /> : null}
                     <ToggleRow label="Stock colors & logos" checked={image.colors === 'color'} onChange={(on) => patchImage({ colors: on ? 'color' : 'mono' })} />
                     <ToggleRow label="SilverNote mark" checked={image.mark} onChange={(mark) => patchImage({ mark })} />
                     <ToggleRow label="Date" checked={image.date} onChange={(date) => patchImage({ date })} />

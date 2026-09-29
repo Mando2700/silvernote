@@ -5,6 +5,9 @@ import { z } from 'zod';
 export const SHARE_RANGES = ['1M', '3M', '6M', 'YTD', '1Y', 'ALL'] as const;
 export type ShareRange = (typeof SHARE_RANGES)[number];
 
+/** A range as it reads in a heading: "3M", or "All-time" for the whole history. */
+export const rangeLabel = (range: ShareRange) => (range === 'ALL' ? 'All-time' : range);
+
 /** exact: real dollars · scaled: the same mix as a $100K model portfolio · hidden: percentages only. */
 export const SHARE_AMOUNTS = ['exact', 'scaled', 'hidden'] as const;
 export type ShareAmounts = (typeof SHARE_AMOUNTS)[number];
@@ -22,6 +25,8 @@ export const shareOptionsSchema = z.object({
   shares: z.boolean(),
   /** Gains, losses and performance against the benchmark. */
   returns: z.boolean(),
+  /** Also plot the Nasdaq 100 next to the benchmark. */
+  nasdaq: z.boolean().default(false),
   /** Count cash in the mix. Off: weights are of the invested part only. */
   cash: z.boolean(),
   detail: z.enum(SHARE_DETAILS),
@@ -43,6 +48,7 @@ export const DEFAULT_SHARE_OPTIONS: ShareOptions = {
   amounts: 'hidden',
   shares: false,
   returns: true,
+  nasdaq: false,
   cash: true,
   detail: 'all',
   owner: null,
@@ -56,6 +62,7 @@ export function normalizeShareOptions(options: ShareOptions): ShareOptions {
   return {
     ...options,
     owner: options.owner?.trim() ? options.owner.trim() : null,
+    nasdaq: options.nasdaq === true && options.returns,
     shares: options.amounts === 'exact' && detail !== 'sectors' ? options.shares : false,
     sections: {
       allocation: options.sections.allocation,

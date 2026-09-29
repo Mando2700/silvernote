@@ -12,7 +12,7 @@ export function donutSlices(slices: ShareSlice[]) {
   return groupSlices(slices, MAX_SLICES).map((slice) => ({ ...slice, color: colors.get(slice.label) ?? NEUTRAL_COLORS.other }));
 }
 
-export function ShareDonut({ slices, size = 180, thickness = 22, centerLabel, centerValue }: { slices: ShareSlice[]; size?: number; thickness?: number; centerLabel?: string; centerValue?: string }) {
+export function ShareDonut({ slices, size = 180, thickness = 30, centerLabel, centerValue, logoSrc }: { slices: ShareSlice[]; size?: number; thickness?: number; centerLabel?: string; centerValue?: string; logoSrc?: (symbol: string) => string }) {
   const items = donutSlices(slices);
   const radius = size / 2;
   const generator = arc<{ startAngle: number; endAngle: number; padAngle: number }>().innerRadius(radius - thickness).outerRadius(radius - 1).cornerRadius(2);
@@ -24,6 +24,20 @@ export function ShareDonut({ slices, size = 180, thickness = 22, centerLabel, ce
           <path key={segment.data.label} d={generator(segment) ?? ''} fill={segment.data.color} />
         ))}
       </svg>
+      {logoSrc
+        ? segments.map((segment) => {
+            // A logo rides on each holding's slice when the slice is wide enough for it.
+            const mid = radius - thickness / 2 - 0.5;
+            const logo = thickness - 8;
+            const at = (segment.startAngle + segment.endAngle) / 2;
+            if (segment.data.kind !== 'holding' || (segment.endAngle - segment.startAngle) * mid < logo * 1.3) return null;
+            return (
+              <span key={segment.data.label} className="absolute" style={{ left: radius + Math.sin(at) * mid - logo / 2, top: radius - Math.cos(at) * mid - logo / 2 }}>
+                <ShareLogo symbol={segment.data.label} color={segment.data.color} src={logoSrc(segment.data.label)} size={logo} />
+              </span>
+            );
+          })
+        : null}
       {centerValue ? (
         <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center text-center">
           <div className="num text-[20px] leading-none font-semibold tracking-[-0.02em] text-ink">{centerValue}</div>
@@ -49,6 +63,9 @@ export function ShareLegend({ slices, logoSrc }: { slices: ShareSlice[]; logoSrc
   );
 }
 
+/** The Nasdaq 100 line, distinct from the grey benchmark. */
+export const NASDAQ_COLOR = '#7aa7ff';
+
 const WIDTH = 640;
 const HEIGHT = 220;
 const PAD = { top: 12, bottom: 12 };
@@ -57,7 +74,8 @@ const PAD = { top: 12, bottom: 12 };
 export function ShareLineChart({ performance, height = HEIGHT }: { performance: SharePerformance; height?: number }) {
   const { points } = performance;
   const times = points.map((point) => point.t);
-  const values = points.flatMap((point) => [point.portfolio, point.benchmark]);
+  const withNasdaq = performance.nasdaqReturn !== undefined && points.every((point) => point.nasdaq !== undefined);
+  const values = points.flatMap((point) => (withNasdaq ? [point.portfolio, point.benchmark, point.nasdaq ?? 100] : [point.portfolio, point.benchmark]));
   const lo = Math.min(...values, 100);
   const hi = Math.max(...values, 100);
   const margin = (hi - lo || 1) * 0.08;
@@ -65,6 +83,7 @@ export function ShareLineChart({ performance, height = HEIGHT }: { performance: 
   const y = scaleLinear().domain([lo - margin, hi + margin]).range([HEIGHT - PAD.bottom, PAD.top]);
   const portfolioLine = line<(typeof points)[number]>().x((point) => x(point.t)).y((point) => y(point.portfolio)).curve(curveMonotoneX);
   const benchmarkLine = line<(typeof points)[number]>().x((point) => x(point.t)).y((point) => y(point.benchmark)).curve(curveMonotoneX);
+  const nasdaqLine = line<(typeof points)[number]>().x((point) => x(point.t)).y((point) => y(point.nasdaq ?? 100)).curve(curveMonotoneX);
   const fill = area<(typeof points)[number]>().x((point) => x(point.t)).y0(HEIGHT).y1((point) => y(point.portfolio)).curve(curveMonotoneX);
   return (
     <svg viewBox={`0 0 ${WIDTH} ${HEIGHT}`} preserveAspectRatio="none" className="w-full" style={{ height }} role="img" aria-label={`Portfolio against ${performance.benchmark}`}>
@@ -77,6 +96,7 @@ export function ShareLineChart({ performance, height = HEIGHT }: { performance: 
       <line x1={0} x2={WIDTH} y1={y(100)} y2={y(100)} stroke="rgba(255,255,255,0.12)" strokeDasharray="3 5" vectorEffect="non-scaling-stroke" />
       <path d={fill(points) ?? ''} fill="url(#share-area)" />
       <path d={benchmarkLine(points) ?? ''} fill="none" stroke="#7c8695" strokeWidth={1.4} strokeDasharray="4 4" vectorEffect="non-scaling-stroke" />
+      {withNasdaq ? <path d={nasdaqLine(points) ?? ''} fill="none" stroke={NASDAQ_COLOR} strokeWidth={1.4} strokeDasharray="4 4" vectorEffect="non-scaling-stroke" /> : null}
       <path d={portfolioLine(points) ?? ''} fill="none" stroke="#f4f6f9" strokeWidth={1.8} strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
     </svg>
   );

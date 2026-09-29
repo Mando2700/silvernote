@@ -78,8 +78,8 @@ function splitLabel(factor: number) {
   return factor >= 1 ? `${round(factor)}-for-1` : `1-for-${round(1 / factor)}`;
 }
 
-type HoldingSortKey = 'symbol' | 'shares' | 'avgCost' | 'price' | 'priceChange' | 'priceChangePct' | 'marketValue' | 'weight' | 'dayChange' | 'unrealized' | 'score';
-const HOLDING_SORT_DEFAULT_DIR: Record<HoldingSortKey, 'asc' | 'desc'> = { symbol: 'asc', shares: 'desc', avgCost: 'desc', price: 'desc', priceChange: 'desc', priceChangePct: 'desc', marketValue: 'desc', weight: 'desc', dayChange: 'desc', unrealized: 'desc', score: 'desc' };
+type HoldingSortKey = 'symbol' | 'shares' | 'avgCost' | 'price' | 'priceChange' | 'priceChangePct' | 'marketValue' | 'weight' | 'dayChange' | 'unrealized' | 'unrealizedPct' | 'score';
+const HOLDING_SORT_DEFAULT_DIR: Record<HoldingSortKey, 'asc' | 'desc'> = { symbol: 'asc', shares: 'desc', avgCost: 'desc', price: 'desc', priceChange: 'desc', priceChangePct: 'desc', marketValue: 'desc', weight: 'desc', dayChange: 'desc', unrealized: 'desc', unrealizedPct: 'desc', score: 'desc' };
 
 const SESSION_LABEL = { pre: 'Pre-market', post: 'After hours' } as const;
 
@@ -93,7 +93,8 @@ const HOLDING_COLUMNS: Record<HoldingSortKey, { label: string; align: 'left' | '
   marketValue: { label: 'Market value', align: 'right' },
   weight: { label: 'Weight', align: 'left' },
   dayChange: { label: 'Day P&L', align: 'right' },
-  unrealized: { label: 'Total P&L', align: 'right' },
+  unrealized: { label: 'Total P&L ($)', align: 'right' },
+  unrealizedPct: { label: 'Total P&L (%)', align: 'right' },
   score: { label: 'Score', align: 'right' },
 };
 const DEFAULT_COLUMN_ORDER = Object.keys(HOLDING_COLUMNS) as HoldingSortKey[];
@@ -123,40 +124,38 @@ function HoldingCell({ column, holding, extendedSession, showExtended }: { colum
           {holding.priced === false ? <span className="text-warning">—</span> : <span>{price(holding.price)}</span>}
         </td>
       );
-    case 'priceChange':
+    case 'priceChange': {
+      const extended = showExtended && holding.extendedPrice != null;
       return (
         <td className="num px-3 py-2 text-right">
-          {holding.priced === false ? (
+          {holding.priced === false || (showExtended && !extended) ? (
             <span className="text-faint">—</span>
+          ) : extended ? (
+            <span title={`${extendedSession ? SESSION_LABEL[extendedSession] : ''} ${price(holding.extendedPrice)}`}>
+              <Delta value={holding.price !== null ? holding.extendedPrice! - holding.price : null} kind="money" digits={2} className="text-[12px]" />
+            </span>
           ) : (
-            <div className="flex flex-col items-end">
-              <Delta value={holding.shares > 0 ? holding.dayChange / holding.shares : null} kind="money" digits={2} className="text-[10.5px]" />
-              {extendedSession && holding.extendedPrice != null ? (
-                <span className="text-[9.5px] text-muted" title={`${SESSION_LABEL[extendedSession]} ${price(holding.extendedPrice)}`}>
-                  <Delta value={holding.price !== null ? holding.extendedPrice - holding.price : null} kind="money" digits={2} className="text-[9.5px]" />
-                </span>
-              ) : null}
-            </div>
+            <Delta value={holding.shares > 0 ? holding.dayChange / holding.shares : null} kind="money" digits={2} className="text-[12px]" />
           )}
         </td>
       );
-    case 'priceChangePct':
+    }
+    case 'priceChangePct': {
+      const extended = showExtended && holding.extendedPrice != null;
       return (
         <td className="num px-3 py-2 text-right">
-          {holding.priced === false ? (
+          {holding.priced === false || (showExtended && !extended) ? (
             <span className="text-faint">—</span>
+          ) : extended ? (
+            <span title={`${extendedSession ? SESSION_LABEL[extendedSession] : ''} ${price(holding.extendedPrice)}`}>
+              <Delta value={holding.extendedChangePct} alreadyPercent className="text-[12px]" />
+            </span>
           ) : (
-            <div className="flex flex-col items-end">
-              <Delta value={holding.dayChangePct} alreadyPercent className="text-[10.5px]" />
-              {extendedSession && holding.extendedPrice != null ? (
-                <span className="text-[9.5px] text-muted" title={`${SESSION_LABEL[extendedSession]} ${price(holding.extendedPrice)}`}>
-                  <Delta value={holding.extendedChangePct} alreadyPercent className="text-[9.5px]" />
-                </span>
-              ) : null}
-            </div>
+            <Delta value={holding.dayChangePct} alreadyPercent className="text-[12px]" />
           )}
         </td>
       );
+    }
     case 'marketValue':
       return <td className="num px-3 py-2 text-right text-ink">{money(holding.marketValue, { digits: 0 })}</td>;
     case 'weight':
@@ -183,11 +182,14 @@ function HoldingCell({ column, holding, extendedSession, showExtended }: { colum
     }
     case 'unrealized':
       return (
-        <td className="px-3 py-2 text-right">
-          <div className="flex flex-col items-end">
-            <Delta value={holding.unrealized} kind="money" digits={0} className="text-[12px]" />
-            <Delta value={holding.unrealizedPct} digits={1} className="text-[10.5px]" />
-          </div>
+        <td className="num px-3 py-2 text-right">
+          <Delta value={holding.unrealized} kind="money" digits={0} className="text-[12px]" />
+        </td>
+      );
+    case 'unrealizedPct':
+      return (
+        <td className="num px-3 py-2 text-right">
+          <Delta value={holding.unrealizedPct} digits={1} className="text-[12px]" />
         </td>
       );
     case 'score':
@@ -199,11 +201,13 @@ function HoldingCell({ column, holding, extendedSession, showExtended }: { colum
   }
 }
 
-function sortHoldings(holdings: Holding[], sort: { key: HoldingSortKey | 'extendedChange'; dir: 'asc' | 'desc' }) {
+function sortHoldings(holdings: Holding[], sort: { key: HoldingSortKey | 'extendedChange' | 'extendedPriceChange' | 'extendedChangePct'; dir: 'asc' | 'desc' }) {
   const factor = sort.dir === 'asc' ? 1 : -1;
   return holdings.slice().sort((a, b) => {
     if (sort.key === 'symbol') return factor * a.symbol.localeCompare(b.symbol);
     if (sort.key === 'priceChange') return factor * ((a.shares > 0 ? a.dayChange / a.shares : 0) - (b.shares > 0 ? b.dayChange / b.shares : 0));
+    if (sort.key === 'extendedPriceChange') return factor * ((a.price !== null && a.extendedPrice != null ? a.extendedPrice - a.price : 0) - (b.price !== null && b.extendedPrice != null ? b.extendedPrice - b.price : 0));
+    if (sort.key === 'extendedChangePct') return factor * ((a.extendedChangePct ?? 0) - (b.extendedChangePct ?? 0));
     if (sort.key === 'priceChangePct') return factor * ((a.dayChangePct ?? 0) - (b.dayChangePct ?? 0));
     const av = a[sort.key];
     const bv = b[sort.key];
@@ -687,13 +691,13 @@ export function PortfolioView() {
                             className={cn(
                               'cursor-grab px-3 py-2 font-medium whitespace-nowrap first:px-4 select-none hover:text-ink-2 active:cursor-grabbing',
                               column.align === 'right' ? 'text-right' : 'text-left',
-                              key === 'dayChange' && 'w-32',
+                              key === 'dayChange' && 'w-24',
                               active && 'text-ink-2',
                               draggedColumn === key && 'opacity-40',
                             )}
                           >
                             <span className={cn('inline-flex items-center gap-1', column.align === 'right' && 'justify-end')}>
-                              {key === 'dayChange' && showExtended && extendedSession ? `${SESSION_LABEL[extendedSession]} P&L` : column.label}
+                              {column.label}
                               {active ? holdingSort.dir === 'desc' ? <ArrowDown className="size-3 text-brand" /> : <ArrowUp className="size-3 text-brand" /> : null}
                             </span>
                           </th>
@@ -702,7 +706,7 @@ export function PortfolioView() {
                     </tr>
                   </thead>
                   <tbody>
-                    {sortHoldings(detail.holdings, showExtended && holdingSort.key === 'dayChange' ? { ...holdingSort, key: 'extendedChange' } : holdingSort).map((holding, index) => (
+                    {sortHoldings(detail.holdings, showExtended && holdingSort.key === 'dayChange' ? { ...holdingSort, key: 'extendedChange' } : showExtended && holdingSort.key === 'priceChange' ? { ...holdingSort, key: 'extendedPriceChange' } : showExtended && holdingSort.key === 'priceChangePct' ? { ...holdingSort, key: 'extendedChangePct' } : holdingSort).map((holding, index) => (
                       <motion.tr
                         key={holding.symbol}
                         initial={{ opacity: 0, y: 4 }}
@@ -738,7 +742,7 @@ export function PortfolioView() {
               />
             </Panel>
           )}
-          {selectedId && detail.holdings.length ? <PerformanceChart portfolioId={selectedId} /> : null}
+          {selectedId && detail.holdings.length ? <PerformanceChart portfolioId={selectedId} live={summary?.totalValue} /> : null}
           {detail.holdings.length ? (
             <div className="grid gap-4 xl:grid-cols-[1.4fr_1fr]">
               <Panel>

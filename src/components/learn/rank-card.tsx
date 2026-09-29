@@ -1,12 +1,14 @@
 'use client';
 
-import { Award } from 'lucide-react';
+import { Award, Clock } from 'lucide-react';
 import { motion } from 'motion/react';
-import type { ReactNode } from 'react';
+import { useMemo, type ReactNode } from 'react';
 
+import { ProgressBar } from '@/components/learn/progress-bar';
 import { AnimatedNumber } from '@/components/motion/animated-number';
 import { Panel } from '@/components/ui/primitives';
 import { LESSONS, TRACKS } from '@/lib/learn/curriculum';
+import { describeEta, formatMinutes, rankEtas, type ById, type Pace } from '@/lib/learn/progress';
 import { RANKS, type RankSummary } from '@/lib/learn/rank';
 import { cn } from '@/lib/utils';
 
@@ -29,7 +31,7 @@ function Ring({ value, size = 64, children }: { value: number; size?: number; ch
           strokeDasharray={circumference}
           initial={{ strokeDashoffset: circumference }}
           animate={{ strokeDashoffset: circumference * (1 - Math.max(0.02, Math.min(1, value))) }}
-          transition={{ duration: 1.1, ease: [0.16, 1, 0.3, 1] }}
+          transition={{ type: 'spring', stiffness: 45, damping: 16, mass: 1 }}
         />
         <defs>
           <linearGradient id="rank-gradient" x1="0" x2="1" y1="0" y2="1">
@@ -60,7 +62,10 @@ export function RankBadge({ rank }: { rank: RankSummary }) {
   );
 }
 
-export function RankCard({ rank }: { rank: RankSummary }) {
+export function RankCard({ rank, byId, pace }: { rank: RankSummary; byId: ById; pace: Pace }) {
+  const etas = useMemo(() => rankEtas(rank, byId, pace), [rank, byId, pace]);
+  const eta = new Map(etas.map((item) => [item.title, item]));
+  const next = etas[0];
   return (
     <Panel className="overflow-hidden p-5">
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)]">
@@ -81,20 +86,36 @@ export function RankCard({ rank }: { rank: RankSummary }) {
               </div>
             </div>
           </div>
-          <div className="flex items-end gap-1">
-            {RANKS.map((step, index) => (
-              <div key={step.title} className="flex min-w-0 flex-1 flex-col gap-1.5">
-                <div
-                  className={cn(
-                    'h-1.5 rounded-full',
-                    index < rank.rankIndex ? 'bg-brand-soft' : index === rank.rankIndex ? 'bg-gradient-to-r from-ion to-brand-bright shadow-[0_0_10px_rgba(159,216,255,0.6)]' : 'bg-surface-4',
-                  )}
-                />
-                <span className={cn('truncate text-[10px]', index === rank.rankIndex ? 'text-ink' : 'text-faint')} title={`${step.title} · ${step.xp.toLocaleString()} XP`}>
-                  {step.title.replace('Managing Director', 'MD').replace('Vice President', 'VP')}
+          <div className="flex flex-col gap-2">
+            <div className="flex items-end gap-1">
+              {RANKS.map((step, index) => {
+                const stepEta = eta.get(step.title);
+                return (
+                  <div
+                    key={step.title}
+                    className="flex min-w-0 flex-1 flex-col gap-1.5"
+                    title={`${step.title} · ${step.xp.toLocaleString()} XP${stepEta ? ` · ≈ ${formatMinutes(stepEta.minutes)} away` : index <= rank.rankIndex ? ' · reached' : ''}`}
+                  >
+                    {/* Reached ranks are full, the current one fills toward the next, later ones are empty. */}
+                    <ProgressBar
+                      value={index < rank.rankIndex ? 1 : index === rank.rankIndex ? (rank.next ? rank.progressToNext : 1) : 0}
+                      delay={0.05 * index}
+                      fillClassName={index === rank.rankIndex ? 'bg-gradient-to-r from-ion to-brand-bright shadow-[0_0_10px_rgba(159,216,255,0.6)]' : 'bg-brand-soft'}
+                    />
+                    <span className={cn('truncate text-[10px]', index === rank.rankIndex ? 'text-ink' : 'text-faint')}>{step.title.replace('Managing Director', 'MD').replace('Vice President', 'VP')}</span>
+                    {stepEta ? <span className="-mt-1 truncate font-mono text-[9.5px] text-faint">≈{formatMinutes(stepEta.minutes)}</span> : null}
+                  </div>
+                );
+              })}
+            </div>
+            {next ? (
+              <div className="flex items-center gap-1.5 text-[11.5px] text-muted">
+                <Clock className="size-3 text-brand" />
+                <span>
+                  <span className="text-ink-2">≈ {formatMinutes(next.minutes)}</span> to {next.title} — about {describeEta(next)}
                 </span>
               </div>
-            ))}
+            ) : null}
           </div>
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
             {[
@@ -112,7 +133,7 @@ export function RankCard({ rank }: { rank: RankSummary }) {
         </div>
         <div className="flex flex-col gap-2.5">
           <div className="kicker">Mastery by track</div>
-          {TRACKS.map((track) => {
+          {TRACKS.map((track, index) => {
             const value = rank.mastery[track.id] ?? 0;
             return (
               <div key={track.id}>
@@ -120,14 +141,7 @@ export function RankCard({ rank }: { rank: RankSummary }) {
                   <span className="text-ink-2">{track.title}</span>
                   <span className="num font-mono text-muted">{value}%</span>
                 </div>
-                <div className="h-1.5 overflow-hidden rounded-full bg-surface-4">
-                  <motion.div
-                    className="h-full rounded-full bg-gradient-to-r from-brand-deep via-brand-soft to-brand-bright"
-                    initial={{ width: 0 }}
-                    animate={{ width: `${value}%` }}
-                    transition={{ duration: 0.9, ease: [0.16, 1, 0.3, 1] }}
-                  />
-                </div>
+                <ProgressBar value={value / 100} delay={0.07 * index} />
               </div>
             );
           })}

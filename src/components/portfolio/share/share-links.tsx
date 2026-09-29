@@ -5,7 +5,7 @@ import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
 import useSWR from 'swr';
 
-import { Group, RangePicker, ToggleRow } from '@/components/portfolio/share/share-controls';
+import { copyText, Group, RangePicker, ToggleRow } from '@/components/portfolio/share/share-controls';
 import { Button } from '@/components/ui/button';
 import { Badge, Field, Input, Segmented, Select, Textarea } from '@/components/ui/primitives';
 import { api } from '@/lib/client';
@@ -19,15 +19,6 @@ export const DEFAULT_LINK_SETTINGS: LinkSettings = { message: '', mode: 'live', 
 const EXPIRY_LABEL: Record<ShareExpiry, string> = { never: 'Never', '1d': 'In 1 day', '7d': 'In 7 days', '30d': 'In 30 days', '90d': 'In 90 days' };
 
 const linkUrl = (token: string) => `${window.location.origin}/s/${token}`;
-
-async function copyText(value: string) {
-  try {
-    await navigator.clipboard.writeText(value);
-    return true;
-  } catch {
-    return false;
-  }
-}
 
 /** Page sections, then how the link behaves: live or frozen, when it expires, whether it needs a passcode. */
 export function LinkSettingsForm({ options, onOptions, settings, onSettings }: { options: ShareOptions; onOptions: (patch: Partial<ShareOptions>) => void; settings: LinkSettings; onSettings: (patch: Partial<LinkSettings>) => void }) {
@@ -48,6 +39,11 @@ export function LinkSettingsForm({ options, onOptions, settings, onSettings }: {
           <div className="flex items-center justify-between gap-3">
             <span className="text-[11.5px] text-muted">Chart range</span>
             <RangePicker value={options.range} onChange={(range) => onOptions({ range })} />
+          </div>
+        ) : null}
+        {options.sections.performance && options.returns ? (
+          <div className="divide-y divide-line rounded-sm border border-line px-3 py-1">
+            <ToggleRow label="Compare with Nasdaq 100" checked={options.nasdaq} onChange={(nasdaq) => onOptions({ nasdaq })} />
           </div>
         ) : null}
       </Group>

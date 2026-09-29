@@ -1,7 +1,7 @@
-import { money, pct, shortDate, signedMoney, signedPct } from '@/lib/format';
-import { SCALED_BASE } from '@/lib/share/options';
+import { money, shortDate, signedMoney, signedPct } from '@/lib/format';
+import { rangeLabel, SCALED_BASE } from '@/lib/share/options';
 import { MAX_SLICES, NEUTRAL_COLORS, sliceColorMap } from '@/lib/share/colors';
-import { groupSlices, weightLabel, type ShareSlice, type ShareView } from '@/lib/share/view';
+import { donutCenter, groupSlices, weightLabel, type ShareSlice, type ShareView } from '@/lib/share/view';
 import type { MarketPalette } from '@/lib/theme';
 
 /**
@@ -344,99 +344,170 @@ function benchmarkName(symbol: string) {
   return symbol === 'SPY' ? 'S&P 500' : symbol;
 }
 
+/** Round tick values covering [lo, hi], about `count` of them. */
+function niceTicks(lo: number, hi: number, count: number) {
+  const span = hi - lo || 1;
+  const rough = span / count;
+  const magnitude = 10 ** Math.floor(Math.log10(rough));
+  const step = ([1, 2, 2.5, 5, 10].find((m) => m * magnitude >= rough) ?? 10) * magnitude;
+  const ticks: number[] = [];
+  for (let v = Math.ceil(lo / step) * step; v <= hi + 1e-9; v += step) ticks.push(Math.round(v * 1e6) / 1e6);
+  return ticks;
+}
+
+/** A smooth path through `pts` that never overshoots between points (monotone cubic). */
+function smoothPath(c: CanvasRenderingContext2D, pts: Array<[number, number]>, move = true) {
+  const n = pts.length;
+  if (move) c.moveTo(pts[0][0], pts[0][1]);
+  else c.lineTo(pts[0][0], pts[0][1]);
+  if (n < 3) {
+    for (let i = 1; i < n; i += 1) c.lineTo(pts[i][0], pts[i][1]);
+    return;
+  }
+  const dx: number[] = [];
+  const slope: number[] = [];
+  for (let i = 0; i < n - 1; i += 1) {
+    dx.push(pts[i + 1][0] - pts[i][0] || 1e-6);
+    slope.push((pts[i + 1][1] - pts[i][1]) / dx[i]);
+  }
+  const m = [slope[0]];
+  for (let i = 1; i < n - 1; i += 1) m.push(slope[i - 1] * slope[i] <= 0 ? 0 : (slope[i - 1] + slope[i]) / 2);
+  m.push(slope[n - 2]);
+  for (let i = 0; i < n - 1; i += 1) {
+    if (slope[i] === 0) {
+      m[i] = 0;
+      m[i + 1] = 0;
+      continue;
+    }
+    const a = m[i] / slope[i];
+    const b = m[i + 1] / slope[i];
+    const h = Math.hypot(a, b);
+    if (h > 3) {
+      m[i] = (3 * a * slope[i]) / h;
+      m[i + 1] = (3 * b * slope[i]) / h;
+    }
+  }
+  for (let i = 0; i < n - 1; i += 1) {
+    const w = dx[i] / 3;
+    c.bezierCurveTo(pts[i][0] + w, pts[i][1] + m[i] * w, pts[i + 1][0] - w, pts[i + 1][1] - m[i + 1] * w, pts[i + 1][0], pts[i + 1][1]);
+  }
+}
+
 function drawChart(g: G, view: ShareView, r: Rect) {
   const perf = view.performance;
   if (!perf) return;
   const { c, u, t } = g;
-  const legendH = 40 * u;
-  const axisH = 34 * u;
-  const plot = { x: r.x, y: r.y + legendH, w: r.w, h: r.h - legendH - axisH };
-  // Legend with each series' return.
-  const lineWidth = 3 * u;
-  c.lineCap = 'round';
-  c.strokeStyle = t.ink;
-  c.lineWidth = lineWidth;
-  c.setLineDash([]);
-  c.beginPath();
-  c.moveTo(r.x, r.y + 14 * u);
-  c.lineTo(r.x + 26 * u, r.y + 14 * u);
-  c.stroke();
-  const a = text(g, 'Portfolio', r.x + 38 * u, r.y + 22 * u, { size: 22, color: t.ink2 });
-  const b = text(g, signedPct(perf.portfolioReturn, 1), r.x + 38 * u + a + 10 * u, r.y + 22 * u, { size: 22, weight: 600, color: tone(g, perf.portfolioReturn) });
-  const x2 = r.x + 38 * u + a + b + 10 * u + 40 * u;
-  c.strokeStyle = t.muted;
-  c.lineWidth = 2 * u;
-  c.setLineDash([6 * u, 6 * u]);
-  c.beginPath();
-  c.moveTo(x2, r.y + 14 * u);
-  c.lineTo(x2 + 26 * u, r.y + 14 * u);
-  c.stroke();
-  c.setLineDash([]);
-  const name = benchmarkName(perf.benchmark);
-  const d = text(g, name, x2 + 38 * u, r.y + 22 * u, { size: 22, color: t.muted });
-  text(g, signedPct(perf.benchmarkReturn, 1), x2 + 38 * u + d + 10 * u, r.y + 22 * u, { size: 22, weight: 600, color: tone(g, perf.benchmarkReturn) });
-
   const points = perf.points;
+  const hasNasdaq = perf.nasdaqReturn !== undefined && points.every((point) => point.nasdaq !== undefined);
+  const nasdaqColor = t.light ? '#2f62d0' : '#7aa7ff';
+  const legendH = 44 * u;
+  const axisH = 36 * u;
+  const plot = { x: r.x, y: r.y + legendH + 8 * u, w: r.w, h: r.h - legendH - axisH - 8 * u };
+
+  // Legend: a swatch in each line's style, its name and its return over the range.
+  type Series = { name: string; ret: number; color: string; width: number; dash: number[]; pick: (point: (typeof points)[number]) => number };
+  const series: Series[] = [
+    { name: 'Portfolio', ret: perf.portfolioReturn, color: t.ink, width: 3.6, dash: [], pick: (point) => point.portfolio },
+    { name: benchmarkName(perf.benchmark), ret: perf.benchmarkReturn, color: t.muted, width: 2.4, dash: [8, 7], pick: (point) => point.benchmark },
+    ...(hasNasdaq ? [{ name: 'Nasdaq 100', ret: perf.nasdaqReturn ?? 0, color: nasdaqColor, width: 2.4, dash: [8, 7], pick: (point: (typeof points)[number]) => point.nasdaq ?? 100 }] : []),
+  ];
+  let lx = r.x;
+  const ly = r.y + 22 * u;
+  for (const item of series) {
+    c.strokeStyle = item.color;
+    c.lineWidth = Math.max(2, item.width * 0.7) * u;
+    c.lineCap = 'round';
+    c.setLineDash(item.dash.map((d) => d * 0.6 * u));
+    c.beginPath();
+    c.moveTo(lx, ly - 8 * u);
+    c.lineTo(lx + 26 * u, ly - 8 * u);
+    c.stroke();
+    c.setLineDash([]);
+    const nameW = text(g, item.name, lx + 38 * u, ly, { size: 22, color: item === series[0] ? t.ink2 : t.muted });
+    const retW = text(g, signedPct(item.ret, 1), lx + 38 * u + nameW + 10 * u, ly, { size: 22, weight: 600, color: tone(g, item.ret) });
+    lx += 38 * u + nameW + 10 * u + retW + 36 * u;
+  }
+
   const times = points.map((point) => point.t);
-  const values = points.flatMap((point) => [point.portfolio, point.benchmark, 100]);
+  const values = points.flatMap((point) => series.map((item) => item.pick(point)).concat(100));
   const lo = Math.min(...values);
   const hi = Math.max(...values);
-  const margin = (hi - lo || 1) * 0.1;
+  const pad = (hi - lo || 1) * 0.12;
+  const min = lo - pad;
+  const max = hi + pad;
   const sx = (time: number) => plot.x + ((time - times[0]) / Math.max(1, times[times.length - 1] - times[0])) * plot.w;
-  const sy = (value: number) => plot.y + plot.h - ((value - (lo - margin)) / (hi - lo + margin * 2)) * plot.h;
+  const sy = (value: number) => plot.y + plot.h - ((value - min) / (max - min)) * plot.h;
 
-  // Gridlines at nice-ish levels, with the base (100) emphasised.
-  c.font = `500 ${18 * u}px ${g.env.sans}`;
-  for (let i = 0; i <= 3; i += 1) {
-    const value = lo - margin + ((hi - lo + margin * 2) * i) / 3;
-    const y = sy(value);
+  // Gridlines at round return levels, labelled on the left edge; the 0% base is dashed.
+  const ticks = niceTicks(min - 100, max - 100, 4);
+  for (const tick of ticks) {
+    const y = sy(100 + tick);
+    if (tick === 0) continue;
     c.fillStyle = t.line;
     c.fillRect(plot.x, y, plot.w, Math.max(1, u * 0.8));
+    text(g, `${tick > 0 ? '+' : '−'}${Math.abs(tick).toFixed(Math.abs(tick) < 10 && tick % 1 !== 0 ? 1 : 0)}%`, plot.x, y - 8 * u, { size: 17, color: t.faint });
   }
   const base = sy(100);
-  c.setLineDash([4 * u, 8 * u]);
-  c.strokeStyle = t.faint;
+  c.setLineDash([3 * u, 7 * u]);
+  c.strokeStyle = t.muted;
   c.lineWidth = 1.5 * u;
+  c.lineCap = 'round';
   c.beginPath();
   c.moveTo(plot.x, base);
   c.lineTo(plot.x + plot.w, base);
   c.stroke();
   c.setLineDash([]);
+  text(g, '0%', plot.x, base - 8 * u, { size: 17, color: t.muted });
 
-  const trace = (pick: (point: (typeof points)[number]) => number) => {
-    c.beginPath();
-    points.forEach((point, index) => (index === 0 ? c.moveTo(sx(point.t), sy(pick(point))) : c.lineTo(sx(point.t), sy(pick(point)))));
-  };
-  // Area under the portfolio line.
-  trace((point) => point.portfolio);
-  c.lineTo(sx(times[times.length - 1]), plot.y + plot.h);
-  c.lineTo(sx(times[0]), plot.y + plot.h);
+  const coords = (pick: Series['pick']) => points.map((point): [number, number] => [sx(point.t), sy(pick(point))]);
+  // Soft area under the portfolio line, clipped to the plot.
+  const main = coords(series[0].pick);
+  c.save();
+  c.beginPath();
+  c.rect(plot.x, plot.y - 4 * u, plot.w, plot.h + 8 * u);
+  c.clip();
+  c.beginPath();
+  smoothPath(c, main);
+  c.lineTo(main[main.length - 1][0], plot.y + plot.h);
+  c.lineTo(main[0][0], plot.y + plot.h);
   c.closePath();
   const fill = c.createLinearGradient(0, plot.y, 0, plot.y + plot.h);
-  fill.addColorStop(0, t.light ? 'rgba(20,22,26,0.14)' : `${t.accent}33`);
-  fill.addColorStop(1, 'rgba(0,0,0,0)');
+  fill.addColorStop(0, t.light ? 'rgba(20,22,26,0.16)' : 'rgba(255,255,255,0.15)');
+  fill.addColorStop(1, 'rgba(255,255,255,0)');
   c.fillStyle = fill;
   c.fill();
+  c.restore();
 
+  // Lines: benchmarks first so the portfolio sits on top.
   c.lineJoin = 'round';
-  c.strokeStyle = t.muted;
-  c.lineWidth = 2.2 * u;
-  c.setLineDash([8 * u, 8 * u]);
-  trace((point) => point.benchmark);
-  c.stroke();
-  c.setLineDash([]);
-  c.strokeStyle = t.ink;
-  c.lineWidth = 3.6 * u;
-  trace((point) => point.portfolio);
-  c.stroke();
-  const last = points[points.length - 1];
-  c.beginPath();
-  c.arc(sx(last.t), sy(last.portfolio), 6.5 * u, 0, Math.PI * 2);
-  c.fillStyle = t.ink;
-  c.fill();
+  c.lineCap = 'round';
+  for (const item of [...series].reverse()) {
+    c.strokeStyle = item.color;
+    c.lineWidth = item.width * u;
+    c.setLineDash(item.dash.map((d) => d * u));
+    c.beginPath();
+    smoothPath(c, coords(item.pick));
+    c.stroke();
+    c.setLineDash([]);
+  }
+  // End markers with a halo in the background color.
+  for (const item of series) {
+    const [ex, ey] = coords(item.pick).at(-1) ?? [0, 0];
+    c.beginPath();
+    c.arc(ex, ey, (item === series[0] ? 10 : 8) * u, 0, Math.PI * 2);
+    c.fillStyle = t.bg[1];
+    c.fill();
+    c.beginPath();
+    c.arc(ex, ey, (item === series[0] ? 6.5 : 5) * u, 0, Math.PI * 2);
+    c.fillStyle = item.color;
+    c.fill();
+  }
 
-  text(g, dateTick(times[0]), plot.x, r.y + r.h - 6 * u, { size: 18, color: t.faint });
-  text(g, dateTick(times[times.length - 1]), plot.x + plot.w, r.y + r.h - 6 * u, { size: 18, color: t.faint, align: 'right' });
+  // Dates: start, middle and end of the range.
+  const axisY = r.y + r.h - 6 * u;
+  text(g, dateTick(times[0]), plot.x, axisY, { size: 18, color: t.faint });
+  text(g, dateTick(times[Math.floor((times.length - 1) / 2)]), plot.x + plot.w / 2, axisY, { size: 18, color: t.faint, align: 'center' });
+  text(g, dateTick(times[times.length - 1]), plot.x + plot.w, axisY, { size: 18, color: t.faint, align: 'right' });
 }
 
 function drawDonut(g: G, slices: ShareSlice[], cx: number, cy: number, radius: number, thickness: number, center?: { value: string; label: string }) {
@@ -455,6 +526,20 @@ function drawDonut(g: G, slices: ShareSlice[], cx: number, cy: number, radius: n
     c.stroke();
     angle += sweep;
   });
+  if (g.logos) {
+    // A logo sits on each holding's slice when the slice is wide enough to carry it.
+    const mid = radius - thickness / 2;
+    const size = Math.min(thickness * 0.74, 64 * g.u);
+    angle = -Math.PI / 2;
+    for (const slice of items) {
+      const sweep = (slice.weight / total) * Math.PI * 2;
+      if (slice.kind === 'holding' && sweep * mid >= size * 1.25) {
+        const at = angle + sweep / 2;
+        drawLogo(g, slice.label, cx + Math.cos(at) * mid - size / 2, cy + Math.sin(at) * mid - size / 2, size, g.colors.get(slice.label) ?? t.other, t.bg[1]);
+      }
+      angle += sweep;
+    }
+  }
   if (center) {
     text(g, center.value, cx, cy + 14 * u, { size: fitSize(g, center.value, (radius - thickness) * 1.5, 76, 650), weight: 650, color: t.ink, align: 'center', track: -1 });
     text(g, center.label, cx, cy + 56 * u, { size: 22, color: t.muted, align: 'center', max: (radius - thickness) * 1.6 });
@@ -464,26 +549,29 @@ function drawDonut(g: G, slices: ShareSlice[], cx: number, cy: number, radius: n
 
 type Row = { label: string; sub?: string; weight: number; value: number | null; ret: number | null; color?: string; symbol?: string };
 
-/** A company logo on a tile ringed in the stock's color, or its first letter when there is no logo. */
-function drawLogo(g: G, symbol: string, x: number, y: number, size: number, color: string) {
+/** A company logo on a tile with a thin ring in the stock's color (or `ring`), or its first letter when there is no logo. */
+function drawLogo(g: G, symbol: string, x: number, y: number, size: number, color: string, ring = color) {
   const { c, u, t } = g;
   const image = g.env.logos.get(symbol);
+  const border = Math.max(1.6, size * 0.075);
   roundRect(g, x, y, size, size, size * 0.26);
+  c.fillStyle = ring;
+  c.fill();
+  const inner = size - border * 2;
+  roundRect(g, x + border, y + border, inner, inner, inner * 0.22);
   c.fillStyle = t.light ? '#ffffff' : '#1c2027';
   c.fill();
   if (image) {
     c.save();
-    roundRect(g, x, y, size, size, size * 0.26);
+    roundRect(g, x + border, y + border, inner, inner, inner * 0.22);
     c.clip();
-    c.drawImage(image, x, y, size, size);
+    c.imageSmoothingEnabled = true;
+    c.imageSmoothingQuality = 'high';
+    c.drawImage(image, x + border, y + border, inner, inner);
     c.restore();
   } else {
     text(g, symbol.replace(/[^A-Z0-9]/gi, '').slice(0, 1), x + size / 2, y + size * 0.68, { size: (size / u) * 0.46, weight: 650, mono: true, color: t.ink2, align: 'center' });
   }
-  roundRect(g, x, y, size, size, size * 0.26);
-  c.strokeStyle = color;
-  c.lineWidth = 3.4 * u;
-  c.stroke();
 }
 
 /** Slices as legend rows: swatch, name, weight. Flows into `columns` columns when it needs the room. */
@@ -597,6 +685,41 @@ function drawMessage(g: G, r: Rect, title: string, body: string) {
 
 // ─── Templates ──────────────────────────────────────────────────────────────
 
+type Extra = 'sectors' | 'performance' | 'holdings';
+
+/** Fills the room a template leaves under its content (tall formats) with more of the portfolio: sectors, the chart, top holdings. */
+function drawExtras(g: G, view: ShareView, r: Rect, kinds: Extra[]) {
+  const { u, t } = g;
+  const gap = 44 * u;
+  let y = r.y;
+  const bottom = r.y + r.h;
+  const label = (value: string) => text(g, value, r.x, y + 18 * u, { size: 20, weight: 600, color: t.muted, track: 3 });
+  for (const kind of kinds) {
+    const room = (bottom - y) / u;
+    if (kind === 'sectors' && view.sectors.length) {
+      const rows = Math.min(view.sectors.length, Math.floor((room - 50) / 56));
+      if (rows < Math.min(3, view.sectors.length)) continue;
+      label('SECTORS');
+      drawBars(g, view.sectors.map((sector) => ({ label: sector.sector, weight: sector.weight, value: null, ret: null })), { x: r.x, y: y + 40 * u, w: r.w, h: rows * 56 * u }, 56);
+      y += (40 + rows * 56) * u + gap;
+    } else if (kind === 'performance' && view.performance) {
+      if (room < 380) continue;
+      const height = Math.min(room - 50, 520);
+      label(`${rangeLabel(view.performance.range).toUpperCase()} PERFORMANCE`);
+      drawChart(g, view, { x: r.x, y: y + 34 * u, w: r.w, h: height * u });
+      y += (34 + height) * u + gap;
+    } else if (kind === 'holdings' && view.holdings.length) {
+      const rows = Math.min(view.holdings.length, Math.floor((room - 50) / 58));
+      if (rows < Math.min(3, view.holdings.length)) continue;
+      label('TOP HOLDINGS');
+      const list: Row[] = holdingRows(g, view).slice(0, rows);
+      drawBars(g, list, { x: r.x, y: y + 40 * u, w: r.w, h: rows * 58 * u }, 58);
+      y += (40 + rows * 58) * u + gap;
+    }
+  }
+}
+
+
 function holdingRows(g: G, view: ShareView): Row[] {
   if (view.holdings.length) {
     return view.holdings.map((row) => ({ label: row.symbol ?? row.name, sub: row.symbol ? row.name : undefined, symbol: row.symbol ?? undefined, color: g.colors.get(row.symbol ?? '') ?? (g.logos ? NEUTRAL_COLORS.other : undefined), weight: row.weight, value: row.value, ret: row.returnPct }));
@@ -626,20 +749,24 @@ function templateSummary(g: G, view: ShareView, body: Rect) {
     drawChart(g, view, { x: body.x, y, w: body.w, h: chartH });
     y += chartH + 30 * u;
   }
-  drawBars(g, rows, { x: body.x, y, w: body.w, h: body.y + body.h - y }, 60);
+  const shown = drawBars(g, rows, { x: body.x, y, w: body.w, h: body.y + body.h - y }, 60);
+  const used = y + shown * 60 * u + 40 * u;
+  drawExtras(g, view, { x: body.x, y: used, w: body.w, h: body.y + body.h - used }, ['sectors']);
 }
 
 function templateHoldings(g: G, view: ShareView, body: Rect) {
   const rows = holdingRows(g, view);
   if (!rows.length) return drawMessage(g, body, 'Nothing to list', 'This portfolio has no holdings to show.');
-  drawTable(g, rows, body, g.W / g.H > 1.3 ? 62 : 74);
+  const rowH = g.W / g.H > 1.3 ? 62 : 74;
+  drawTable(g, rows, body, rowH);
+  const used = body.y + rows.length * rowH * g.u + 44 * g.u;
+  if (g.W / g.H <= 1.3 && rows.length * rowH * g.u < body.h - 30 * g.u) drawExtras(g, view, { x: body.x, y: used, w: body.w, h: body.y + body.h - used }, ['sectors', 'performance']);
 }
 
 function templateAllocation(g: G, view: ShareView, body: Rect) {
   const { u } = g;
   if (!view.allocation.length) return drawMessage(g, body, 'Nothing to show', 'This portfolio has no allocation yet.');
-  const largest = groupSlices(view.allocation, 8)[0];
-  const center = { value: pct(largest.weight, 0), label: largest.label };
+  const center = donutCenter(view);
   // Donut beside the legend when there is width to spare, above it (legend in two columns) when the image is tall.
   if (body.w / body.h > 1.25) {
     const radius = Math.min(body.h * 0.5, body.w * 0.3);
@@ -657,6 +784,9 @@ function templateAllocation(g: G, view: ShareView, body: Rect) {
   const radius = Math.max(140 * u, Math.min(body.w * 0.36, (body.h - legendH - 56 * u) / 2));
   drawDonut(g, view.allocation, body.x + body.w / 2, body.y + radius + 4 * u, radius, radius * 0.24, center);
   drawLegend(g, view.allocation, { x: body.x, y: body.y + radius * 2 + 56 * u, w: body.w, h: legendH }, 64, 2);
+  const used = body.y + radius * 2 + 56 * u + legendH + 48 * u;
+  const sectorSlices = view.allocation.some((slice) => slice.kind === 'sector');
+  drawExtras(g, view, { x: body.x, y: used, w: body.w, h: body.y + body.h - used }, sectorSlices ? ['performance', 'holdings'] : ['sectors', 'performance']);
 }
 
 function templatePerformance(g: G, view: ShareView, body: Rect) {
@@ -667,7 +797,7 @@ function templatePerformance(g: G, view: ShareView, body: Rect) {
   const gap = perf.portfolioReturn - perf.benchmarkReturn;
   const big = signedPct(perf.portfolioReturn, 1);
   const size = fitSize(g, big, wide ? body.w * 0.4 : body.w, wide ? 150 : 170, 650);
-  text(g, `${perf.range} RETURN`, body.x, body.y + 20 * u, { size: 20, weight: 600, color: t.muted, track: 3 });
+  text(g, `${rangeLabel(perf.range).toUpperCase()} RETURN`, body.x, body.y + 20 * u, { size: 20, weight: 600, color: t.muted, track: 3 });
   text(g, big, body.x, body.y + 30 * u + size * u, { size, weight: 650, color: tone(g, perf.portfolioReturn), track: -2 });
   const statsY = body.y + 30 * u + size * u + 30 * u;
   const label = `vs ${benchmarkName(perf.benchmark)}`;
@@ -676,13 +806,22 @@ function templatePerformance(g: G, view: ShareView, body: Rect) {
   const w3 = text(g, gap >= 0 ? 'Ahead by' : 'Behind by', body.x + w1 + w2 + 52 * u, statsY + 24 * u, { size: 24, color: t.muted });
   text(g, `${Math.abs(gap * 100).toFixed(1)} pts`, body.x + w1 + w2 + w3 + 64 * u, statsY + 24 * u, { size: 26, weight: 600, color: tone(g, gap) });
   const chartY = statsY + 70 * u;
-  drawChart(g, view, { x: body.x, y: chartY, w: body.w, h: body.y + body.h - chartY });
+  const room = body.y + body.h - chartY;
+  // A very tall image gets a chart of sensible proportions, and the rest of the portfolio under it.
+  const chartH = wide ? room : Math.min(room, Math.max(520 * u, body.w * 0.78));
+  drawChart(g, view, { x: body.x, y: chartY, w: body.w, h: chartH });
+  const used = chartY + chartH + 48 * u;
+  if (!wide) drawExtras(g, view, { x: body.x, y: used, w: body.w, h: body.y + body.h - used }, ['holdings', 'sectors']);
 }
 
 function templateSectors(g: G, view: ShareView, body: Rect) {
   if (!view.sectors.length) return drawMessage(g, body, 'Nothing to show', 'No sector data for this portfolio.');
   const rows: Row[] = view.sectors.map((sector) => ({ label: sector.sector, weight: sector.weight, value: null, ret: null }));
-  drawBars(g, rows, body, Math.min(110, Math.max(g.W / g.H > 1.3 ? 62 : 82, body.h / g.u / rows.length)));
+  const wide = g.W / g.H > 1.3;
+  const rowH = Math.min(wide ? 110 : 88, Math.max(wide ? 62 : 82, body.h / g.u / rows.length));
+  const shown = drawBars(g, rows, body, rowH);
+  const used = body.y + shown * rowH * g.u + 48 * g.u;
+  if (!wide) drawExtras(g, view, { x: body.x, y: used, w: body.w, h: body.y + body.h - used }, ['performance', 'holdings']);
 }
 
 const TEMPLATES: Record<ShareTemplate, (g: G, view: ShareView, body: Rect) => void> = {

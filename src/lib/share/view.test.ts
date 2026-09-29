@@ -196,3 +196,35 @@ describe('weightLabel', () => {
     expect(weightLabel(0)).toBe('0.0%');
   });
 });
+
+describe('performance', () => {
+  const held = (extra: Partial<ShareSource> = {}): ShareSource => ({
+    ...source,
+    performance: Array.from({ length: 120 }, (_, index) => ({ t: T0 + index * DAY, twr: 100 + index, benchmark: 100 + index * 0.5, nasdaq: 100 + index * 2, value: index < 10 ? 0 : 1000 })),
+    ...extra,
+  });
+
+  it('starts on the first day the portfolio holds something, like the portfolio page', () => {
+    const view = buildShareView(held(), options({ range: 'ALL' }));
+    expect(view.performance?.points[0].t).toBe(T0 + 10 * DAY);
+    expect(view.performance?.points[0].portfolio).toBeCloseTo(100);
+  });
+
+  it('chains time-weighted returns from the start of the range', () => {
+    const view = buildShareView(held(), options({ range: '1M' }));
+    // 30 days back from day 119, starting from the point before the window: day 88 (twr 188) to day 119 (twr 219).
+    expect(view.performance?.portfolioReturn).toBeCloseTo(219 / 188 - 1);
+    expect(view.performance?.benchmarkReturn).toBeCloseTo(159.5 / 144 - 1);
+  });
+
+  it('says so when the range is longer than the history', () => {
+    expect(buildShareView(held(), options({ range: '1Y' })).performance?.range).toBe('ALL');
+  });
+
+  it('adds the Nasdaq only when asked, indexed to the same start', () => {
+    expect(buildShareView(held(), options({ range: '1M', nasdaq: false })).performance?.nasdaqReturn).toBeUndefined();
+    const view = buildShareView(held(), options({ range: '1M', nasdaq: true }));
+    expect(view.performance?.points[0].nasdaq).toBeCloseTo(100);
+    expect(view.performance?.nasdaqReturn).toBeCloseTo(338 / 276 - 1);
+  });
+});

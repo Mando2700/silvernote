@@ -54,7 +54,7 @@ async function upsertProgress(userId: string, itemId: string, kind: ProgressItem
        score = excluded.score,
        best = greatest(coalesce(public.learn_progress.best, 0), coalesce(excluded.score, 0)),
        attempts = public.learn_progress.attempts + 1,
-       data = excluded.data,
+       data = public.learn_progress.data || excluded.data,
        completed_at = coalesce(public.learn_progress.completed_at, excluded.completed_at),
        updated_at = now()`,
     [userId, itemId, kind, patch.score, JSON.stringify(patch.data), patch.completed],
@@ -65,10 +65,30 @@ export const progressSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('lesson'), slug: z.string().max(60), score: z.number().min(0).max(1), answers: z.record(z.string(), z.union([z.number(), z.string()])).optional() }),
   z.object({ kind: z.literal('drill'), type: z.string().max(30), correct: z.boolean() }),
   z.object({ kind: z.literal('card'), id: z.string().max(60), rating: z.enum(['nailed', 'partial', 'missed']) }),
+  z.object({ kind: z.literal('read'), slug: z.string().max(60), sections: z.array(z.string().max(60)).max(40), seconds: z.number().min(0).max(3600) }),
 ]);
 
+/** Reading progress: merges the sections read and adds active reading time, without touching the quiz score. */
+async function recordRead(userId: string, slug: string, sections: string[], seconds: number) {
+  const lesson = LESSON_BY_SLUG.get(slug);
+  if (!lesson) throw new HttpError(404, 'Unknown lesson.');
+  const valid = new Set(lesson.sections.map((section) => section.id));
+  const itemId = `lesson:${slug}`;
+  const existing = await q1<{ data: { read?: string[]; seconds?: number } }>('select data from public.learn_progress where user_id = $1 and item_id = $2', [userId, itemId]);
+  const read = [...new Set([...(existing?.data?.read ?? []), ...sections.filter((id) => valid.has(id))])];
+  const total = Math.round((existing?.data?.seconds ?? 0) + seconds);
+  await q(
+    `insert into public.learn_progress (user_id, item_id, kind, score, best, attempts, data, completed_at, updated_at)
+     values ($1, $2, 'lesson', null, null, 0, $3::jsonb, null, now())
+     on conflict (user_id, item_id) do update set data = public.learn_progress.data || excluded.data, updated_at = now()`,
+    [userId, itemId, JSON.stringify({ read, seconds: total })],
+  );
+}
+
 export async function recordProgress(userId: string, input: z.infer<typeof progressSchema>) {
-  if (input.kind === 'lesson') {
+  if (input.kind === 'read') {
+    await recordRead(userId, input.slug, input.sections, input.seconds);
+  } else if (input.kind === 'lesson') {
     if (!LESSON_BY_SLUG.has(input.slug)) throw new HttpError(404, 'Unknown lesson.');
     await upsertProgress(userId, `lesson:${input.slug}`, 'lesson', { score: input.score, completed: true, data: { answers: input.answers ?? {} } });
   } else if (input.kind === 'drill') {

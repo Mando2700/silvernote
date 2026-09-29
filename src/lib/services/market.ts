@@ -8,6 +8,7 @@ import * as nasdaq from '@/lib/data/providers/nasdaq';
 import { fetchSubmissions } from '@/lib/data/providers/sec';
 import type { CompanyProfile, ExtendedQuote, Filing, NewsItem, Quote } from '@/lib/data/types';
 import { isMarketOpen } from '@/lib/services/prices';
+import { regularSession } from '@/lib/session';
 import { getSecuritiesBySymbols, getSecurity } from '@/lib/services/universe';
 
 export const INDEX_PROXIES = [
@@ -42,6 +43,8 @@ export async function getLiveQuote(symbol: string): Promise<Quote | null> {
   });
 }
 
+const STALE_REQUOTE_LIMIT = 60;
+
 /**
  * Quotes for many symbols at once. The universe table is refreshed from Nasdaq's full-market
  * snapshot on a schedule, so this costs one database read, not one request per symbol.
@@ -62,9 +65,13 @@ export async function getQuotes(symbols: string[]): Promise<Record<string, Quote
       source: 'Nasdaq',
     };
   }
+  // Right after the open the snapshot still holds yesterday's close and move until the next refresh lands:
+  // re-quote those rows live (a portfolio's worth; bigger lists keep the snapshot).
+  const sessionOpen = regularSession(Date.now() / 1000).open * 1000;
+  const stale = isMarketOpen() ? upper.filter((symbol) => (result[symbol]?.timestamp ?? Infinity) < sessionOpen).slice(0, STALE_REQUOTE_LIMIT) : [];
   // Funds and anything else outside the stock universe: live quotes, a few at a time (every symbol, no cap).
   const missing = upper.filter((symbol) => !result[symbol]);
-  const queue = [...missing];
+  const queue = [...missing, ...stale];
   await Promise.all(
     Array.from({ length: Math.min(4, queue.length) }, async () => {
       for (;;) {

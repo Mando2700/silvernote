@@ -26,7 +26,7 @@ import {
 } from '@/lib/finance/stats';
 import { getBondValues } from '@/lib/services/bonds';
 import { getExtendedQuotes, getQuotes } from '@/lib/services/market';
-import { getCandlesForMany, getRiskFreeRate } from '@/lib/services/prices';
+import { getCandles, getCandlesForMany, getRiskFreeRate } from '@/lib/services/prices';
 import { getSecuritiesBySymbols } from '@/lib/services/universe';
 import { adjustTransactionsForSplits } from '@/lib/services/splits';
 import { reconcile } from '@/lib/services/ibkr-reconcile';
@@ -449,4 +449,19 @@ export function sectorExposure(holdings: Holding[], cash: number, fixedIncome = 
 
 export function concentrationStats(holdings: Holding[]) {
   return concentration(holdings.map((holding) => holding.marketValue));
+}
+
+/** Adds the Nasdaq-100 (QQQ) as a second yardstick, indexed to 100 on the first day like the benchmark. */
+export async function withNasdaq<T extends { t: number }>(points: T[]): Promise<Array<T & { nasdaq: number }>> {
+  if (!points.length) return [];
+  const years = Math.min(10, (Date.now() / 1000 - points[0].t) / (365.25 * 86_400) + 0.1);
+  const candles = (await getCandles('QQQ', Math.max(0.3, years)).catch(() => [])).slice().sort((a, b) => a.t - b.t);
+  const qqq = new Map(candles.map((candle) => [candle.t, candle.c]));
+  // Index to the first close on or after the first day, so a missing candle does not flatten the line.
+  const base = qqq.get(points[0].t) ?? candles.find((candle) => candle.t >= points[0].t)?.c ?? null;
+  let last: number | null = null;
+  return points.map((point) => {
+    last = qqq.get(point.t) ?? last;
+    return { ...point, nasdaq: base && last ? (last / base) * 100 : 100 };
+  });
 }

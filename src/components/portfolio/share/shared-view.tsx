@@ -1,12 +1,12 @@
 import { Delta } from '@/components/motion/delta';
-import { donutSlices, ShareDonut, ShareLegend, ShareLineChart } from '@/components/portfolio/share/share-charts';
+import { NASDAQ_COLOR, ShareDonut, ShareLegend, ShareLineChart } from '@/components/portfolio/share/share-charts';
 import { ShareLogo } from '@/components/portfolio/share/share-logo';
 import { Panel, PanelHeader } from '@/components/ui/primitives';
 import { StatTile } from '@/components/ui/stat-tile';
-import { money, pct, shortDate, signedPct } from '@/lib/format';
+import { money, shortDate, signedPct } from '@/lib/format';
 import { NEUTRAL_COLORS, sliceColorMap } from '@/lib/share/colors';
-import { SCALED_BASE } from '@/lib/share/options';
-import { weightLabel, type ShareHoldingRow, type ShareView } from '@/lib/share/view';
+import { rangeLabel, SCALED_BASE } from '@/lib/share/options';
+import { donutCenter, weightLabel, type ShareHoldingRow, type ShareView } from '@/lib/share/view';
 import { cn } from '@/lib/utils';
 
 function benchmarkName(symbol: string) {
@@ -20,7 +20,7 @@ export function SharedPortfolio({ view, message, logoSrc }: { view: ShareView; m
   const hasAllocation = sections.allocation && view.allocation.length > 0;
   const hasSectors = sections.sectors && view.sectors.length > 0;
   const hasHoldings = sections.holdings && view.holdings.length > 0;
-  const largest = donutSlices(view.allocation)[0];
+  const center = donutCenter(view);
 
   return (
     <div className="flex flex-col gap-4">
@@ -48,7 +48,7 @@ export function SharedPortfolio({ view, message, logoSrc }: { view: ShareView; m
           </div>
           <div className="grid grid-cols-2 gap-2 self-end sm:grid-cols-3">
             {totals.gainPct !== null && totals.value !== null ? <StatTile label="Total gain" value={<Delta value={totals.gainPct} digits={1} className="text-[17px]" />} sub={totals.gain !== null ? <Delta value={totals.gain} kind="money" digits={0} className="text-[11.5px]" /> : undefined} /> : null}
-            {performance ? <StatTile label={`${performance.range} return`} value={<Delta value={performance.portfolioReturn} digits={1} className="text-[17px]" />} sub={<span className="text-muted">{benchmarkName(performance.benchmark)} {signedPct(performance.benchmarkReturn, 1)}</span>} /> : null}
+            {performance ? <StatTile label={`${rangeLabel(performance.range)} return`} value={<Delta value={performance.portfolioReturn} digits={1} className="text-[17px]" />} sub={<span className="text-muted">{benchmarkName(performance.benchmark)} {signedPct(performance.benchmarkReturn, 1)}</span>} /> : null}
             {totals.positions !== null ? <StatTile label="Positions" value={totals.positions} /> : null}
             {totals.cashWeight !== null ? <StatTile label="Cash" value={weightLabel(totals.cashWeight)} /> : null}
           </div>
@@ -58,7 +58,7 @@ export function SharedPortfolio({ view, message, logoSrc }: { view: ShareView; m
       {performance ? (
         <Panel>
           <PanelHeader
-            kicker={`${performance.range} · time-weighted, indexed to 100`}
+            kicker={`${rangeLabel(performance.range)} · time-weighted, indexed to 100`}
             title="Performance"
             actions={
               <div className="flex items-center gap-3 text-[11.5px]">
@@ -68,6 +68,11 @@ export function SharedPortfolio({ view, message, logoSrc }: { view: ShareView; m
                 <span className="flex items-center gap-1.5 text-muted">
                   <span className="h-0 w-3 border-t border-dashed border-[#7c8695]" /> {benchmarkName(performance.benchmark)} <Delta value={performance.benchmarkReturn} digits={1} className="text-[11.5px]" />
                 </span>
+                {performance.nasdaqReturn !== undefined ? (
+                  <span className="flex items-center gap-1.5 text-muted">
+                    <span className="h-0 w-3 border-t border-dashed" style={{ borderColor: NASDAQ_COLOR }} /> Nasdaq 100 <Delta value={performance.nasdaqReturn} digits={1} className="text-[11.5px]" />
+                  </span>
+                ) : null}
               </div>
             }
           />
@@ -87,7 +92,7 @@ export function SharedPortfolio({ view, message, logoSrc }: { view: ShareView; m
             <Panel>
               <PanelHeader kicker={view.allocation.some((slice) => slice.kind === 'sector') ? 'By sector' : 'By holding'} title="Allocation" />
               <div className="flex flex-wrap items-center gap-6 px-4 pb-4">
-                <ShareDonut slices={view.allocation} centerValue={pct(largest.weight, 0)} centerLabel={largest.label} />
+                <ShareDonut slices={view.allocation} centerValue={center.value} centerLabel={center.label} logoSrc={logoSrc} />
                 <div className="min-w-44 flex-1">
                   <ShareLegend slices={view.allocation} logoSrc={logoSrc} />
                 </div>

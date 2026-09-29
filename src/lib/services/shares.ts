@@ -6,7 +6,7 @@ import { q, q1 } from '@/lib/db';
 import { expiryDate, hashPasscode, newShareToken, shareStatus, type ShareStatus } from '@/lib/share/access';
 import { normalizeShareOptions, type ShareExpiry, type ShareMode, type ShareOptions } from '@/lib/share/options';
 import { buildShareView, type ShareSource, type ShareView } from '@/lib/share/view';
-import { getHoldings, getPortfolio, getTransactions, performanceHistory, type PortfolioRow } from '@/lib/services/portfolio';
+import { getHoldings, getPortfolio, getTransactions, performanceHistory, withNasdaq, type PortfolioRow } from '@/lib/services/portfolio';
 
 export type ShareRow = {
   id: string;
@@ -68,7 +68,7 @@ async function loadSource(portfolio: PortfolioRow, withPerformance: boolean): Pr
   const { holdings, summary } = await getHoldings(portfolio);
   const performance = withPerformance
     ? await memo(`share-performance:${portfolio.id}`, 5 * 60_000, async () =>
-        (await performanceHistory(await getTransactions(portfolio.id), portfolio.benchmark)).map((point) => ({ t: point.t, twr: point.twr, benchmark: point.benchmark })),
+        (await withNasdaq(await performanceHistory(await getTransactions(portfolio.id), portfolio.benchmark))).map((point) => ({ t: point.t, twr: point.twr, benchmark: point.benchmark, nasdaq: point.nasdaq, value: point.value })),
       )
     : null;
   return { name: portfolio.name, benchmark: portfolio.benchmark, cash: portfolio.cash ?? 0, fixedIncome: summary.fixedIncome, holdings, performance, asOf: Date.now() };

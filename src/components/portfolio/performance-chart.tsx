@@ -68,6 +68,12 @@ function cutoff(range: Range, last: number) {
   return last - (RANGES.find((item) => item.value === range)?.days ?? 0) * DAY;
 }
 
+function withLiveEnd(points: Point[], live: number | null | undefined) {
+  const end = points[points.length - 1];
+  if (!end || live == null || !(live > 0)) return points;
+  return [...points.slice(0, -1), { ...end, value: live, twr: end.invested ? (live / end.invested) * 100 : end.twr }];
+}
+
 function timeLabel(t: number) {
   return new Date(t * 1000).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', timeZone: 'America/New_York' });
 }
@@ -76,7 +82,8 @@ function dateLabel(t: number, withYear = false) {
   return new Date(t * 1000).toLocaleDateString('en-US', { month: 'short', day: 'numeric', ...(withYear ? { year: 'numeric' } : {}), timeZone: 'UTC' });
 }
 
-export function PerformanceChart({ portfolioId }: { portfolioId: string }) {
+/** `live` is the headline's streamed total: on 1D the chart ends on it instead of the last (up to minutes old) server print. */
+export function PerformanceChart({ portfolioId, live }: { portfolioId: string; live?: number | null }) {
   const { data } = useSWR<Performance>(`/api/portfolios/${portfolioId}/performance`);
   const [picked, setRange] = useState<Range>('3M');
   const { data: intraday } = useSWR<{ points: Point[] }>(`/api/portfolios/${portfolioId}/intraday`, { refreshInterval: picked === '1D' ? 60_000 : 0 });
@@ -108,7 +115,7 @@ export function PerformanceChart({ portfolioId }: { portfolioId: string }) {
 
   const from = cutoff(range, last);
   const startIndex = Math.max(0, all.findIndex((point) => point.t >= from) - 1);
-  const points = range === '1D' && intraday ? intraday.points : all.slice(startIndex);
+  const points = range === '1D' && intraday ? withLiveEnd(intraday.points, live) : all.slice(startIndex);
   const name = benchmarkName(data.benchmark);
   // Nothing is added or withdrawn within a session, so both measures agree on 1D.
   const basis: Basis = range === '1D' ? 'twr' : pickedBasis;

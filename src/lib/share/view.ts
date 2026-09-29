@@ -1,4 +1,5 @@
-import { normalizeShareOptions, SCALED_BASE, type ShareAmounts, type ShareOptions, type ShareRange } from '@/lib/share/options';
+import { money as formatMoney } from '@/lib/format';
+import { normalizeShareOptions, rangeLabel, SCALED_BASE, type ShareAmounts, type ShareOptions, type ShareRange } from '@/lib/share/options';
 
 /**
  * Turns a portfolio into what a viewer is allowed to see. Everything that should stay private is removed
@@ -27,7 +28,7 @@ export type ShareSource = {
   fixedIncome: number;
   holdings: ShareSourceHolding[];
   /** Time-weighted index of the portfolio and the benchmark, both 100 on the first day. */
-  performance: Array<{ t: number; twr: number; benchmark: number }> | null;
+  performance: Array<{ t: number; twr: number; benchmark: number; nasdaq?: number; value?: number }> | null;
   /** Milliseconds since epoch. */
   asOf: number;
 };
@@ -54,9 +55,11 @@ export type SharePerformance = {
   range: ShareRange;
   benchmark: string;
   /** Both series indexed to 100 at the start of the range. */
-  points: Array<{ t: number; portfolio: number; benchmark: number }>;
+  points: Array<{ t: number; portfolio: number; benchmark: number; nasdaq?: number }>;
   portfolioReturn: number;
   benchmarkReturn: number;
+  /** The Nasdaq 100 over the same range, when the share includes it. */
+  nasdaqReturn?: number;
 };
 
 export type ShareView = {
@@ -98,10 +101,17 @@ function cutoff(range: ShareRange, last: number) {
   return last - RANGE_DAYS[range] * DAY;
 }
 
-function buildPerformance(source: ShareSource, range: ShareRange): SharePerformance | null {
-  const all = source.performance;
-  if (!all || all.length < 2) return null;
-  const from = cutoff(range, all[all.length - 1].t);
+function buildPerformance(source: ShareSource, range: ShareRange, withNasdaq: boolean): SharePerformance | null {
+  // Like the portfolio page, the series starts on the first day the portfolio holds anything.
+  const held = source.performance ? source.performance.findIndex((point) => point.value === undefined || point.value > 0) : -1;
+  if (!source.performance || held < 0) return null;
+  const all = source.performance.slice(held);
+  if (all.length < 2) return null;
+  const latest = all[all.length - 1].t;
+  // A range longer than the history is the whole history, and says so.
+  const wanted = cutoff(range, latest);
+  const shown: ShareRange = range !== 'ALL' && wanted < all[0].t - 3 * DAY ? 'ALL' : range;
+  const from = shown === 'ALL' ? -Infinity : wanted;
   // Start from the last point before the window so the range's first day already has a return.
   let start = all.findIndex((point) => point.t >= from);
   if (start < 0) return null;
@@ -112,9 +122,15 @@ function buildPerformance(source: ShareSource, range: ShareRange): SharePerforma
   if (!(base.twr > 0) || !(base.benchmark > 0)) return null;
   const step = Math.max(1, Math.ceil(window.length / MAX_POINTS));
   const sampled = window.filter((_, index) => index % step === 0 || index === window.length - 1);
-  const points = sampled.map((point) => ({ t: point.t, portfolio: (point.twr / base.twr) * 100, benchmark: (point.benchmark / base.benchmark) * 100 }));
+  const nasdaqBase = withNasdaq && base.nasdaq && base.nasdaq > 0 ? base.nasdaq : null;
+  const points = sampled.map((point) => ({
+    t: point.t,
+    portfolio: (point.twr / base.twr) * 100,
+    benchmark: (point.benchmark / base.benchmark) * 100,
+    ...(nasdaqBase ? { nasdaq: ((point.nasdaq ?? nasdaqBase) / nasdaqBase) * 100 } : {}),
+  }));
   const last = points[points.length - 1];
-  return { range, benchmark: source.benchmark, points, portfolioReturn: last.portfolio / 100 - 1, benchmarkReturn: last.benchmark / 100 - 1 };
+  return { range: shown, benchmark: source.benchmark, points, portfolioReturn: last.portfolio / 100 - 1, benchmarkReturn: last.benchmark / 100 - 1, ...(last.nasdaq !== undefined ? { nasdaqReturn: last.nasdaq / 100 - 1 } : {}) };
 }
 
 export function buildShareView(source: ShareSource, rawOptions: ShareOptions, title?: string | null): ShareView {
@@ -201,7 +217,7 @@ export function buildShareView(source: ShareSource, rawOptions: ShareOptions, ti
     allocation,
     holdings: rows,
     sectors,
-    performance: options.returns && options.sections.performance ? buildPerformance(source, options.range) : null,
+    performance: options.returns && options.sections.performance ? buildPerformance(source, options.range, options.nasdaq) : null,
     sections: options.sections,
     returns: options.returns,
     shares: options.shares,
@@ -231,9 +247,17 @@ export function shareSummaryText(view: ShareView): string {
   if (view.totals.value !== null) lines.push(`${view.amounts === 'scaled' ? 'Model value' : 'Value'}: $${Math.round(view.totals.value).toLocaleString('en-US')}`);
   if (view.totals.gainPct !== null) lines.push(`Total gain: ${pct(view.totals.gainPct)}`);
   if (view.performance) {
-    lines.push(`${view.performance.range} return: ${pct(view.performance.portfolioReturn)} vs ${view.performance.benchmark} ${pct(view.performance.benchmarkReturn)}`);
+    lines.push(`${rangeLabel(view.performance.range)} return: ${pct(view.performance.portfolioReturn)} vs ${view.performance.benchmark} ${pct(view.performance.benchmarkReturn)}`);
   }
   const top = view.allocation.filter((slice) => slice.kind === 'holding' || slice.kind === 'sector').slice(0, 5);
   if (top.length) lines.push(`Top: ${top.map((slice) => `${slice.label} ${(slice.weight * 100).toFixed(1)}%`).join(', ')}`);
   return lines.join('\n');
+}
+
+/** What the middle of the allocation donut says: the portfolio's size when it is shared, otherwise how many pieces it has. */
+export function donutCenter(view: ShareView): { value: string; label: string } {
+  if (view.totals.value !== null) return { value: formatMoney(view.totals.value, { digits: 0 }), label: view.amounts === 'scaled' ? 'Model portfolio' : 'Portfolio value' };
+  if (view.allocation.some((slice) => slice.kind === 'sector')) return { value: String(view.sectors.length), label: view.sectors.length === 1 ? 'sector' : 'sectors' };
+  const count = view.totals.positions ?? view.allocation.filter((slice) => slice.kind === 'holding').length;
+  return { value: String(count), label: count === 1 ? 'holding' : 'holdings' };
 }

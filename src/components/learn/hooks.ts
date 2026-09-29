@@ -15,7 +15,8 @@ export type LearnState = { progress: ProgressItem[]; rank: RankSummary };
 type ProgressInput =
   | { kind: 'lesson'; slug: string; score: number; answers?: Record<string, number | string> }
   | { kind: 'drill'; type: string; correct: boolean }
-  | { kind: 'card'; id: string; rating: 'nailed' | 'partial' | 'missed' };
+  | { kind: 'card'; id: string; rating: 'nailed' | 'partial' | 'missed' }
+  | { kind: 'read'; slug: string; sections: string[]; seconds: number };
 
 /** Learn progress and rank, with a recorder that toasts XP gained and promotions. */
 export function useLearn() {

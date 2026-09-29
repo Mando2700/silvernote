@@ -13,6 +13,7 @@ import { CompanyLogo } from '@/components/ui/company-logo';
 import { Badge, Panel, Segmented } from '@/components/ui/primitives';
 import { LESSON_BY_SLUG } from '@/lib/learn/curriculum';
 import { CASES, type CaseStudy } from '@/lib/learn/examples';
+import { caseMinutes } from '@/lib/learn/progress';
 import { cn } from '@/lib/utils';
 
 type Filter = 'all' | 'worked' | 'failed' | 'long' | 'short';
@@ -64,7 +65,7 @@ export function CaseLibrary() {
                 <span className="min-w-0 flex-1 truncate text-[13px] font-semibold text-ink">{item.title}</span>
               </div>
               <div className="mt-1 text-[11.5px] text-muted">
-                {item.investor} · {item.period}
+                {item.investor} · {item.period} · {caseMinutes(item)} min read
               </div>
               <div className="mt-2 flex items-center gap-1.5">
                 <Badge tone="outline">{item.direction === 'long' ? <TrendingUp className="size-3" /> : <TrendingDown className="size-3" />}{item.direction}</Badge>
@@ -91,7 +92,7 @@ function CaseDetail({ item }: { item: CaseStudy }) {
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <div className="kicker mb-1">
-            {item.company} · {item.period} · {item.direction}
+            {item.company} · {item.period} · {item.direction} · {caseMinutes(item)} min read
           </div>
           <h2 className="text-[20px] font-semibold tracking-[-0.015em] text-ink">{item.title}</h2>
           <p className="mt-1 text-[13.5px] text-brand-soft italic">{item.tagline}</p>

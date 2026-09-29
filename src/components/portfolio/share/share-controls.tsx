@@ -6,6 +6,28 @@ import { Input, Segmented, Switch } from '@/components/ui/primitives';
 import { AMOUNT_LABEL, DETAIL_LABEL, SCALED_BASE, SHARE_AMOUNTS, SHARE_DETAILS, SHARE_RANGES, type ShareOptions, type ShareRange } from '@/lib/share/options';
 import { cn } from '@/lib/utils';
 
+/** Copies text, falling back to a hidden textarea where the async clipboard is blocked (embedded frames, plain http). */
+export async function copyText(value: string) {
+  try {
+    await navigator.clipboard.writeText(value);
+    return true;
+  } catch {
+    try {
+      const field = document.createElement('textarea');
+      field.value = value;
+      field.setAttribute('readonly', '');
+      field.style.cssText = 'position:fixed;top:0;left:0;opacity:0';
+      document.body.appendChild(field);
+      field.select();
+      const done = document.execCommand('copy');
+      field.remove();
+      return done;
+    } catch {
+      return false;
+    }
+  }
+}
+
 /** A labelled block of controls in the studio's left column. */
 export function Group({ title, hint, children, className }: { title: string; hint?: ReactNode; children: ReactNode; className?: string }) {
   return (
@@ -75,7 +97,7 @@ export function PrivacyControls({ options, onChange }: { options: ShareOptions; 
         <ToggleRow label="Include cash" hint="Off: weights are of the invested part" checked={options.cash} onChange={(cash) => onChange({ cash })} />
         <div className="py-1">
           <ToggleRow label="Show my name" checked={options.owner !== null} onChange={(on) => onChange({ owner: on ? (options.owner ?? '') : null })} />
-          {options.owner !== null ? <Input value={options.owner} maxLength={40} onChange={(event) => onChange({ owner: event.target.value })} placeholder="Your name or handle" className="mt-1" aria-label="Name to show" /> : null}
+          {options.owner !== null ? <Input value={options.owner} maxLength={40} onChange={(event) => onChange({ owner: event.target.value })} placeholder="Your name or handle" className="mt-1" aria-label="Name to show" autoFocus={options.owner === ''} /> : null}
         </div>
       </div>
       <p className="text-[11.5px] leading-relaxed text-muted">

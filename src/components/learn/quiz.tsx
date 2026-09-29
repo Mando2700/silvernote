@@ -1,9 +1,10 @@
 'use client';
 
-import { Check, RotateCcw, X } from 'lucide-react';
+import { Check, RotateCcw, Sparkles, X } from 'lucide-react';
 import { motion } from 'motion/react';
 import { useState } from 'react';
 
+import { useShell } from '@/components/shell/providers';
 import { Button } from '@/components/ui/button';
 import { checkNumber, type Lesson } from '@/lib/learn/curriculum';
 import { cn } from '@/lib/utils';
@@ -15,11 +16,32 @@ function isCorrect(question: Lesson['quiz'][number], answer: number | string | u
   return question.kind === 'choice' ? answer === question.answer : checkNumber(String(answer), question.answer, question.tolerance);
 }
 
+function answerText(question: Lesson['quiz'][number], answer: number | string | undefined) {
+  if (answer === undefined || answer === '') return 'no answer yet';
+  return question.kind === 'choice' ? `"${question.options[Number(answer)]}"` : `${answer}${question.unit ?? ''}`;
+}
+
+function correctText(question: Lesson['quiz'][number]) {
+  return question.kind === 'choice' ? `"${question.options[question.answer]}"` : `${question.answer.toLocaleString('en-US', { maximumFractionDigits: 4 })}${question.unit ?? ''}`;
+}
+
+/** Grok prompt for one question: a hint that doesn't give the answer away while the test is open, a full walkthrough once graded. */
+function grokPrompt(lesson: Lesson, question: Lesson['quiz'][number], answer: number | string | undefined, submitted: boolean) {
+  const options = question.kind === 'choice' ? `\nOptions:\n${question.options.map((option, index) => `${String.fromCharCode(65 + index)}. ${option}`).join('\n')}` : '';
+  const header = `I'm taking the quiz for the lesson "${lesson.title}".\nQuestion: ${question.prompt}${options}`;
+  if (!submitted) {
+    return `${header}\n\nMy current answer: ${answerText(question, answer)}.\nGive me a hint that points me at the right concept or first step, like a tutor would. Do NOT tell me the answer, which option is correct, or whether my current answer is right.`;
+  }
+  const right = isCorrect(question, answer);
+  return `${header}\n\nI answered ${answerText(question, answer)}; the correct answer is ${correctText(question)} (${right ? 'I got it right' : 'I got it wrong'}).\nThe lesson's explanation: ${question.explain}\n\nWalk me through it step by step${right ? ' and check my reasoning holds up in a harder variant' : ' and show exactly where my answer goes wrong'}, tie it to a real company if it helps, then give me one similar practice question to try.`;
+}
+
 /** End-of-lesson check: every question answered, then graded with explanations; the best score is kept. */
 export function Quiz({ lesson, best, onSubmit }: { lesson: Lesson; best: number | null; onSubmit: (score: number, answers: Answers) => Promise<unknown> }) {
   const [answers, setAnswers] = useState<Answers>({});
   const [submitted, setSubmitted] = useState(false);
   const [saving, setSaving] = useState(false);
+  const { askAssistant } = useShell();
   const total = lesson.quiz.length;
   const answered = lesson.quiz.filter((question) => answers[question.id] !== undefined && answers[question.id] !== '').length;
   const correct = lesson.quiz.filter((question) => isCorrect(question, answers[question.id])).length;
@@ -39,7 +61,16 @@ export function Quiz({ lesson, best, onSubmit }: { lesson: Lesson; best: number 
           <div key={question.id} className={cn('rounded-md border p-4 transition-colors', !submitted ? 'border-line bg-surface-1' : right ? 'border-gain/30 bg-gain/[0.035]' : 'border-loss/30 bg-loss/[0.035]')}>
             <div className="mb-3 flex gap-3">
               <span className="font-mono text-[11px] text-faint">Q{index + 1}</span>
-              <span className="text-[13.5px] leading-relaxed text-ink">{question.prompt}</span>
+              <span className="flex-1 text-[13.5px] leading-relaxed text-ink">{question.prompt}</span>
+              <button
+                type="button"
+                onClick={() => askAssistant(grokPrompt(lesson, question, answer, submitted))}
+                title={submitted ? 'Have Grok walk you through this question' : 'Get a hint from Grok — it won’t give the answer away'}
+                className="-mt-0.5 flex h-6 shrink-0 items-center gap-1 self-start rounded-sm border border-line px-2 text-[11px] text-muted transition-colors hover:border-brand/40 hover:bg-brand-wash hover:text-ink"
+              >
+                <Sparkles className="size-3 text-brand" />
+                {submitted ? 'Explain with Grok' : 'Hint from Grok'}
+              </button>
             </div>
             {question.kind === 'choice' ? (
               <div className="grid gap-1.5 pl-7 sm:grid-cols-2">

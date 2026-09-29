@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { checkNumber, LESSONS, TRACKS } from './curriculum';
 import { DRILL_TYPES, generateDrill } from './drills';
 import { MODEL_PITCH } from './examples';
+import { courseSummary, formatMinutes, lessonProgress, rankEtas, readingPace } from './progress';
 import { keyPointCoverage, QUESTIONS } from './questions';
 import { computeRank, RANKS, type ProgressItem } from './rank';
 import { isPitchEmpty, scorePitch, type PitchDraft } from './rubric';
@@ -135,5 +136,43 @@ describe('rank', () => {
     expect(rank.rank).toBe('Analyst II');
     expect(rank.mastery.foundations).toBeGreaterThan(0);
     expect(rank.lessonsDone).toBe(5);
+  });
+});
+
+describe('progress and estimates', () => {
+  const item = (id: string, patch: Partial<ProgressItem>): ProgressItem => ({ item_id: id, kind: 'lesson', score: null, best: null, attempts: 0, data: {}, completed_at: null, updated_at: '2026-09-29T00:00:00Z', ...patch });
+
+  it('counts sections read up to 85% and the quiz as the rest', () => {
+    const lesson = LESSONS[0];
+    const half = lesson.sections.slice(0, Math.ceil(lesson.sections.length / 2)).map((section) => section.id);
+    expect(lessonProgress(lesson, undefined)).toBe(0);
+    expect(lessonProgress(lesson, item(`lesson:${lesson.slug}`, { data: { read: [...half, 'bogus'] } }))).toBeCloseTo((0.85 * half.length) / lesson.sections.length);
+    expect(lessonProgress(lesson, item(`lesson:${lesson.slug}`, { completed_at: '2026-09-29T00:00:00Z' }))).toBe(1);
+  });
+
+  it('calibrates pace only after two timed lessons', () => {
+    const [a, b] = LESSONS;
+    const one = new Map([[`lesson:${a.slug}`, item(`lesson:${a.slug}`, { completed_at: 'x', data: { seconds: a.minutes * 120 } })]]);
+    expect(readingPace(one)).toEqual({ factor: 1, calibrated: false });
+    const two = new Map([...one, [`lesson:${b.slug}`, item(`lesson:${b.slug}`, { completed_at: 'x', data: { seconds: b.minutes * 120 } })]]);
+    expect(readingPace(two).factor).toBeCloseTo(2);
+  });
+
+  it('sums course time and plans every rank above Intern', () => {
+    const empty = new Map<string, ProgressItem>();
+    const pace = readingPace(empty);
+    const course = courseSummary(empty, pace);
+    expect(course.minutesLeft).toBe(LESSONS.reduce((sum, lesson) => sum + lesson.minutes, 0));
+    const etas = rankEtas(computeRank([], []), empty, pace);
+    expect(etas.map((eta) => eta.title)).toEqual(RANKS.slice(1).map((rank) => rank.title));
+    expect(etas.every((eta, index) => index === 0 || eta.minutes > etas[index - 1].minutes)).toBe(true);
+    expect(etas[0].lessons).toBe(Math.ceil(400 / 92));
+  });
+
+  it('formats minutes', () => {
+    expect(formatMinutes(0.4)).toBe('<1 min');
+    expect(formatMinutes(12.4)).toBe('12 min');
+    expect(formatMinutes(125)).toBe('2 h 5 min');
+    expect(formatMinutes(240)).toBe('4 h');
   });
 });

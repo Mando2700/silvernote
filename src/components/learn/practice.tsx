@@ -1,6 +1,6 @@
 'use client';
 
-import { ArrowRight, BookOpen, Check, Eye, Flame, Shuffle, X } from 'lucide-react';
+import { ArrowRight, BookOpen, Check, Eye, Flame, Shuffle, Sparkles, X } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
 import Link from 'next/link';
 import { useMemo, useRef, useState, useSyncExternalStore } from 'react';
@@ -8,6 +8,7 @@ import { useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { useLearn } from '@/components/learn/hooks';
 import { RankBadge } from '@/components/learn/rank-card';
 import { Page } from '@/components/shell/page';
+import { useShell } from '@/components/shell/providers';
 import { Button } from '@/components/ui/button';
 import { Panel, Skeleton } from '@/components/ui/primitives';
 import { checkNumber, TRACKS } from '@/lib/learn/curriculum';
@@ -29,6 +30,7 @@ export function PracticeLab() {
   const [result, setResult] = useState<null | { correct: boolean; revealed: boolean }>(null);
   const [session, setSession] = useState({ attempted: 0, correct: 0, streak: 0, best: 0 });
   const inputRef = useRef<HTMLInputElement>(null);
+  const { askAssistant } = useShell();
 
   const type: DrillType = mode === 'mixed' ? DRILL_TYPES[seed % DRILL_TYPES.length].type : mode;
   const drill = useMemo(() => (hydrated ? generateDrill(type, seed) : null), [hydrated, type, seed]);
@@ -131,9 +133,26 @@ export function PracticeLab() {
                       <span className="rounded-xs border border-brand/30 bg-brand-wash px-1.5 py-0.5 font-mono text-[10.5px] tracking-wide text-brand-soft uppercase">{meta.label}</span>
                       <span className="text-[11.5px] text-muted">{meta.blurb}</span>
                     </div>
-                    <Link href={`/learn/${meta.lesson}`} className="flex items-center gap-1 text-[11.5px] text-muted hover:text-ink">
-                      <BookOpen className="size-3" /> Lesson
-                    </Link>
+                    <div className="flex items-center gap-3">
+                      <button
+                        type="button"
+                        title={result ? 'Have Grok walk you through this problem' : 'Get a hint from Grok — it won’t solve it for you'}
+                        onClick={() => {
+                          const problem = `Practice problem (${meta.label}): ${drill.prompt}\nGiven: ${drill.given.map((item) => `${item.label} ${item.value}`).join('; ')}`;
+                          askAssistant(
+                            result
+                              ? `${problem}\n\nI answered ${input.trim() || 'nothing (I revealed the solution)'}; the answer is ${drill.answer.toLocaleString('en-US', { maximumFractionDigits: 4 })}${drill.unit ?? ''}. Worked steps:\n${drill.steps.join('\n')}\n\nExplain the intuition behind each step${result.correct ? '' : ' and where my answer likely went wrong'}, then give me a similar problem to try.`
+                              : `${problem}\n\n${input.trim() ? `My answer so far: ${input.trim()}${drill.unit ?? ''}. ` : ''}Give me a hint — the formula or first step to set up — without solving it or telling me the answer.`,
+                          );
+                        }}
+                        className="flex items-center gap-1 text-[11.5px] text-muted hover:text-ink"
+                      >
+                        <Sparkles className="size-3 text-brand" /> {result ? 'Explain with Grok' : 'Hint from Grok'}
+                      </button>
+                      <Link href={`/learn/${meta.lesson}`} className="flex items-center gap-1 text-[11.5px] text-muted hover:text-ink">
+                        <BookOpen className="size-3" /> Lesson
+                      </Link>
+                    </div>
                   </div>
                   <p className="max-w-3xl text-[15px] leading-relaxed text-ink">{drill.prompt}</p>
                   <div className="flex flex-wrap gap-1.5">

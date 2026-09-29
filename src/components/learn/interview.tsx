@@ -8,6 +8,7 @@ import useSWR from 'swr';
 
 import { useLearn } from '@/components/learn/hooks';
 import { Page } from '@/components/shell/page';
+import { useShell } from '@/components/shell/providers';
 import { Button } from '@/components/ui/button';
 import { Badge, Panel, Segmented, Textarea } from '@/components/ui/primitives';
 import { api, ApiError } from '@/lib/client';
@@ -117,11 +118,28 @@ export function InterviewPrep() {
   );
 }
 
-function QuestionHeader({ question }: { question: InterviewQuestion }) {
+/** Before the answer is shown Grok gives a hint only; afterwards it runs a mock-interview follow-up on the question. */
+function QuestionHeader({ question, answered, answer }: { question: InterviewQuestion; answered: boolean; answer?: string }) {
+  const { askAssistant } = useShell();
+  const ask = () =>
+    askAssistant(
+      answered
+        ? `Interview question (${CATEGORIES.find((item) => item.id === question.category)?.label}): "${question.question}"\n\n${answer?.trim() ? `My answer:\n${answer.trim()}\n\n` : ''}Key points a strong answer covers: ${question.keyPoints.join('; ')}.\n\nAct as the interviewer: explain the concept behind this question with a real-company example, point out what ${answer?.trim() ? 'my answer' : 'candidates'} usually miss, then ask me the two follow-up questions an interviewer would ask next, one at a time.`
+        : `Interview question (${CATEGORIES.find((item) => item.id === question.category)?.label}): "${question.question}"\n\nGive me a hint on how to structure my answer — the framework or first concept to start from — without giving me the answer itself.`,
+    );
   return (
     <div className="mb-4 flex items-center gap-2">
       <Badge tone="brand">{CATEGORIES.find((item) => item.id === question.category)?.label}</Badge>
       <Badge tone="outline">{['', 'Core', 'Intermediate', 'Advanced'][question.difficulty]}</Badge>
+      <button
+        type="button"
+        onClick={ask}
+        title={answered ? 'Have Grok explain it and run the follow-ups' : 'Get a hint from Grok — it won’t give the answer away'}
+        className="ml-auto flex h-6 items-center gap-1 rounded-sm border border-line px-2 text-[11px] text-muted transition-colors hover:border-brand/40 hover:bg-brand-wash hover:text-ink"
+      >
+        <Sparkles className="size-3 text-brand" />
+        {answered ? 'Explain with Grok' : 'Hint from Grok'}
+      </button>
     </div>
   );
 }
@@ -157,7 +175,7 @@ function Flashcard({ question, onRate, onSkip }: { question: InterviewQuestion; 
   };
   return (
     <Panel className="p-5">
-      <QuestionHeader question={question} />
+      <QuestionHeader question={question} answered={revealed} />
       <h2 className="text-[20px] leading-snug font-semibold tracking-[-0.015em] text-ink">{question.question}</h2>
       {!revealed ? (
         <div className="mt-6 flex flex-col items-start gap-3">
@@ -218,7 +236,7 @@ function WrittenAnswer({ question, onNext }: { question: InterviewQuestion; onNe
 
   return (
     <Panel className="p-5">
-      <QuestionHeader question={question} />
+      <QuestionHeader question={question} answered={Boolean(grade || fallback)} answer={answer} />
       <h2 className="text-[20px] leading-snug font-semibold tracking-[-0.015em] text-ink">{question.question}</h2>
       <div className="mt-4 flex flex-col gap-2">
         <Textarea value={answer} onChange={(event) => setAnswer(event.target.value)} placeholder="Write your answer the way you’d say it in the interview…" className="min-h-40 text-[13.5px]" disabled={loading} />
