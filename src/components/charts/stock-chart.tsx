@@ -197,14 +197,37 @@ export function useChartStudies(symbol: string, candles: Candle[], range: string
   return { toolbar, overlays, percentMode: compare.length > 0, drawings, onPick: tool === 'none' ? undefined : onPick };
 }
 
-/** A self-contained chart for one symbol (used by the terminal's chart panels). */
-export function StockChart({ symbol, height = 320, markers, targetPrice }: { symbol: string; height?: number; markers?: ChartMarker[]; targetPrice?: number | null }) {
+/** A self-contained chart for one symbol (used by the terminal's chart panels). With `fill`, the chart
+ *  grows to the height of its parent instead of using `height`. */
+export function StockChart({
+  symbol,
+  height = 320,
+  fill = false,
+  markers,
+  targetPrice,
+}: {
+  symbol: string;
+  height?: number;
+  fill?: boolean;
+  markers?: ChartMarker[];
+  targetPrice?: number | null;
+}) {
   const [range, setRange] = useState<ChartRange>('1y');
   const [mode, setMode] = useState<'area' | 'candles'>('area');
   const { data } = useSWR<{ candles: Candle[]; range: string }>(`/api/company/${symbol}/candles?range=${range}`);
   const studies = useChartStudies(symbol, data?.candles ?? [], range);
+  const boxRef = useRef<HTMLDivElement>(null);
+  const [boxHeight, setBoxHeight] = useState<number | null>(null);
+  useEffect(() => {
+    const box = boxRef.current;
+    if (!fill || !box) return;
+    const observer = new ResizeObserver(([entry]) => setBoxHeight(Math.floor(entry.contentRect.height)));
+    observer.observe(box);
+    return () => observer.disconnect();
+  }, [fill]);
+  const chartHeight = fill ? Math.max(160, boxHeight ?? height) : height;
   return (
-    <div className="flex flex-col gap-2">
+    <div className={cn('flex flex-col gap-2', fill && 'h-full')}>
       <div className="flex flex-wrap items-center justify-between gap-1.5">
         <Segmented size="xs" value={range} onChange={setRange} options={CHART_RANGES.map((value) => ({ value, label: value.toUpperCase() }))} />
         <div className="flex items-center gap-1">
@@ -212,24 +235,28 @@ export function StockChart({ symbol, height = 320, markers, targetPrice }: { sym
           <Segmented size="xs" value={mode} onChange={setMode} options={[{ value: 'area', label: 'Line' }, { value: 'candles', label: 'Candles' }]} />
         </div>
       </div>
-      {data?.candles.length ? (
-        <PriceChart
-          candles={data.candles}
-          mode={mode}
-          height={height}
-          animationKey={symbol}
-          rangeKey={data.range}
-          intraday={['1d', '1w', '1m', '3m'].includes(data.range)}
-          markers={markers}
-          targetPrice={targetPrice}
-          overlays={studies.overlays}
-          percentMode={studies.percentMode}
-          drawings={studies.drawings}
-          onPick={studies.onPick}
-        />
-      ) : (
-        <div style={{ height }}><Skeleton className="h-full w-full" /></div>
-      )}
+      <div ref={boxRef} className={cn(fill && 'min-h-0 flex-1 overflow-hidden')}>
+        {data?.candles.length ? (
+          <PriceChart
+            candles={data.candles}
+            mode={mode}
+            height={chartHeight}
+            animationKey={symbol}
+            rangeKey={data.range}
+            intraday={['1d', '1w', '1m', '3m'].includes(data.range)}
+            markers={markers}
+            targetPrice={targetPrice}
+            overlays={studies.overlays}
+            percentMode={studies.percentMode}
+            drawings={studies.drawings}
+            onPick={studies.onPick}
+          />
+        ) : (
+          <div style={{ height: chartHeight }}>
+            <Skeleton className="h-full w-full" />
+          </div>
+        )}
+      </div>
     </div>
   );
 }
