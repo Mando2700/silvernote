@@ -106,7 +106,17 @@ async function createPostgres(url: string): Promise<Driver> {
       return result as T;
     },
     async exec(script: string) {
-      await sql.unsafe(script).simple();
+      // Scripts carry their own begin/commit (and rollback on failure), so pin them to one connection.
+      const conn = await sql.reserve();
+      try {
+        await conn.unsafe(script).simple();
+      } catch (error) {
+        // Don't hand a connection with a half-open transaction back to the pool.
+        await conn.unsafe('rollback;').simple().catch(() => {});
+        throw error;
+      } finally {
+        conn.release();
+      }
     },
   };
 }
