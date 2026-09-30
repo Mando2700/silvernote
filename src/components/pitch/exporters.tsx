@@ -20,14 +20,14 @@ export type ExportPitch = {
   };
 };
 
-type Block =
+export type Block =
   | { type: 'heading'; text: string; level: number }
   | { type: 'paragraph'; runs: Run[] }
   | { type: 'list'; items: Run[][]; ordered: boolean }
   | { type: 'table'; header: string[]; rows: string[][] }
   | { type: 'quote'; runs: Run[] };
 
-type Run = { text: string; bold?: boolean; italic?: boolean };
+export type Run = { text: string; bold?: boolean; italic?: boolean };
 
 function inlineRuns(tokens: Token[] | undefined, fallback: string): Run[] {
   if (!tokens?.length) return [{ text: fallback }];
@@ -98,7 +98,7 @@ function compact(value: number | null | undefined) {
   return `${sign}${abs.toFixed(0)}`;
 }
 
-function download(blob: Blob, fileName: string) {
+export function download(blob: Blob, fileName: string) {
   const url = URL.createObjectURL(blob);
   const link = document.createElement('a');
   link.href = url;
@@ -112,7 +112,7 @@ function fileBase(pitch: ExportPitch) {
 }
 
 /** The company logo as a PNG/JPEG data URL, or null when there is none. */
-async function logoDataUrl(symbol: string): Promise<string | null> {
+export async function logoDataUrl(symbol: string): Promise<string | null> {
   try {
     const response = await fetch(`/api/logo/${encodeURIComponent(symbol)}?v=4`);
     if (!response.ok || !/image\/(png|jpe?g)/.test(response.headers.get('content-type') ?? '')) return null;

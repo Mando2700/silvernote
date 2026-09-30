@@ -71,6 +71,7 @@ export const limiters = {
   xai: new RateLimiter(0, 4),
   news: new RateLimiter(250, 3),
   yahoo: new RateLimiter(300, 2),
+  wikimedia: new RateLimiter(100, 4),
 };
 
 export function sleep(ms: number) {

@@ -1,7 +1,7 @@
 'use client';
 
 import { diffWords } from 'diff';
-import { GitCompareArrows, History, Maximize2, Minimize2, Pencil, Presentation, Sparkles } from 'lucide-react';
+import { FileDown, GitCompareArrows, History, Maximize2, Minimize2, Pencil, Presentation, Sparkles } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
 import { useRouter } from 'next/navigation';
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -14,6 +14,7 @@ import { FullscreenOverlay } from '@/components/ui/fullscreen-overlay';
 import { MarkdownToolbar } from '@/components/ui/markdown-toolbar';
 import { Drawer } from '@/components/ui/overlay';
 import { Badge, Input, Panel, PanelHeader, Select, Skeleton, Textarea } from '@/components/ui/primitives';
+import { ThesisExportDialog } from '@/components/workspace/thesis-export';
 import { api, revalidate } from '@/lib/client';
 import { dateTime, price, relativeTime, signedPct } from '@/lib/format';
 import { renderMarkdown } from '@/lib/markdown';
@@ -242,6 +243,7 @@ export function CompanyWorkspace({ symbol, name, currentPrice }: { symbol: strin
   const router = useRouter();
   const [historySection, setHistorySection] = useState<ThesisSection | null>(null);
   const [selected, setSelected] = useState<Version | null>(null);
+  const [exportOpen, setExportOpen] = useState(false);
   // Typed text wins until the saved value comes back from the server.
   const [targetEdit, setTargetEdit] = useState<string | null>(null);
   const target = targetEdit ?? (data?.meta?.target_price ? String(data.meta.target_price) : '');
@@ -346,6 +348,9 @@ export function CompanyWorkspace({ symbol, name, currentPrice }: { symbol: strin
               >
                 {thesisText ? 'Challenge thesis' : 'Draft with Grok'}
               </Button>
+              <Button variant="outline" icon={<FileDown className="size-3.5" />} disabled={!thesisText} onClick={() => setExportOpen(true)}>
+                Export PDF
+              </Button>
               <Button variant="primary" icon={<Presentation className="size-3.5" />} onClick={() => void createPitch()}>
                 Build pitch
               </Button>
@@ -372,6 +377,8 @@ export function CompanyWorkspace({ symbol, name, currentPrice }: { symbol: strin
           <VersionTimeline versions={versions} onSelect={setSelected} />
         </div>
       </Panel>
+
+      <ThesisExportDialog open={exportOpen} onClose={() => setExportOpen(false)} symbol={symbol} name={name} workspace={data} />
 
       <Drawer open={Boolean(historySection) || Boolean(selected)} onClose={() => { setHistorySection(null); setSelected(null); }} title={selected ? `${THESIS_SECTION_META[selected.section].title} · ${dateTime(selected.created_at)}` : historySection ? `${THESIS_SECTION_META[historySection].title} history` : ''} width={620}>
         <AnimatePresence mode="wait">
