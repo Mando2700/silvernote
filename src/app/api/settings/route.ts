@@ -19,7 +19,7 @@ const schema = z.object({
   /** Yahoo symbols on the dashboard's macro tape. */
   macroTape: z.array(z.string().max(20)).max(16).optional(),
   /** Saved terminal layouts (see components/terminal). */
-  terminalLayouts: z.array(z.object({ id: z.string().max(40), name: z.string().max(60), panels: z.array(z.record(z.string(), z.unknown())).max(12) })).max(20).optional(),
+  terminalLayouts: z.array(z.object({ id: z.string().max(40), name: z.string().max(60), groups: z.record(z.string().max(4), z.string().max(16)).optional(), panels: z.array(z.record(z.string(), z.unknown())).max(12) })).max(20).optional(),
   notify: z
     .object({
       push: z.boolean().optional(),

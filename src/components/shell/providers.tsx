@@ -24,6 +24,8 @@ export type Preferences = {
   notify?: { push?: boolean; telegram?: boolean; morningBrief?: boolean; weeklyRedTeam?: boolean };
   /** Yahoo symbols on the dashboard's macro tape (empty = default). */
   macroTape?: string[];
+  /** Saved Terminal layouts (see components/terminal). */
+  terminalLayouts?: Array<{ id: string; name: string; groups?: Record<string, string>; panels: Array<Record<string, unknown>> }>;
 };
 
 const DEFAULT_PREFS: Preferences = {
