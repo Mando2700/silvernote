@@ -1,7 +1,7 @@
 import 'server-only';
 
 import { q, q1 } from '@/lib/db';
-import { forget, inBackground, keepAlive, memo, runInBackground } from '@/lib/data/http';
+import { cached, forget, inBackground, keepAlive, memo, runInBackground } from '@/lib/data/http';
 import { fetchDailyHistory as fmpHistory, fmpEnabled } from '@/lib/data/providers/fmp';
 import { fetchFredSeries } from '@/lib/data/providers/fred';
 import { fetchDailyHistory } from '@/lib/data/providers/nasdaq';
@@ -90,30 +90,37 @@ export function historyRebased(existing: Candle[], incoming: Candle[]) {
 export async function getCandles(symbol: string, years = 2): Promise<Candle[]> {
   const upper = symbol.toUpperCase();
   return memo(`candles:${upper}:${years}`, 60_000, async () => {
-    const row = await q1<StoredRow>(
-      'select candles, first_date::text as first_date, last_date::text as last_date, fetched_at, adjusted_at from public.price_history where symbol = $1',
-      [upper],
-    );
-    const wantedStart = new Date(Date.now() - years * 365.25 * 86_400_000);
-    const session = lastSessionDate();
-    const existing = row ? row.candles.map(toCandle) : [];
-    const coversStart = row?.first_date ? row.first_date <= isoDate(new Date(wantedStart.getTime() + 10 * 86_400_000)) : false;
-    const upToDate = row?.last_date ? row.last_date >= session : false;
-    const recentlyFetched = row ? Date.now() - new Date(row.fetched_at).getTime() < 4 * 3_600_000 : false;
-    // Rows stored before split checks existed are downloaded again in full once.
-    const trusted = Boolean(row?.adjusted_at);
-    if (row && trusted && coversStart && (upToDate || recentlyFetched)) return trimTo(existing, wantedStart);
-    if (row && !trusted && recentlyFetched && coversStart) return trimTo(existing, wantedStart);
-    // A page gets the stored history at once when it covers the range and only misses the latest
-    // sessions; the top-up runs in the background. Jobs wait, as they are there to bring it up to date.
-    if (row && trusted && coversStart && existing.length && !inBackground()) {
+    const row = await q1<StoredRow>(`select ${STORED_COLUMNS} from public.price_history where symbol = $1`, [upper]);
+    return resolveCandles(upper, years, row);
+  });
+}
+
+const STORED_COLUMNS = 'candles, first_date::text as first_date, last_date::text as last_date, fetched_at, adjusted_at';
+
+/** A symbol's stored history, downloaded or topped up as needed. */
+async function resolveCandles(upper: string, years: number, row: StoredRow | null): Promise<Candle[]> {
+  const wantedStart = new Date(Date.now() - years * 365.25 * 86_400_000);
+  const session = lastSessionDate();
+  const existing = row ? row.candles.map(toCandle) : [];
+  const coversStart = row?.first_date ? row.first_date <= isoDate(new Date(wantedStart.getTime() + 10 * 86_400_000)) : false;
+  const upToDate = row?.last_date ? row.last_date >= session : false;
+  const recentlyFetched = row ? Date.now() - new Date(row.fetched_at).getTime() < 4 * 3_600_000 : false;
+  // Rows stored before split checks existed are downloaded again in full once.
+  const trusted = Boolean(row?.adjusted_at);
+  if (row && trusted && coversStart && (upToDate || recentlyFetched)) return trimTo(existing, wantedStart);
+  if (row && !trusted && recentlyFetched && coversStart) return trimTo(existing, wantedStart);
+  // A page gets the stored history at once; missing sessions (or older years) download in the
+  // background. A history fetched in the last few hours that still starts late is a young listing:
+  // there is nothing older to fetch. Jobs wait, as they are there to bring the data up to date.
+  if (row && trusted && existing.length && !inBackground()) {
+    if (!recentlyFetched) {
       keepAlive(
         runInBackground(() => refreshHistory(upper, row, existing, wantedStart)).finally(() => forget(`candles:${upper}:`)),
       );
-      return trimTo(existing, wantedStart);
     }
-    return trimTo(await refreshHistory(upper, row, existing, wantedStart), wantedStart);
-  });
+    return trimTo(existing, wantedStart);
+  }
+  return trimTo(await refreshHistory(upper, row, existing, wantedStart), wantedStart);
 }
 
 const refreshingHistory = new Map<string, Promise<Candle[]>>();
@@ -168,13 +175,21 @@ function trimTo(candles: Candle[], start: Date) {
 
 export async function getCandlesForMany(symbols: string[], years = 2, concurrency = 3) {
   const result = new Map<string, Candle[]>();
-  const queue = [...new Set(symbols.map((symbol) => symbol.toUpperCase()))];
+  const unique = [...new Set(symbols.map((symbol) => symbol.toUpperCase()))];
+  // One query for every stored history instead of a round trip per symbol.
+  const stored = await q<StoredRow & { symbol: string }>(
+    `select symbol, ${STORED_COLUMNS} from public.price_history where symbol = any($1::text[])`,
+    [unique],
+  ).catch(() => []);
+  const rows = new Map(stored.map((row) => [row.symbol, row]));
+  const queue = [...unique];
   await Promise.all(
     Array.from({ length: concurrency }, async () => {
       for (;;) {
         const symbol = queue.shift();
         if (!symbol) return;
-        result.set(symbol, await getCandles(symbol, years).catch(() => []));
+        const load = () => resolveCandles(symbol, years, rows.get(symbol) ?? null);
+        result.set(symbol, await memo(`candles:${symbol}:${years}`, 60_000, load).catch(() => []));
       }
     }),
   );
@@ -183,7 +198,7 @@ export async function getCandlesForMany(symbols: string[], years = 2, concurrenc
 
 /** Long history for market proxies (NASDAQ Composite from 1971) — used by the 2008 stress test. */
 export async function getIndexHistory(seriesId: 'NASDAQCOM' | 'SP500', start: string, end: string) {
-  return memo(`fred:${seriesId}:${start}:${end}`, 24 * 3_600_000, async () => {
+  return cached(`fred:${seriesId}:${start}:${end}`, 24 * 3600, async () => {
     const points = await fetchFredSeries(seriesId, start, end);
     return points.map((point) => ({ t: Math.floor(Date.parse(`${point.date}T00:00:00Z`) / 1000), c: point.value }));
   });
@@ -191,16 +206,14 @@ export async function getIndexHistory(seriesId: 'NASDAQCOM' | 'SP500', start: st
 
 /** Annualized 3-month Treasury bill yield (as a fraction), for Sharpe and Sortino. */
 export async function getRiskFreeRate() {
-  return memo('fred:DGS3MO', 12 * 3_600_000, async () => {
-    try {
-      const start = isoDate(new Date(Date.now() - 30 * 86_400_000));
-      const points = await fetchFredSeries('DGS3MO', start);
-      const last = points[points.length - 1];
-      return last ? last.value / 100 : 0.04;
-    } catch {
-      return 0.04;
-    }
-  });
+  // Shared through the cache: FRED can be slow to answer, and the rate moves at most daily.
+  return cached('fred:DGS3MO', 12 * 3600, async () => {
+    const start = isoDate(new Date(Date.now() - 30 * 86_400_000));
+    const points = await fetchFredSeries('DGS3MO', start);
+    const last = points[points.length - 1];
+    if (!last) throw new Error('no DGS3MO observations');
+    return last.value / 100;
+  }).catch(() => 0.04);
 }
 
 export async function pricesStorageStats() {
