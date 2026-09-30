@@ -6,6 +6,12 @@
       "runtimeExecutable": "npm",
       "runtimeArgs": ["run", "dev"],
       "port": 3000
+    },
+    {
+      "name": "silvernote-local-auth",
+      "runtimeExecutable": "env",
+      "runtimeArgs": ["NEXT_PUBLIC_SUPABASE_URL=", "NEXT_PUBLIC_SUPABASE_ANON_KEY=", "npm", "run", "dev"],
+      "port": 3000
     }
   ]
 }
