@@ -441,7 +441,10 @@ type EconomicRow = { gmt?: string; country?: string; eventName?: string; actual?
 /** Economic releases on one day (all countries; times in GMT). */
 export async function fetchEconomicCalendar(date: string): Promise<EconomicEvent[]> {
   const data = await get<{ rows?: EconomicRow[] | null }>(`/calendar/economicevents?date=${date}`);
-  const clean = (value: string | undefined) => (value && value.trim() && value.trim() !== '-' ? value.trim() : null);
+  const clean = (value: string | undefined) => {
+    const text = value ? htmlToText(value) : '';
+    return text && text !== '-' ? text : null;
+  };
   return (data?.rows ?? [])
     .filter((row) => row.eventName)
     .map((row) => ({

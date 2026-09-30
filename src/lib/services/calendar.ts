@@ -41,7 +41,7 @@ function dividendsOn(date: string) {
 }
 
 function economyOn(date: string) {
-  return cached(`cal:economy:${date}`, date < todayInNewYork() ? 30 * 86_400 : 3600, () => nasdaq.fetchEconomicCalendar(date)).catch(() => [] as nasdaq.EconomicEvent[]);
+  return cached(`cal:economy-v2:${date}`, date < todayInNewYork() ? 30 * 86_400 : 3600, () => nasdaq.fetchEconomicCalendar(date)).catch(() => [] as nasdaq.EconomicEvent[]);
 }
 
 /**
