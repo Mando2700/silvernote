@@ -87,7 +87,7 @@ export function RankCard({ rank, byId, pace }: { rank: RankSummary; byId: ById; 
             </div>
           </div>
           <div className="flex flex-col gap-2">
-            <div className="flex items-end gap-1">
+            <div className="flex items-start gap-1">
               {RANKS.map((step, index) => {
                 const stepEta = eta.get(step.title);
                 return (

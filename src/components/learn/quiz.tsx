@@ -2,7 +2,7 @@
 
 import { Check, RotateCcw, Sparkles, X } from 'lucide-react';
 import { motion } from 'motion/react';
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 
 import { useShell } from '@/components/shell/providers';
 import { Button } from '@/components/ui/button';
@@ -25,6 +25,38 @@ function correctText(question: Lesson['quiz'][number]) {
   return question.kind === 'choice' ? `"${question.options[question.answer]}"` : `${question.answer.toLocaleString('en-US', { maximumFractionDigits: 4 })}${question.unit ?? ''}`;
 }
 
+function seededRandom(seed: string) {
+  let state = 2166136261;
+  for (let i = 0; i < seed.length; i += 1) state = Math.imul(state ^ seed.charCodeAt(i), 16777619);
+  return () => {
+    state = (state + 0x6d2b79f5) | 0;
+    let t = Math.imul(state ^ (state >>> 15), 1 | state);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+/**
+ * Authored quizzes list the correct option in a fixed slot, which makes it guessable. Shuffle each
+ * choice question's options (seeded, so server and client agree; the seed changes on retry) and
+ * remap the answer index so grading and prompts keep working on what is shown.
+ */
+function shuffleOptions(lesson: Lesson, round: number): Lesson {
+  return {
+    ...lesson,
+    quiz: lesson.quiz.map((question) => {
+      if (question.kind !== 'choice') return question;
+      const random = seededRandom(`${question.id}:${round}`);
+      const order = question.options.map((_, index) => index);
+      for (let i = order.length - 1; i > 0; i -= 1) {
+        const j = Math.floor(random() * (i + 1));
+        [order[i], order[j]] = [order[j], order[i]];
+      }
+      return { ...question, options: order.map((index) => question.options[index]), answer: order.indexOf(question.answer) };
+    }),
+  };
+}
+
 /** Grok prompt for one question: a hint that doesn't give the answer away while the test is open, a full walkthrough once graded. */
 function grokPrompt(lesson: Lesson, question: Lesson['quiz'][number], answer: number | string | undefined, submitted: boolean) {
   const options = question.kind === 'choice' ? `\nOptions:\n${question.options.map((option, index) => `${String.fromCharCode(65 + index)}. ${option}`).join('\n')}` : '';
@@ -37,7 +69,9 @@ function grokPrompt(lesson: Lesson, question: Lesson['quiz'][number], answer: nu
 }
 
 /** End-of-lesson check: every question answered, then graded with explanations; the best score is kept. */
-export function Quiz({ lesson, best, onSubmit }: { lesson: Lesson; best: number | null; onSubmit: (score: number, answers: Answers) => Promise<unknown> }) {
+export function Quiz({ lesson: authored, best, onSubmit }: { lesson: Lesson; best: number | null; onSubmit: (score: number, answers: Answers) => Promise<unknown> }) {
+  const [round, setRound] = useState(0);
+  const lesson = useMemo(() => shuffleOptions(authored, round), [authored, round]);
   const [answers, setAnswers] = useState<Answers>({});
   const [submitted, setSubmitted] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -146,6 +180,7 @@ export function Quiz({ lesson, best, onSubmit }: { lesson: Lesson; best: number 
             onClick={() => {
               setAnswers({});
               setSubmitted(false);
+              setRound((current) => current + 1);
             }}
           >
             Retry
