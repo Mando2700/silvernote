@@ -10,14 +10,15 @@ import useSWR from 'swr';
 
 import { MarketHeatmap } from '@/components/charts/market-heatmap';
 import { ExtendedMove } from '@/components/motion/extended-move';
-import { ScoreRing } from '@/components/motion/score-ring';
 import { Page } from '@/components/shell/page';
 import { useSnapshotSession } from '@/components/shell/topbar';
 import { Button } from '@/components/ui/button';
 import { CompanyLogo } from '@/components/ui/company-logo';
 import { Menu, Modal } from '@/components/ui/overlay';
 import { Badge, EmptyState, Field, Input, Panel, Segmented, Select, Skeleton, Switch } from '@/components/ui/primitives';
+import { cite, SOURCES } from '@/lib/citation';
 import { api } from '@/lib/client';
+import { exportXlsx } from '@/lib/export-client';
 import { useColumnDrag } from '@/lib/column-drag';
 import { useExtendedQuotes } from '@/lib/extended-client';
 import { compactNumber } from '@/lib/format';
@@ -161,6 +162,12 @@ function FilterRow({ filter, onChange, onRemove }: { filter: Filter; onChange: (
   );
 }
 
+/** A readable score: the number on a tint that steps with the Score's bands. */
+function ScoreChip({ score }: { score: number }) {
+  const tone = score >= 75 ? 'bg-gain/20 text-gain' : score >= 60 ? 'bg-brand/20 text-brand-soft' : score >= 45 ? 'bg-white/[0.07] text-ink-2' : 'bg-loss/15 text-loss';
+  return <span className={cn('num inline-flex h-5 min-w-8 items-center justify-center rounded-xs px-1.5 text-[11.5px] font-semibold', tone)}>{Math.round(score)}</span>;
+}
+
 export function Explorer() {
   const session = useSnapshotSession();
   const router = useRouter();
@@ -261,6 +268,33 @@ export function Explorer() {
     URL.revokeObjectURL(url);
   };
 
+  const exportExcel = () => {
+    const format = (key: MetricKey) => {
+      const column = METRIC_BY_KEY[key];
+      if (key === 'marketCap' || key === 'revenue' || key === 'netIncome' || key === 'fcf') return 'currencyMillions' as const;
+      if (key === 'changePct') return 'number' as const;
+      if (column.unit === '%') return 'percent' as const;
+      if (column.unit === '×') return 'multiple' as const;
+      if (column.unit === '$') return 'currency' as const;
+      return 'number' as const;
+    };
+    void exportXlsx(`silvernote-screen-${new Date().toISOString().slice(0, 10)}`, [
+      {
+        name: 'Screen',
+        title: `SilverNote screen · ${filtered.length} companies`,
+        columns: [
+          { header: 'Ticker', key: 'symbol', width: 10 },
+          { header: 'Company', key: 'name', width: 30 },
+          { header: 'Sector', key: 'sector', width: 22 },
+          { header: 'Industry', key: 'industry', width: 28 },
+          ...screen.columns.map((key) => ({ header: METRIC_BY_KEY[key].label, key, format: format(key) })),
+        ],
+        rows: filtered.slice(0, 10_000).map((row) => ({ symbol: row.symbol, name: row.name, sector: row.sector, industry: row.industry, ...Object.fromEntries(screen.columns.map((key) => [key, row[key] ?? null])) })),
+        notes: ['Fundamentals: latest fiscal year from SEC filings. Valuation ratios use the latest market value. Day change in percent.'],
+      },
+    ], [cite(SOURCES.prices(), 'APA'), 'U.S. Securities and Exchange Commission. (2026). Financial statement data (XBRL frames) [Data set]. EDGAR. https://www.sec.gov/dera/data']);
+  };
+
   const saveScreen = async () => {
     if (!screenName.trim()) return;
     const row = await api<SavedScreen>('/api/screens', { body: { name: screenName.trim(), definition: toDefinition(screen) } });
@@ -289,6 +323,9 @@ export function Explorer() {
           />
           <Button variant="outline" icon={<Download className="size-3.5" />} onClick={exportCsv} disabled={!filtered.length}>
             CSV
+          </Button>
+          <Button variant="outline" icon={<Download className="size-3.5" />} onClick={exportExcel} disabled={!filtered.length}>
+            Excel
           </Button>
         </>
       }
@@ -608,7 +645,7 @@ export function Explorer() {
                               if (key === 'score' && !screen.relative) {
                                 return (
                                   <div key={key} className="flex shrink-0 items-center justify-end gap-1.5 px-2.5" style={{ width }}>
-                                    {typeof value === 'number' ? <ScoreRing score={value} size="xs" /> : <span className="text-[11px] text-faint">—</span>}
+                                    {typeof value === 'number' ? <ScoreChip score={value} /> : <span className="text-[11px] text-faint">—</span>}
                                   </div>
                                 );
                               }

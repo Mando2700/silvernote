@@ -121,15 +121,20 @@ export function MarketHeatmap({ items, height = 520, className }: { items: Heatm
   const allSectors = useMemo(() => layout(items.slice(0, SECTOR_UNIVERSE_SIZE), 1000, 600, null, sectorChange).sectors.sort((a, b) => b.cap - a.cap), [items, sectorChange]);
 
   const market = useMarketColors();
-  // Diverging: loss ← gray → gain, saturating at ±3%.
+  // Diverging: loss ← gray → gain, saturating at ±3%. The square-root stretch gives typical
+  // ±0.2–1% days visible color instead of near-gray.
   const changeScale = useMemo(
-    () => scaleLinear<string>().domain([-3, 0, 3]).range([market.lossFill, NEUTRAL, market.gainFill]).interpolate(interpolateLab).clamp(true),
+    () => scaleLinear<string>().domain([-1, 0, 1]).range([market.lossFill, NEUTRAL, market.gainFill]).interpolate(interpolateLab).clamp(true),
     [market],
   );
+  const stretch = (value: number) => Math.sign(value) * Math.sqrt(Math.min(Math.abs(value), 3) / 3);
   const colorFor = (item: HeatmapItem) =>
     mode === 'change'
-      ? item.changePct === null ? NEUTRAL : changeScale(item.changePct)
+      ? item.changePct === null ? NEUTRAL : changeScale(stretch(item.changePct))
       : item.score === null ? '#1b1d22' : scoreScale(item.score);
+  const legend = mode === 'change'
+    ? [-3, -1, -0.25, 0, 0.25, 1, 3].map((value) => ({ label: value === 0 ? '0' : `${value > 0 ? '+' : ''}${value}%`, color: changeScale(stretch(value)) }))
+    : [30, 45, 60, 75, 90].map((value) => ({ label: String(value), color: scoreScale(value) }));
 
   return (
     <div className={cn('flex flex-col gap-2.5', className)}>
@@ -156,6 +161,13 @@ export function MarketHeatmap({ items, height = 520, className }: { items: Heatm
               { value: 'score', label: 'SilverNote Score' },
             ]}
           />
+          <div className="hidden items-center gap-px sm:flex" aria-label="Color scale">
+            {legend.map((stop) => (
+              <span key={stop.label} className="flex h-4 min-w-8 items-center justify-center px-1 font-mono text-[9.5px] text-white/85" style={{ background: stop.color }}>
+                {stop.label}
+              </span>
+            ))}
+          </div>
           <Button size="xs" variant={showTable ? 'secondary' : 'ghost'} icon={<Table2 className="size-3" />} onClick={() => setShowTable((value) => !value)}>
             Table
           </Button>
