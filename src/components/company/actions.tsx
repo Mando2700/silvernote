@@ -88,6 +88,9 @@ const ALERT_KINDS = [
   { value: 'score_above', label: 'Score rises to', unit: 'pts' },
   { value: 'score_below', label: 'Score falls to', unit: 'pts' },
   { value: 'score_change', label: 'Score changes by', unit: 'pts' },
+  { value: 'filing', label: 'Files a 10-K/10-Q/8-K', unit: '' },
+  { value: 'insider_buy', label: 'Insider buys at least', unit: '$' },
+  { value: 'earnings', label: 'Earnings in (days)', unit: 'days' },
 ] as const;
 
 type AlertRow = { id: string; kind: string; threshold: number; active: boolean; triggered_at: string | null; created_at: string };
@@ -104,6 +107,9 @@ export function AlertButton({ symbol, price, score }: { symbol: string; price: n
     if (next === 'change_pct') return '5';
     if (next === 'score_above') return String(Math.min(100, (score ?? 60) + 10));
     if (next === 'score_below') return String(Math.max(0, (score ?? 60) - 10));
+    if (next === 'filing') return '0';
+    if (next === 'insider_buy') return '100000';
+    if (next === 'earnings') return '1';
     return '8';
   };
 

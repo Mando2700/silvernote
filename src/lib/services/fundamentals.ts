@@ -13,7 +13,7 @@ import type { StatementPeriod } from '@/lib/finance/statement-types';
  */
 
 /** Bump when the concepts below change so the scheduler rebuilds every company's row. */
-export const FUNDAMENTALS_VERSION = 2;
+export const FUNDAMENTALS_VERSION = 3;
 
 type Concept = { key: string; tags: string[]; unit: string; kind: 'duration' | 'instant'; sign?: 1 | -1 };
 
@@ -30,7 +30,7 @@ const DURATIONS: Concept[] = [
   { key: 'sharesDiluted', unit: 'shares', kind: 'duration', tags: ['WeightedAverageNumberOfDilutedSharesOutstanding'] },
   { key: 'depreciationAmortization', unit: 'USD', kind: 'duration', tags: ['DepreciationDepletionAndAmortization', 'DepreciationAndAmortization'] },
   { key: 'operatingCashFlow', unit: 'USD', kind: 'duration', tags: ['NetCashProvidedByUsedInOperatingActivities', 'NetCashProvidedByUsedInOperatingActivitiesContinuingOperations'] },
-  { key: 'capex', unit: 'USD', kind: 'duration', sign: -1, tags: ['PaymentsToAcquirePropertyPlantAndEquipment', 'PaymentsToAcquireProductiveAssets', 'PaymentsForCapitalImprovements'] },
+  { key: 'capex', unit: 'USD', kind: 'duration', sign: -1, tags: ['PaymentsToAcquirePropertyPlantAndEquipment', 'PaymentsToAcquireProductiveAssets', 'PaymentsForCapitalImprovements', 'PaymentsToAcquireOtherPropertyPlantAndEquipment', 'PaymentsToAcquireOtherProductiveAssets'] },
   { key: 'dividendsPaid', unit: 'USD', kind: 'duration', sign: -1, tags: ['PaymentsOfDividends', 'PaymentsOfDividendsCommonStock'] },
   { key: 'buybacks', unit: 'USD', kind: 'duration', sign: -1, tags: ['PaymentsForRepurchaseOfCommonStock'] },
   { key: 'netInterestIncome', unit: 'USD', kind: 'duration', tags: ['InterestIncomeExpenseNet'] },

@@ -1,12 +1,14 @@
 'use client';
 
-import { ArrowUpRight, FileText, Sparkles } from 'lucide-react';
+import { ArrowUpRight, FileText, Quote, Sparkles } from 'lucide-react';
 import { useState } from 'react';
+import { toast } from 'sonner';
 import useSWR from 'swr';
 
 import { useShell } from '@/components/shell/providers';
 import { Button } from '@/components/ui/button';
 import { Badge, EmptyState, Panel, PanelHeader, Segmented, Skeleton } from '@/components/ui/primitives';
+import { cite } from '@/lib/citation';
 import type { Filing, NewsItem } from '@/lib/data/types';
 import { relativeTime, shortDate } from '@/lib/format';
 import { cn } from '@/lib/utils';
@@ -138,6 +140,17 @@ export function NewsPanel({ symbol, name }: { symbol: string; name: string }) {
                     {filing.description ?? filing.primaryDocument}
                   </a>
                   <span className="text-[11px] text-faint">{shortDate(filing.filedAt)}</span>
+                  <button
+                    className="opacity-0 transition-opacity group-hover:opacity-100 focus:opacity-100"
+                    title="Copy citation (APA)"
+                    aria-label="Copy APA citation"
+                    onClick={() => {
+                      void navigator.clipboard.writeText(cite({ kind: 'filing', company: name, form: filing.form, filedAt: filing.filedAt, periodEnd: filing.reportDate, url: filing.url }, 'APA').replace(/\*/g, ''));
+                      toast.success('APA citation copied');
+                    }}
+                  >
+                    <Quote className="size-3.5 text-muted hover:text-ink" />
+                  </button>
                   {/^(10-K|10-Q|8-K|20-F)/.test(filing.form) ? (
                     <Button
                       size="xs"

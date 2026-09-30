@@ -1,14 +1,16 @@
 'use client';
 
-import { ChevronRight, Info } from 'lucide-react';
+import { ChevronRight, Download, Info } from 'lucide-react';
 import { motion } from 'motion/react';
 import { Fragment, useMemo, useState } from 'react';
 import useSWR from 'swr';
 
 import { ColumnChart, LineChart, ScrollReveal, StackedColumns, Waterfall, type WaterfallStep } from '@/components/charts/svg';
 import { Sparkline } from '@/components/motion/sparkline';
+import { Button } from '@/components/ui/button';
 import { Badge, EmptyState, Panel, PanelHeader, Segmented, Skeleton, Tabs } from '@/components/ui/primitives';
 import { Drawer } from '@/components/ui/overlay';
+import { downloadFrom } from '@/lib/export-client';
 import { compactNumber, isNum, pct, relativeTime, signedPct } from '@/lib/format';
 import { FEATURED, statementLayout, STATEMENT_TITLES, type LineDef } from '@/lib/finance/statement-layout';
 import type { Frequency, LineItemKey, StandardizedStatements, StatementKind, StatementPeriod } from '@/lib/finance/statement-types';
@@ -672,18 +674,23 @@ export function Financials({ symbol, isBank }: { symbol: string; isBank: boolean
         kicker={`Source: ${data.source === 'sec' ? 'SEC XBRL filings' : data.source === 'fmp' ? 'Financial Modeling Prep' : 'SEC frames'} · updated ${relativeTime(data.fetchedAt)}`}
         title="Financial statements"
         actions={
-          <Segmented
-            value={frequency}
-            onChange={(next) => {
-              setFrequency(next);
-              setSelectedKey(null);
-              setCompareKeys([]);
-            }}
-            options={[
-              { value: 'annual', label: 'Annual' },
-              { value: 'quarterly', label: 'Quarterly' },
-            ]}
-          />
+          <>
+            <Button size="xs" variant="outline" icon={<Download className="size-3" />} onClick={() => void downloadFrom(`/api/export/financials?symbol=${symbol}&frequency=${frequency}`, `${symbol}-financials.xlsx`)}>
+              Excel
+            </Button>
+            <Segmented
+              value={frequency}
+              onChange={(next) => {
+                setFrequency(next);
+                setSelectedKey(null);
+                setCompareKeys([]);
+              }}
+              options={[
+                { value: 'annual', label: 'Annual' },
+                { value: 'quarterly', label: 'Quarterly' },
+              ]}
+            />
+          </>
         }
       >
         {currency !== 'USD' ? <Badge tone="outline" className="mt-2">Figures in {currency} as reported</Badge> : null}

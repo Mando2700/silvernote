@@ -146,7 +146,7 @@ const GAAP_SPECS: Spec[] = [
   d('changeInInventory', gaap('IncreaseDecreaseInInventories'), -1),
   d('changeInPayables', gaap('IncreaseDecreaseInAccountsPayable', 'IncreaseDecreaseInAccountsPayableAndAccruedLiabilities')),
   d('operatingCashFlow', gaap('NetCashProvidedByUsedInOperatingActivities', 'NetCashProvidedByUsedInOperatingActivitiesContinuingOperations')),
-  d('capex', gaap('PaymentsToAcquirePropertyPlantAndEquipment', 'PaymentsToAcquireProductiveAssets', 'PaymentsForCapitalImprovements'), -1),
+  d('capex', gaap('PaymentsToAcquirePropertyPlantAndEquipment', 'PaymentsToAcquireProductiveAssets', 'PaymentsForCapitalImprovements', 'PaymentsToAcquireOtherPropertyPlantAndEquipment', 'PaymentsToAcquireOtherProductiveAssets'), -1),
   d('acquisitions', gaap('PaymentsToAcquireBusinessesNetOfCashAcquired'), -1),
   d('purchasesOfInvestments', gaap('PaymentsToAcquireInvestments', 'PaymentsToAcquireAvailableForSaleSecuritiesDebt', 'PaymentsToAcquireMarketableSecurities'), -1),
   d('salesOfInvestments', gaap(

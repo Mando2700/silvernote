@@ -14,6 +14,7 @@ import { FullscreenOverlay } from '@/components/ui/fullscreen-overlay';
 import { MarkdownToolbar } from '@/components/ui/markdown-toolbar';
 import { Drawer } from '@/components/ui/overlay';
 import { Badge, Input, Panel, PanelHeader, Select, Skeleton, Textarea } from '@/components/ui/primitives';
+import { KillCriteria } from '@/components/workspace/kill-criteria';
 import { ThesisExportDialog } from '@/components/workspace/thesis-export';
 import { api, revalidate } from '@/lib/client';
 import { dateTime, price, relativeTime, signedPct } from '@/lib/format';
@@ -371,12 +372,15 @@ export function CompanyWorkspace({ symbol, name, currentPrice }: { symbol: strin
           ))}
         </div>
       </div>
-      <Panel className="self-start">
-        <PanelHeader kicker="Every change, timestamped" title="Thesis timeline" actions={<Badge tone="outline">{versions.length} versions</Badge>} />
-        <div className="max-h-[70vh] overflow-y-auto px-3 pb-3">
-          <VersionTimeline versions={versions} onSelect={setSelected} />
-        </div>
-      </Panel>
+      <div className="flex flex-col gap-4 self-start">
+        <KillCriteria symbol={symbol} />
+        <Panel>
+          <PanelHeader kicker="Every change, timestamped" title="Thesis timeline" actions={<Badge tone="outline">{versions.length} versions</Badge>} />
+          <div className="max-h-[70vh] overflow-y-auto px-3 pb-3">
+            <VersionTimeline versions={versions} onSelect={setSelected} />
+          </div>
+        </Panel>
+      </div>
 
       <ThesisExportDialog open={exportOpen} onClose={() => setExportOpen(false)} symbol={symbol} name={name} workspace={data} />
 

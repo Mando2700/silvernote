@@ -53,6 +53,11 @@ const KIND_LABEL: Record<string, string> = {
   score_above: 'Score rises to',
   score_below: 'Score falls to',
   score_change: 'Score moves by',
+  filing: 'New filing',
+  insider_buy: 'Insider buy ≥ $',
+  earnings: 'Earnings within (days)',
+  metric_above: 'Metric above',
+  metric_below: 'Metric below',
 };
 
 function TagEditor({ tags, onSave }: { tags: string[]; onSave: (tags: string[]) => void }) {
@@ -112,7 +117,7 @@ function AlertsView() {
                     </Link>
                   </td>
                   <td className="px-3 py-2 text-ink-2">
-                    {KIND_LABEL[alert.kind]} <span className="num text-ink">{alert.threshold}{alert.kind === 'change_pct' ? '%' : ''}</span>
+                    {KIND_LABEL[alert.kind] ?? alert.kind} {alert.kind === 'filing' ? null : <span className="num text-ink">{alert.threshold}{alert.kind === 'change_pct' ? '%' : ''}</span>}
                   </td>
                   <td className="px-3 py-2 text-[11.5px] text-muted">{alert.triggered_at ? `Fired ${relativeTime(alert.triggered_at)}` : 'Watching'}</td>
                   <td className="px-3 py-2">

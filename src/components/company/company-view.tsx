@@ -9,6 +9,8 @@ import { PriceChart, type ChartMarker } from '@/components/charts/price-chart';
 import { ColumnChart } from '@/components/charts/svg';
 import { AlertButton, TradeButton, WatchlistMenu } from '@/components/company/actions';
 import { DcfPanel } from '@/components/company/dcf-panel';
+import { InsidersPanel } from '@/components/company/insiders-panel';
+import { CompsTool } from '@/components/lab/lab';
 import { Financials } from '@/components/company/financials';
 import { NewsList, NewsPanel } from '@/components/company/news-panel';
 import { PeersPanel } from '@/components/company/peers-panel';
@@ -32,7 +34,7 @@ import { useLivePrices } from '@/lib/live-client';
 import { pushRecentStock } from '@/lib/recent-stocks';
 import { cn } from '@/lib/utils';
 
-type Tab = 'overview' | 'financials' | 'dcf' | 'score' | 'peers' | 'news' | 'workspace';
+type Tab = 'overview' | 'financials' | 'dcf' | 'comps' | 'score' | 'peers' | 'news' | 'insiders' | 'workspace';
 
 type CompanyPayload = {
   symbol: string;
@@ -418,9 +420,11 @@ export function CompanyView({ initial }: { initial: CompanyInitial }) {
               { value: 'overview', label: 'Overview' },
               { value: 'financials', label: 'Financials' },
               { value: 'dcf', label: 'DCF' },
+              { value: 'comps', label: 'Comps' },
               { value: 'score', label: 'Score' },
               { value: 'peers', label: 'Peers' },
               { value: 'news', label: 'News & filings' },
+              { value: 'insiders', label: 'Insiders & risks' },
               { value: 'workspace', label: 'Workspace', badge: data?.workspace ? <span className="size-1.5 rounded-full bg-brand" /> : null },
             ]}
           />
@@ -431,6 +435,8 @@ export function CompanyView({ initial }: { initial: CompanyInitial }) {
         {tab === 'overview' ? data ? <Overview data={data} onTab={setTab} /> : <Skeleton className="h-[520px] w-full" /> : null}
         {tab === 'financials' ? <Financials symbol={symbol} isBank={isBank} /> : null}
         {tab === 'dcf' ? <DcfPanel symbol={symbol} /> : null}
+        {tab === 'comps' ? <CompsTool key={symbol} initialSymbol={symbol} /> : null}
+        {tab === 'insiders' ? <InsidersPanel symbol={symbol} /> : null}
         {tab === 'score' ? <ScorePanel symbol={symbol} /> : null}
         {tab === 'peers' ? <PeersPanel symbol={symbol} /> : null}
         {tab === 'news' ? <NewsPanel symbol={symbol} name={name} /> : null}
