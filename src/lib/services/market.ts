@@ -1,7 +1,7 @@
 import 'server-only';
 
 import { q } from '@/lib/db';
-import { cached, memo, within } from '@/lib/data/http';
+import { cached, within } from '@/lib/data/http';
 import * as finnhub from '@/lib/data/providers/finnhub';
 import * as fmp from '@/lib/data/providers/fmp';
 import * as nasdaq from '@/lib/data/providers/nasdaq';
@@ -26,7 +26,7 @@ const knownFunds = new Set<string>(INDEX_PROXIES.map((item) => item.symbol));
 /** One live quote: Finnhub (real-time) when configured, otherwise Nasdaq (delayed), trying stocks and funds. */
 export async function getLiveQuote(symbol: string): Promise<Quote | null> {
   const upper = symbol.toUpperCase();
-  return memo(`quote:${upper}`, 20_000, async () => {
+  return cached(`quote:${upper}`, 20, async () => {
     if (finnhub.finnhubEnabled()) {
       const quote = await finnhub.fetchQuote(upper).catch(() => null);
       if (quote?.price) return quote;
@@ -85,7 +85,7 @@ export async function getQuotes(symbols: string[]): Promise<Record<string, Quote
   return result;
 }
 
-/** How long a page waits for extended-hours prices; slower ones land in the memo for the next refresh. */
+/** How long a page waits for extended-hours prices; slower ones land in the cache for the next refresh. */
 const EXTENDED_QUOTES_BUDGET_MS = 2_500;
 
 /**
@@ -102,7 +102,7 @@ export async function getExtendedQuotes(symbols: string[]): Promise<Record<strin
       for (;;) {
         const symbol = queue.shift();
         if (!symbol) return;
-        const extended = await memo(`extended:${symbol}`, 60_000, async () => {
+        const extended = await cached(`extended:${symbol}`, 60, async () => {
           const order: Array<'stocks' | 'etf'> = knownFunds.has(symbol) ? ['etf', 'stocks'] : ['stocks', 'etf'];
           for (const assetClass of order) {
             const quote = await nasdaq.fetchQuote(symbol, assetClass).catch(() => null);
@@ -119,6 +119,12 @@ export async function getExtendedQuotes(symbols: string[]): Promise<Record<strin
   );
   await within(loading, EXTENDED_QUOTES_BUDGET_MS);
   return { ...result };
+}
+
+/** Today's minute bars against the prior close, shared through the cache by every chart that shows them. */
+export function getIntraday(symbol: string) {
+  const upper = symbol.toUpperCase();
+  return cached(`intraday:${upper}`, 60, () => nasdaq.fetchIntraday(upper));
 }
 
 export async function getIndexQuotes() {

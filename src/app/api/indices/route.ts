@@ -1,7 +1,6 @@
 import { route } from '@/lib/api';
-import { fetchIntraday } from '@/lib/data/providers/nasdaq';
 import { memo, within } from '@/lib/data/http';
-import { getIndexQuotes, INDEX_PROXIES } from '@/lib/services/market';
+import { getIndexQuotes, getIntraday, INDEX_PROXIES } from '@/lib/services/market';
 import { getCandles } from '@/lib/services/prices';
 
 export const dynamic = 'force-dynamic';
@@ -20,7 +19,7 @@ const SPARK_BUDGET_MS = 2_500;
 
 /** Today's session (minute bars) against the prior close; falls back to recent daily closes. */
 async function daySpark(symbol: string) {
-  const intraday = await memo(`intraday:${symbol}`, 60_000, () => fetchIntraday(symbol)).catch(() => null);
+  const intraday = await getIntraday(symbol).catch(() => null);
   if (intraday?.bars.length) return { spark: thin(intraday.bars.map((bar) => bar.price), SPARK_POINTS), previousClose: intraday.previousClose };
   const candles = await getCandles(symbol, 0.25).catch(() => []);
   return { spark: candles.slice(-45).map((candle) => candle.c), previousClose: null };

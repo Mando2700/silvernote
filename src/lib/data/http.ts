@@ -2,6 +2,8 @@ import 'server-only';
 
 import { AsyncLocalStorage } from 'node:async_hooks';
 
+import { after } from 'next/server';
+
 import { q, q1 } from '@/lib/db';
 
 export class ProviderError extends Error {
@@ -184,9 +186,52 @@ export function forget(prefix: string) {
   for (const key of memoStore.keys()) if (key.startsWith(prefix)) memoStore.delete(key);
 }
 
+/** True inside runInBackground (jobs): such callers want current data and can afford to wait for it. */
+export function inBackground() {
+  return backgroundWork.getStore() === true;
+}
+
 /**
- * Database-backed cache for provider payloads. Fresh rows are returned directly; when a refresh
- * fails, a stale row is served instead of an error so the UI keeps working offline or rate-limited.
+ * Keep the serverless instance alive until `work` settles when there is a request to attach it to
+ * (Vercel freezes an instance once its response is sent).
+ */
+export function keepAlive(work: Promise<unknown>) {
+  // Failures are the work's own business (a background refresh keeps the old value); never leave them unhandled.
+  const settled = work.catch(() => {});
+  try {
+    after(() => settled);
+  } catch {
+    // outside a request (background job, local timer): the process keeps running anyway
+  }
+}
+
+const refreshing = new Map<string, Promise<unknown>>();
+
+/** Load and store one cache entry; concurrent refreshes of a key share one load. */
+function refreshCached<T>(key: string, ttlSeconds: number, load: () => Promise<T>): Promise<T> {
+  const pending = refreshing.get(key);
+  if (pending) return pending as Promise<T>;
+  const promise = (async () => {
+    const value = await load();
+    await q(
+      `insert into public.api_cache (key, payload, fetched_at, expires_at)
+       values ($1, $2::jsonb, now(), now() + make_interval(secs => $3))
+       on conflict (key) do update set payload = excluded.payload, fetched_at = now(), expires_at = excluded.expires_at`,
+      [key, JSON.stringify(value ?? null), ttlSeconds],
+    );
+    memoStore.set(`db:${key}`, { value, expires: Date.now() + Math.min(ttlSeconds * 1000, 60_000) });
+    return value;
+  })().finally(() => refreshing.delete(key));
+  refreshing.set(key, promise);
+  return promise;
+}
+
+/**
+ * Database-backed cache for provider payloads, shared by every server instance. Fresh rows are
+ * returned directly. An expired row is still returned at once while a background refresh replaces
+ * it (a page never waits on a slow provider for data it already has); if that refresh fails the old
+ * row stays. Only a key with no row at all waits for the provider. Background jobs always wait for
+ * a refresh of an expired row, since they are there to bring data up to date.
  */
 export async function cached<T>(key: string, ttlSeconds: number, load: () => Promise<T>): Promise<T> {
   return memo(`db:${key}`, Math.min(ttlSeconds * 1000, 60_000), async () => {
@@ -195,15 +240,12 @@ export async function cached<T>(key: string, ttlSeconds: number, load: () => Pro
       [key],
     );
     if (row?.fresh) return row.payload;
+    if (row && !inBackground()) {
+      keepAlive(runInBackground(() => refreshCached(key, ttlSeconds, load)));
+      return row.payload;
+    }
     try {
-      const value = await load();
-      await q(
-        `insert into public.api_cache (key, payload, fetched_at, expires_at)
-         values ($1, $2::jsonb, now(), now() + make_interval(secs => $3))
-         on conflict (key) do update set payload = excluded.payload, fetched_at = now(), expires_at = excluded.expires_at`,
-        [key, JSON.stringify(value ?? null), ttlSeconds],
-      );
-      return value;
+      return await refreshCached(key, ttlSeconds, load);
     } catch (error) {
       if (row) return row.payload;
       throw error;

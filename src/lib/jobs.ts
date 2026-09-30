@@ -1,9 +1,7 @@
 import 'server-only';
 
-import { after } from 'next/server';
-
 import { q, q1 } from '@/lib/db';
-import { forget, purgeExpiredCache, runInBackground } from '@/lib/data/http';
+import { forget, keepAlive, purgeExpiredCache, runInBackground } from '@/lib/data/http';
 import { evaluatePriceAlerts } from '@/lib/services/alerts';
 import { dueIbkrConnections, syncDueIbkr } from '@/lib/services/ibkr';
 import { ingestFundamentals } from '@/lib/services/fundamentals';
@@ -117,15 +115,6 @@ async function runScores(report: Reporter, job: Running, params: { minMarketCap?
 }
 
 const serverless = Boolean(process.env.VERCEL);
-
-/** Keep the instance alive until `work` settles when there is a request to attach it to (Vercel freezes it otherwise). */
-function keepAlive(work: Promise<unknown>) {
-  try {
-    after(() => work);
-  } catch {
-    // outside a request (local interval tick): the long-lived server keeps running anyway
-  }
-}
 
 export async function startJob(kind: JobKind, params: Record<string, unknown> = {}): Promise<string> {
   const existing = running.get(kind);

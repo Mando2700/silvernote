@@ -1,7 +1,7 @@
 import 'server-only';
 
 import { q, q1 } from '@/lib/db';
-import { memo } from '@/lib/data/http';
+import { forget, inBackground, keepAlive, memo, runInBackground } from '@/lib/data/http';
 import { fetchDailyHistory as fmpHistory, fmpEnabled } from '@/lib/data/providers/fmp';
 import { fetchFredSeries } from '@/lib/data/providers/fred';
 import { fetchDailyHistory } from '@/lib/data/providers/nasdaq';
@@ -104,37 +104,61 @@ export async function getCandles(symbol: string, years = 2): Promise<Candle[]> {
     const trusted = Boolean(row?.adjusted_at);
     if (row && trusted && coversStart && (upToDate || recentlyFetched)) return trimTo(existing, wantedStart);
     if (row && !trusted && recentlyFetched && coversStart) return trimTo(existing, wantedStart);
-
-    // Keep at least the history already stored when re-downloading in full.
-    const fullFrom = isoDate(row?.first_date && row.first_date < isoDate(wantedStart) ? new Date(`${row.first_date}T00:00:00Z`) : wantedStart);
-    let full = !(row && trusted && coversStart && row.last_date);
-    let { candles, source } = await download(upper, full ? fullFrom : isoDate(new Date(Date.parse(row?.last_date as string) - 7 * 86_400_000)), isoDate(new Date()));
-    if (!full && candles.length && historyRebased(existing, candles)) {
-      full = true;
-      ({ candles, source } = await download(upper, fullFrom, isoDate(new Date())));
-    }
-    const downloaded = candles.length > 0;
-    const merged = full ? candles : merge(existing, candles);
-    const finalCandles = merged.length ? merged : existing;
-    if (finalCandles.length) {
-      await q(
-        `insert into public.price_history (symbol, candles, first_date, last_date, source, fetched_at, adjusted_at)
-         values ($1, $2::jsonb, $3::date, $4::date, coalesce($5, 'none'), now(), case when $6 then now() else null end)
-         on conflict (symbol) do update set candles = excluded.candles, first_date = excluded.first_date,
-           last_date = excluded.last_date, source = coalesce($5, price_history.source), fetched_at = now(),
-           adjusted_at = case when $6 then now() else price_history.adjusted_at end`,
-        [
-          upper,
-          JSON.stringify(finalCandles.map(toTuple)),
-          isoDate(new Date(finalCandles[0].t * 1000)),
-          isoDate(new Date(finalCandles[finalCandles.length - 1].t * 1000)),
-          downloaded ? source : null,
-          full && downloaded,
-        ],
+    // A page gets the stored history at once when it covers the range and only misses the latest
+    // sessions; the top-up runs in the background. Jobs wait, as they are there to bring it up to date.
+    if (row && trusted && coversStart && existing.length && !inBackground()) {
+      keepAlive(
+        runInBackground(() => refreshHistory(upper, row, existing, wantedStart)).finally(() => forget(`candles:${upper}:`)),
       );
+      return trimTo(existing, wantedStart);
     }
-    return trimTo(finalCandles, wantedStart);
+    return trimTo(await refreshHistory(upper, row, existing, wantedStart), wantedStart);
   });
+}
+
+const refreshingHistory = new Map<string, Promise<Candle[]>>();
+
+/** Download what's missing (or everything, when needed) and store it; one download per symbol at a time. */
+function refreshHistory(upper: string, row: StoredRow | null, existing: Candle[], wantedStart: Date): Promise<Candle[]> {
+  const pending = refreshingHistory.get(upper);
+  if (pending) return pending;
+  const promise = downloadHistory(upper, row, existing, wantedStart).finally(() => refreshingHistory.delete(upper));
+  refreshingHistory.set(upper, promise);
+  return promise;
+}
+
+async function downloadHistory(upper: string, row: StoredRow | null, existing: Candle[], wantedStart: Date): Promise<Candle[]> {
+  const trusted = Boolean(row?.adjusted_at);
+  const coversStart = row?.first_date ? row.first_date <= isoDate(new Date(wantedStart.getTime() + 10 * 86_400_000)) : false;
+  // Keep at least the history already stored when re-downloading in full.
+  const fullFrom = isoDate(row?.first_date && row.first_date < isoDate(wantedStart) ? new Date(`${row.first_date}T00:00:00Z`) : wantedStart);
+  let full = !(row && trusted && coversStart && row.last_date);
+  let { candles, source } = await download(upper, full ? fullFrom : isoDate(new Date(Date.parse(row?.last_date as string) - 7 * 86_400_000)), isoDate(new Date()));
+  if (!full && candles.length && historyRebased(existing, candles)) {
+    full = true;
+    ({ candles, source } = await download(upper, fullFrom, isoDate(new Date())));
+  }
+  const downloaded = candles.length > 0;
+  const merged = full ? candles : merge(existing, candles);
+  const finalCandles = merged.length ? merged : existing;
+  if (finalCandles.length) {
+    await q(
+      `insert into public.price_history (symbol, candles, first_date, last_date, source, fetched_at, adjusted_at)
+       values ($1, $2::jsonb, $3::date, $4::date, coalesce($5, 'none'), now(), case when $6 then now() else null end)
+       on conflict (symbol) do update set candles = excluded.candles, first_date = excluded.first_date,
+         last_date = excluded.last_date, source = coalesce($5, price_history.source), fetched_at = now(),
+         adjusted_at = case when $6 then now() else price_history.adjusted_at end`,
+      [
+        upper,
+        JSON.stringify(finalCandles.map(toTuple)),
+        isoDate(new Date(finalCandles[0].t * 1000)),
+        isoDate(new Date(finalCandles[finalCandles.length - 1].t * 1000)),
+        downloaded ? source : null,
+        full && downloaded,
+      ],
+    );
+  }
+  return finalCandles;
 }
 
 function trimTo(candles: Candle[], start: Date) {

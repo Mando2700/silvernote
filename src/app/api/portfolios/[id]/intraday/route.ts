@@ -1,12 +1,12 @@
 import { route } from '@/lib/api';
-import { fetchIntraday } from '@/lib/data/providers/nasdaq';
-import { memo } from '@/lib/data/http';
-import { getExtendedQuotes, getQuotes } from '@/lib/services/market';
+import { within } from '@/lib/data/http';
+import { getExtendedQuotes, getIntraday, getQuotes } from '@/lib/services/market';
 import { getHoldings, getPortfolio } from '@/lib/services/portfolio';
 
 export const dynamic = 'force-dynamic';
 
 const COMPARE = ['SPY', 'QQQ', 'DIA'];
+const INTRADAY_BUDGET_MS = 3_000;
 
 /** Latest session at minute resolution for today's holdings, indexed to the prior close (= 100). */
 export const GET = route<{ id: string }>(async ({ user, params }) => {
@@ -15,7 +15,8 @@ export const GET = route<{ id: string }>(async ({ user, params }) => {
   const held = positions.filter((holding) => holding.shares > 1e-9);
   const symbols = [...new Set([...held.map((holding) => holding.symbol), ...COMPARE])];
   const series = new Map(
-    await Promise.all(symbols.map(async (symbol) => [symbol, await memo(`intraday:${symbol}`, 60_000, () => fetchIntraday(symbol))] as const)),
+    // A symbol whose bars aren't cached yet and are slow to load charts flat this time; they arrive for the next refresh.
+    await Promise.all(symbols.map(async (symbol) => [symbol, await within(getIntraday(symbol).catch(() => null), INTRADAY_BUDGET_MS)] as const)),
   );
   // Prior closes come from the same quote feed as the portfolio's day change, so the chart ends where the headline number does.
   const [quotes, extendedQuotes] = await Promise.all([getQuotes(COMPARE), getExtendedQuotes(COMPARE)]);
