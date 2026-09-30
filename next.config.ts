@@ -8,8 +8,8 @@ const securityHeaders = [
 ];
 
 const nextConfig: NextConfig = {
-  // PGlite ships WASM + data files and `postgres` opens raw sockets: load both from node_modules at runtime.
-  serverExternalPackages: ['@electric-sql/pglite', 'postgres'],
+  // PGlite ships WASM + data files and `pg` opens raw sockets: load both from node_modules at runtime.
+  serverExternalPackages: ['@electric-sql/pglite', 'pg'],
   // Migrations are read from disk at runtime; make sure they travel with a deployed server bundle.
   outputFileTracingIncludes: {
     '/**': ['./supabase/migrations/**/*.sql'],

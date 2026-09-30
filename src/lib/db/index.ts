@@ -3,7 +3,7 @@ import 'server-only';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
-import { after } from 'next/server';
+import type { Pool } from 'pg';
 
 import { env } from '@/lib/env';
 
@@ -40,12 +40,13 @@ $f$;
 /**
  * Objects become JSON text (callers cast with ::jsonb / ::json), arrays of objects too
  * (used with json_to_recordset). Arrays of primitives stay arrays for ::text[] params, and
- * binary values (Uint8Array/Buffer) pass through for bytea.
+ * binary values become Buffers for bytea.
  */
 function normalizeParams(params: unknown[] = []) {
   return params.map((value) => {
     if (value === undefined) return null;
-    if (value === null || value instanceof Date || ArrayBuffer.isView(value)) return value;
+    if (value === null || value instanceof Date) return value;
+    if (ArrayBuffer.isView(value)) return Buffer.from(value.buffer, value.byteOffset, value.byteLength);
     if (Array.isArray(value)) {
       return value.some((item) => item !== null && typeof item === 'object') ? JSON.stringify(value) : value;
     }
@@ -86,120 +87,121 @@ async function createPglite(): Promise<Driver> {
 
 /** A query with no answer this long is on a dead socket (typically left over from a frozen instance). */
 const QUERY_WATCHDOG_MS = 60_000;
-const SERVERLESS_IDLE_SECONDS = 5;
 
 /**
- * Serverless instances are frozen between requests with their sockets still open, and on Supabase's
- * session pooler every open socket pins one of its few slots. After each query, keep the request
- * alive until the pool's idle timeout has closed the sockets (what @vercel/functions'
- * attachDatabasePool does for pools it knows; it doesn't support postgres.js). Stay on the session
- * pooler: postgres.js loses replies on the transaction pooler (6543).
+ * Serverless instances are frozen between requests with their sockets still open. On Supabase's
+ * session pooler (5432) each open socket pins one of a handful of server slots, so frozen instances
+ * starve live ones; the transaction pooler (6543) only holds a slot while a query runs.
  */
-let idleHold: { timer: ReturnType<typeof setTimeout>; resolve: () => void } | null = null;
-function holdUntilPoolIdle() {
-  if (idleHold) {
-    clearTimeout(idleHold.timer);
-    idleHold.resolve();
-  }
-  let resolve = () => {};
-  const done = new Promise<void>((settle) => (resolve = settle));
-  const hold = {
-    resolve,
-    timer: setTimeout(() => {
-      if (idleHold === hold) idleHold = null;
-      resolve();
-    }, SERVERLESS_IDLE_SECONDS * 1000 + 500),
-  };
-  idleHold = hold;
+export function serverlessDatabaseUrl(url: string) {
   try {
-    after(() => done);
+    const parsed = new URL(url);
+    if (parsed.hostname.endsWith('.pooler.supabase.com') && parsed.port === '5432') {
+      parsed.port = '6543';
+      return parsed.toString();
+    }
   } catch {
-    // outside a request scope (a background job's later queries): the job itself keeps the instance alive
-    clearTimeout(hold.timer);
-    if (idleHold === hold) idleHold = null;
-    resolve();
+    // not a URL we can reason about; use it as given
   }
+  return url;
 }
 
-async function createPostgres(url: string): Promise<Driver> {
-  const { default: postgres } = await import('postgres');
+/** JSON columns, unwrapping rows an earlier driver stored as a JSON string scalar holding the JSON text. */
+function parseJson(value: string) {
+  const parsed = JSON.parse(value);
+  if (typeof parsed === 'string' && /^\s*[[{]/.test(parsed)) {
+    try {
+      return JSON.parse(parsed);
+    } catch {
+      return parsed;
+    }
+  }
+  return parsed;
+}
+
+async function createPostgres(rawUrl: string): Promise<Driver> {
+  // node-postgres sends each query as one Parse/Bind/Execute/Sync batch, which Supabase's pooler
+  // handles in both modes (postgres.js's describe round trip stalled there).
+  const { default: pg } = await import('pg');
   const serverless = Boolean(process.env.VERCEL);
-  const sql = postgres(url, {
-    // Every serverless instance keeps its own pool; a small one stops many instances from exhausting Supabase's connection limit.
-    max: serverless ? 2 : 5,
-    // Close idle sockets before the instance is frozen, and recycle long-lived ones.
-    idle_timeout: serverless ? SERVERLESS_IDLE_SECONDS : 20,
-    max_lifetime: serverless ? 5 * 60 : null,
-    connect_timeout: 20,
-    // Supabase's transaction pooler cannot use prepared statements.
-    prepare: false,
-    onnotice: () => {},
-    // normalizeParams already hands json/jsonb params over as JSON text. postgres.js would
-    // JSON.stringify them again once it learns the param type, storing a JSON string scalar.
-    types: {
-      json: {
-        to: 114,
-        from: [114, 3802],
-        serialize: (value: unknown) => (typeof value === 'string' ? value : JSON.stringify(value)),
-        parse: (value: string) => {
-          const parsed = JSON.parse(value);
-          // Rows written before this fix hold the JSON text as a string scalar; unwrap them.
-          if (typeof parsed === 'string' && /^\s*[[{]/.test(parsed)) {
-            try {
-              return JSON.parse(parsed);
-            } catch {
-              return parsed;
-            }
-          }
-          return parsed;
-        },
-      },
-    },
+  const url = serverless ? serverlessDatabaseUrl(rawUrl) : rawUrl;
+  const local = /@(localhost|127\.0\.0\.1)[:/]/.test(url);
+  const types = {
+    getTypeParser: ((oid: number, format?: 'text' | 'binary') => {
+      if (oid === 114 || oid === 3802) return parseJson;
+      // A date is a calendar day: midnight UTC, not the server's local midnight.
+      if (oid === 1082) return (value: string) => new Date(value);
+      return pg.types.getTypeParser(oid, format);
+    }) as typeof pg.types.getTypeParser,
+  };
+  const pool = new pg.Pool({
+    connectionString: url,
+    ssl: local ? undefined : { rejectUnauthorized: false },
+    // Every serverless instance keeps its own pool; keep it small.
+    max: serverless ? 3 : 5,
+    idleTimeoutMillis: serverless ? 5_000 : 20_000,
+    connectionTimeoutMillis: 20_000,
+    maxLifetimeSeconds: serverless ? 5 * 60 : 0,
+    types,
   });
+  // A socket that dies while idle in the pool must not crash the process.
+  pool.on('error', () => {});
+  if (serverless) {
+    // Keep the function alive until idle clients are released before Vercel freezes it.
+    const { attachDatabasePool } = await import('@vercel/functions');
+    attachDatabasePool(pool);
+  }
+  globalForDb.__silvernotePool = pool;
 
-  globalForDb.__silvernoteSql = sql;
-
-  const run = async <T>(runner: typeof sql, text: string, params?: unknown[]) => {
+  const run = async <T>(runner: Pick<Pool, 'query'>, text: string, params?: unknown[]) => {
     let timer: ReturnType<typeof setTimeout> | undefined;
     const watchdog = new Promise<never>((_, reject) => {
       timer = setTimeout(() => {
         // Drop the whole pool so the next request connects afresh instead of queueing behind dead sockets.
-        if (globalForDb.__silvernoteSql === sql) {
-          globalForDb.__silvernoteSql = undefined;
+        if (globalForDb.__silvernotePool === pool) {
+          globalForDb.__silvernotePool = undefined;
           globalForDb.__silvernoteDb = undefined;
         }
-        void sql.end({ timeout: 0 }).catch(() => {});
+        void pool.end().catch(() => {});
         reject(new Error('The database did not answer in time. Please retry.'));
       }, QUERY_WATCHDOG_MS);
     });
     try {
-      return (await Promise.race([runner.unsafe(text, normalizeParams(params) as never[]), watchdog])) as unknown as T[];
+      const result = await Promise.race([runner.query(text, normalizeParams(params)), watchdog]);
+      return result.rows as T[];
     } finally {
       clearTimeout(timer);
-      if (serverless) holdUntilPoolIdle();
     }
   };
 
   return {
     kind: 'postgres',
-    query: <T>(text: string, params?: unknown[]) => run<T>(sql, text, params),
+    query: <T>(text: string, params?: unknown[]) => run<T>(pool, text, params),
     async transaction<T>(fn: (q: Queryable) => Promise<T>) {
-      const result = await sql.begin((tx) =>
-        fn({ query: <R>(text: string, params?: unknown[]) => run<R>(tx as unknown as typeof sql, text, params) }),
-      );
-      return result as T;
+      const client = await pool.connect();
+      try {
+        await client.query('begin');
+        const result = await fn({ query: <R>(text: string, params?: unknown[]) => run<R>(client, text, params) });
+        await client.query('commit');
+        return result;
+      } catch (error) {
+        await client.query('rollback').catch(() => {});
+        throw error;
+      } finally {
+        client.release();
+      }
     },
     async exec(script: string) {
       // Scripts carry their own begin/commit (and rollback on failure), so pin them to one connection.
-      const conn = await sql.reserve();
+      const client = await pool.connect();
       try {
-        await conn.unsafe(script).simple();
+        await client.query(script);
       } catch (error) {
         // Don't hand a connection with a half-open transaction back to the pool.
-        await conn.unsafe('rollback;').simple().catch(() => {});
+        await client.query('rollback').catch(() => {});
         throw error;
       } finally {
-        conn.release();
+        client.release();
       }
     },
   };
@@ -268,8 +270,8 @@ async function init(): Promise<Driver> {
 
 const globalForDb = globalThis as unknown as {
   __silvernoteDb?: Promise<Driver>;
-  /** The live postgres.js pool, so a watchdog on a replaced pool can't discard its successor. */
-  __silvernoteSql?: unknown;
+  /** The live Postgres pool, so a watchdog on a replaced pool can't discard its successor. */
+  __silvernotePool?: unknown;
   __silvernoteMigrationCheck?: { at: number; files: string; running: Promise<void> | null };
 };
 
