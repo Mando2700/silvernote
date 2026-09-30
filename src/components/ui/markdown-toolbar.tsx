@@ -1,7 +1,7 @@
 'use client';
 
-import { Bold, Code, Heading1, Heading2, Heading3, Italic, Link2, List, ListOrdered, Quote } from 'lucide-react';
-import type { RefObject } from 'react';
+import { Bold, Code, Heading1, Heading2, Heading3, ImagePlus, Italic, Link2, List, ListOrdered, Quote } from 'lucide-react';
+import { useEffect, useRef, type RefObject } from 'react';
 
 import { cn } from '@/lib/utils';
 
@@ -57,6 +57,25 @@ function applyAction(value: string, start: number, end: number, action: Action):
   return { value: next, start: lineStart, end: lineStart + nextBlock.length };
 }
 
+/**
+ * Shrink an image to at most 1400px wide and encode it as JPEG so it can live inline in a note
+ * (a chart screenshot ends up around 60–150 KB).
+ */
+export async function imageToDataUrl(file: Blob, maxWidth = 1400) {
+  const bitmap = await createImageBitmap(file);
+  const scale = Math.min(1, maxWidth / bitmap.width);
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.round(bitmap.width * scale);
+  canvas.height = Math.round(bitmap.height * scale);
+  const context = canvas.getContext('2d');
+  if (!context) throw new Error('Canvas unavailable');
+  context.fillStyle = '#0b0c0f';
+  context.fillRect(0, 0, canvas.width, canvas.height);
+  context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+  bitmap.close();
+  return canvas.toDataURL('image/jpeg', 0.82);
+}
+
 export function MarkdownToolbar({
   textareaRef,
   value,
@@ -68,6 +87,37 @@ export function MarkdownToolbar({
   onChange: (next: string) => void;
   className?: string;
 }) {
+  const latest = useRef({ value, onChange });
+  useEffect(() => {
+    latest.current = { value, onChange };
+  });
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  const insertImage = async (file: Blob, name = 'image') => {
+    const el = textareaRef.current;
+    const url = await imageToDataUrl(file);
+    const { value: current, onChange: change } = latest.current;
+    const at = el?.selectionEnd ?? current.length;
+    const snippet = `\n![${name}](${url})\n`;
+    change(current.slice(0, at) + snippet + current.slice(at));
+  };
+
+  // Paste a screenshot straight into the editor.
+  useEffect(() => {
+    const el = textareaRef.current;
+    if (!el) return;
+    const onPaste = (event: ClipboardEvent) => {
+      const file = [...(event.clipboardData?.files ?? [])].find((item) => item.type.startsWith('image/'));
+      if (!file) return;
+      event.preventDefault();
+      void insertImage(file, 'pasted image');
+    };
+    el.addEventListener('paste', onPaste);
+    return () => el.removeEventListener('paste', onPaste);
+    // insertImage reads the latest value through a ref.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [textareaRef]);
+
   const run = (action: Action) => {
     const el = textareaRef.current;
     if (!el) return;
@@ -95,6 +145,20 @@ export function MarkdownToolbar({
           <Icon className="size-3.5" />
         </button>
       ))}
+      <button type="button" onClick={() => fileRef.current?.click()} title="Insert image (or paste one)" aria-label="Insert image" className="rounded-xs p-1.5 text-muted hover:bg-white/5 hover:text-ink">
+        <ImagePlus className="size-3.5" />
+      </button>
+      <input
+        ref={fileRef}
+        type="file"
+        accept="image/png,image/jpeg,image/webp"
+        hidden
+        onChange={(event) => {
+          const file = event.target.files?.[0];
+          if (file) void insertImage(file, file.name.replace(/\.[a-z]+$/i, ''));
+          event.target.value = '';
+        }}
+      />
     </div>
   );
 }

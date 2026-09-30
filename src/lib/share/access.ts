@@ -78,3 +78,31 @@ export function takeAttempt(key: string, limit = 8, windowMs = 10 * 60_000, now 
 export function clearAttempts(key: string) {
   attempts.delete(key);
 }
+
+/**
+ * The limiter shared by every server instance (serverless instances each have their own memory):
+ * counted in the database, falling back to the in-memory limiter if the database can't be reached.
+ */
+export async function takeSharedAttempt(key: string, limit = 8, windowMs = 10 * 60_000) {
+  try {
+    const { q1 } = await import('@/lib/db');
+    const row = await q1<{ count: number }>(
+      `insert into public.share_attempts (key, count, reset_at) values ($1, 1, now() + ($2 || ' milliseconds')::interval)
+       on conflict (key) do update set
+         count = case when public.share_attempts.reset_at <= now() then 1 else public.share_attempts.count + 1 end,
+         reset_at = case when public.share_attempts.reset_at <= now() then excluded.reset_at else public.share_attempts.reset_at end
+       returning count`,
+      [key, String(windowMs)],
+    );
+    if (Math.random() < 0.02) void q1("delete from public.share_attempts where reset_at < now() - interval '1 day'").catch(() => {});
+    return (row?.count ?? 1) <= limit;
+  } catch {
+    return takeAttempt(key, limit, windowMs);
+  }
+}
+
+export async function clearSharedAttempts(key: string) {
+  clearAttempts(key);
+  const { q } = await import('@/lib/db');
+  await q('delete from public.share_attempts where key = $1', [key]).catch(() => {});
+}

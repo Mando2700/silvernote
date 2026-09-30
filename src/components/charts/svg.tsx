@@ -1,7 +1,7 @@
 'use client';
 
 import { scaleBand, scaleLinear } from 'd3';
-import { useReducedMotion } from 'motion/react';
+import { animate, scroll, useReducedMotion } from 'motion/react';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 
 import { NEUTRAL_MARK, SERIES_COLORS, SILVER } from '@/lib/theme';
@@ -27,8 +27,8 @@ export function useWidth<T extends HTMLElement>() {
 }
 
 /**
- * Scroll-linked reveal: exposes --reveal (0→1) to children, scrubbed by scroll position with GSAP
- * ScrollTrigger. Bars scale up and lines draw as the chart travels into view.
+ * Scroll-linked reveal: exposes --reveal (0→1) to children, scrubbed by scroll position (motion's
+ * scroll()). Bars scale up and lines draw as the chart travels into view.
  */
 export function ScrollReveal({ children, className }: { children: ReactNode; className?: string }) {
   const ref = useRef<HTMLDivElement>(null);
@@ -36,38 +36,27 @@ export function ScrollReveal({ children, className }: { children: ReactNode; cla
   useEffect(() => {
     const element = ref.current;
     if (!element) return;
+    const set = (value: number) => element.style.setProperty('--reveal', value.toFixed(3));
     if (reduced) {
-      element.style.setProperty('--reveal', '1');
+      set(1);
       return;
     }
-    let cleanup = () => {};
-    let cancelled = false;
-    void (async () => {
-      const [{ default: gsap }, { ScrollTrigger }] = await Promise.all([import('gsap'), import('gsap/ScrollTrigger')]);
-      if (cancelled) return;
-      gsap.registerPlugin(ScrollTrigger);
-      const state = { value: 0 };
-      element.style.setProperty('--reveal', '0');
-      const tween = gsap.to(state, {
-        value: 1,
-        ease: 'none',
-        onUpdate: () => element.style.setProperty('--reveal', state.value.toFixed(3)),
-        scrollTrigger: { trigger: element, start: 'top 96%', end: 'top 72%', scrub: 0.4 },
-      });
-      // Charts already on screen when mounted should not wait for a scroll.
-      if (element.getBoundingClientRect().top < window.innerHeight * 0.72) {
-        tween.scrollTrigger?.kill();
-        gsap.to(state, { value: 1, duration: 0.8, ease: 'expo.out', onUpdate: () => element.style.setProperty('--reveal', state.value.toFixed(3)) });
-      }
-      cleanup = () => {
-        tween.scrollTrigger?.kill();
-        tween.kill();
-      };
-    })();
-    return () => {
-      cancelled = true;
-      cleanup();
-    };
+    // Charts already on screen when mounted should not wait for a scroll.
+    if (element.getBoundingClientRect().top < window.innerHeight * 0.72) {
+      const controls = animate(0, 1, { duration: 0.8, ease: [0.16, 1, 0.3, 1], onUpdate: set });
+      return () => controls.stop();
+    }
+    set(0);
+    let done = false;
+    const stop = scroll(
+      (progress: number) => {
+        if (done) return;
+        set(progress);
+        if (progress >= 1) done = true;
+      },
+      { target: element, offset: ['start 96%', 'start 72%'] },
+    );
+    return () => stop();
   }, [reduced]);
   return (
     <div ref={ref} className={className} style={{ ['--reveal' as string]: reduced ? 1 : 0 }}>

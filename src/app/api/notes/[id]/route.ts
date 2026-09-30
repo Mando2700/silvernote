@@ -23,7 +23,7 @@ export const PATCH = route<{ id: string }>(async ({ request, user, params }) => 
     request,
     z.object({
       title: z.string().max(200).optional(),
-      content: z.string().max(100_000).optional(),
+      content: z.string().max(1_500_000).optional(),
       symbol: z.string().trim().toUpperCase().max(16).nullable().optional(),
       tags: z.array(z.string().trim().min(1).max(30)).max(12).optional(),
       pinned: z.boolean().optional(),

@@ -10,5 +10,5 @@ export const GET = route<{ symbol: string }>(async ({ params }) => {
     getFilings(symbol).catch(() => []),
     getAnalystSignals(symbol).catch(() => null),
   ]);
-  return { news, filings, analyst };
+  return { news, filings: filings.slice(0, 120), analyst };
 });

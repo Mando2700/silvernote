@@ -23,7 +23,7 @@ export const POST = route(async ({ request, user }) => {
     request,
     z.object({
       title: z.string().max(200).default(''),
-      content: z.string().max(100_000).default(''),
+      content: z.string().max(1_500_000).default(''),
       symbol: z.string().trim().toUpperCase().max(16).nullable().optional(),
       tags: z.array(z.string().trim().min(1).max(30)).max(12).optional(),
     }),

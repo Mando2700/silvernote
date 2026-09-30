@@ -14,7 +14,7 @@ export const POST = route<{ symbol: string }>(async ({ request, user, params }) 
     request,
     z.object({
       section: z.enum(['thesis', 'drivers', 'risks', 'catalysts', 'disconfirming', 'valuation']),
-      content: z.string().max(40_000),
+      content: z.string().max(1_000_000),
       change_note: z.string().max(280).optional(),
     }),
   );

@@ -45,6 +45,23 @@ export const env = {
   get xaiVisionModel() {
     return read('XAI_VISION_MODEL') || read('XAI_MODEL') || 'grok-4';
   },
+  /** Web Push (VAPID) keys: `npx web-push generate-vapid-keys`. The public key also reaches the browser. */
+  get vapidPublicKey() {
+    return read('NEXT_PUBLIC_VAPID_PUBLIC_KEY');
+  },
+  get vapidPrivateKey() {
+    return read('VAPID_PRIVATE_KEY');
+  },
+  get telegramBotToken() {
+    return read('TELEGRAM_BOT_TOKEN');
+  },
+  get telegramChatId() {
+    return read('TELEGRAM_CHAT_ID');
+  },
+  /** Shared secret for /api/cron (Vercel Cron sends it as a bearer token; the GitHub scheduler too). */
+  get cronSecret() {
+    return read('CRON_SECRET');
+  },
 };
 
 export function isAuthEnabled() {

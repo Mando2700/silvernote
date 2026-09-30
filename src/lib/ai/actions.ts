@@ -7,7 +7,7 @@ import { HttpError } from '@/lib/auth';
 import { strategySchema } from '@/lib/backtest-schema';
 import { q, q1 } from '@/lib/db';
 import { screenDefinition, THESIS_SECTION_META, THESIS_SECTIONS } from '@/lib/schemas';
-import { createAlert, deleteAlert, type AlertKind } from '@/lib/services/alerts';
+import { ALERT_KINDS, ALERT_METRICS, createAlert, deleteAlert, type AlertKind } from '@/lib/services/alerts';
 import { getQuotes } from '@/lib/services/market';
 
 import type { ToolDefinition } from '@/lib/ai/tools';
@@ -18,14 +18,19 @@ import type { ToolDefinition } from '@/lib/ai/tools';
  */
 
 const tags = z.array(z.string().trim().min(1).max(24)).max(10).optional();
-const ALERT_KINDS = ['price_above', 'price_below', 'change_pct', 'score_above', 'score_below', 'score_change'] as const;
 
 const SCHEMAS = {
   create_note: z.object({ title: z.string().trim().min(1).max(200), content: z.string().max(100_000), symbol: symbolSchema.nullish(), tags }),
   append_to_note: z.object({ note_id: z.string().uuid(), content: z.string().min(1).max(50_000) }),
   add_to_watchlist: z.object({ watchlist: z.string().trim().min(1).max(60), symbol: symbolSchema, note: z.string().max(500).optional(), tags }),
   remove_from_watchlist: z.object({ watchlist: z.string().trim().min(1).max(60), symbol: symbolSchema }),
-  create_alert: z.object({ symbol: symbolSchema, kind: z.enum(ALERT_KINDS), threshold: z.number().finite(), note: z.string().max(280).optional() }),
+  create_alert: z.object({
+    symbol: symbolSchema,
+    kind: z.enum(ALERT_KINDS),
+    threshold: z.number().finite(),
+    note: z.string().max(280).optional(),
+    metric: z.enum(Object.keys(ALERT_METRICS) as [keyof typeof ALERT_METRICS, ...Array<keyof typeof ALERT_METRICS>]).optional(),
+  }),
   delete_alert: z.object({ alert_id: z.string().uuid() }),
   update_workspace: z.object({
     symbol: symbolSchema,
@@ -86,10 +91,16 @@ export const ACTION_TOOLS: ToolDefinition[] = [
   {
     type: 'function',
     name: 'propose_create_alert',
-    description: `Set an alert. price_above/price_below: price level; change_pct: daily move in percent (e.g. 5); score_above/score_below: SilverNote Score level; score_change: points of change. ${confirmNote}`,
+    description: `Set an alert. price_above/price_below: price level; change_pct: daily move in percent (e.g. 5); score_above/score_below: SilverNote Score level; score_change: points of change; filing: any new 10-K/10-Q/8-K/proxy/13D (threshold 0); insider_buy: open-market insider purchases worth at least threshold dollars; earnings: threshold = days before the report to notify; metric_above/metric_below: a fundamental ratio crosses threshold (fractions for percentages, e.g. 0.4 = 40% gross margin) — set metric. ${confirmNote}`,
     parameters: {
       type: 'object',
-      properties: { symbol: { type: 'string' }, kind: { type: 'string', enum: [...ALERT_KINDS] }, threshold: { type: 'number' }, note: { type: 'string' } },
+      properties: {
+        symbol: { type: 'string' },
+        kind: { type: 'string', enum: [...ALERT_KINDS] },
+        threshold: { type: 'number' },
+        metric: { type: 'string', enum: Object.keys(ALERT_METRICS) },
+        note: { type: 'string' },
+      },
       required: ['symbol', 'kind', 'threshold'],
     },
   },
@@ -176,6 +187,11 @@ function describe(kind: ActionKind, payload: Payload<ActionKind>): string {
         score_above: `SilverNote Score rises above ${p.threshold}`,
         score_below: `SilverNote Score falls below ${p.threshold}`,
         score_change: `SilverNote Score changes by ${p.threshold} points`,
+        filing: 'files a 10-K, 10-Q, 8-K or other key form',
+        insider_buy: `insiders buy at least $${p.threshold.toLocaleString()} on the open market`,
+        earnings: `is ${p.threshold} day(s) from reporting earnings`,
+        metric_above: `${p.metric ? ALERT_METRICS[p.metric].label : 'metric'} rises above ${p.threshold}`,
+        metric_below: `${p.metric ? ALERT_METRICS[p.metric].label : 'metric'} falls below ${p.threshold}`,
       };
       return `Alert when ${p.symbol} ${what[p.kind]}`;
     }

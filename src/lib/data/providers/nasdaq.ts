@@ -375,3 +375,82 @@ export async function fetchIntraday(symbol: string): Promise<{ previousClose: nu
   }
   return null;
 }
+
+// ─── Calendars ──────────────────────────────────────────────────────────────
+
+export type EarningsEvent = {
+  symbol: string;
+  name: string;
+  date: string;
+  time: 'pre' | 'post' | 'unknown';
+  marketCap: number | null;
+  fiscalQuarter: string | null;
+  epsForecast: number | null;
+  estimates: number | null;
+  lastYearEps: number | null;
+};
+
+type EarningsRow = { symbol?: string; name?: string; time?: string; marketCap?: string; fiscalQuarterEnding?: string; epsForecast?: string; noOfEsts?: string; lastYearEPS?: string };
+
+/** Every US earnings report scheduled on one day (`date` as YYYY-MM-DD). */
+export async function fetchEarningsCalendar(date: string): Promise<EarningsEvent[]> {
+  const data = await get<{ rows?: EarningsRow[] | null }>(`/calendar/earnings?date=${date}`);
+  return (data?.rows ?? [])
+    .filter((row) => row.symbol)
+    .map((row) => ({
+      symbol: normalizeSymbol(String(row.symbol)),
+      name: cleanSecurityName(row.name ?? ''),
+      date,
+      time: row.time === 'time-pre-market' ? 'pre' : row.time === 'time-after-hours' ? 'post' : 'unknown',
+      marketCap: parseLooseNumber(row.marketCap ?? null),
+      fiscalQuarter: row.fiscalQuarterEnding || null,
+      epsForecast: parseLooseNumber(row.epsForecast ?? null),
+      estimates: parseLooseNumber(row.noOfEsts ?? null),
+      lastYearEps: parseLooseNumber(row.lastYearEPS ?? null),
+    }));
+}
+
+export type DividendEvent = { symbol: string; name: string; exDate: string; payDate: string | null; amount: number | null; annual: number | null };
+
+type DividendRow = { symbol?: string; companyName?: string; dividend_Ex_Date?: string; payment_Date?: string; dividend_Rate?: number | string; indicated_Annual_Dividend?: number | string };
+
+function usDate(value: string | undefined) {
+  const match = value?.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  return match ? `${match[3]}-${match[1].padStart(2, '0')}-${match[2].padStart(2, '0')}` : null;
+}
+
+/** Ex-dividend dates falling on one day. */
+export async function fetchDividendCalendar(date: string): Promise<DividendEvent[]> {
+  const data = await get<{ calendar?: { rows?: DividendRow[] | null } }>(`/calendar/dividends?date=${date}`);
+  return (data?.calendar?.rows ?? [])
+    .filter((row) => row.symbol)
+    .map((row) => ({
+      symbol: normalizeSymbol(String(row.symbol)),
+      name: row.companyName ?? '',
+      exDate: usDate(row.dividend_Ex_Date) ?? date,
+      payDate: usDate(row.payment_Date),
+      amount: parseLooseNumber(row.dividend_Rate == null ? null : String(row.dividend_Rate)),
+      annual: parseLooseNumber(row.indicated_Annual_Dividend == null ? null : String(row.indicated_Annual_Dividend)),
+    }));
+}
+
+export type EconomicEvent = { date: string; time: string | null; country: string; name: string; actual: string | null; consensus: string | null; previous: string | null };
+
+type EconomicRow = { gmt?: string; country?: string; eventName?: string; actual?: string; consensus?: string; previous?: string };
+
+/** Economic releases on one day (all countries; times in GMT). */
+export async function fetchEconomicCalendar(date: string): Promise<EconomicEvent[]> {
+  const data = await get<{ rows?: EconomicRow[] | null }>(`/calendar/economicevents?date=${date}`);
+  const clean = (value: string | undefined) => (value && value.trim() && value.trim() !== '-' ? value.trim() : null);
+  return (data?.rows ?? [])
+    .filter((row) => row.eventName)
+    .map((row) => ({
+      date,
+      time: clean(row.gmt),
+      country: row.country ?? '',
+      name: htmlToText(String(row.eventName)),
+      actual: clean(row.actual),
+      consensus: clean(row.consensus),
+      previous: clean(row.previous),
+    }));
+}

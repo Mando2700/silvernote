@@ -8,7 +8,8 @@ import { NextResponse, type NextRequest } from 'next/server';
  */
 
 // Shared portfolio links (/s/<token>) and their passcode check are for people without a SilverNote account.
-const PUBLIC_PREFIXES = ['/login', '/auth/', '/s/', '/api/share/'];
+// /api/cron checks its own shared secret; the manifest, service worker and app icons must load before sign-in.
+const PUBLIC_PREFIXES = ['/login', '/auth/', '/s/', '/api/share/', '/api/cron', '/manifest.webmanifest', '/sw.js', '/apple-icon'];
 
 function copyCookies(from: NextResponse, to: NextResponse) {
   for (const cookie of from.cookies.getAll()) to.cookies.set(cookie);

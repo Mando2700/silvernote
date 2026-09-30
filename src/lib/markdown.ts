@@ -5,8 +5,9 @@ function escapeHtml(value: string) {
 }
 
 /**
- * Markdown → HTML for notes, theses and AI answers. Raw HTML in the source is shown as text and
- * links are limited to http(s)/mailto, so model output can never inject markup or scripts.
+ * Markdown → HTML for notes, theses and AI answers. Raw HTML in the source is shown as text,
+ * links are limited to http(s)/mailto and images to https or inline raster data, so model output
+ * can never inject markup or scripts.
  */
 const marked = new Marked({
   gfm: true,
@@ -21,8 +22,12 @@ const marked = new Marked({
       if (!safe) return text;
       return `<a href="${escapeHtml(safe)}" target="_blank" rel="noreferrer noopener"${title ? ` title="${escapeHtml(title)}"` : ''}>${text}</a>`;
     },
-    image({ text }) {
-      return escapeHtml(text ?? '');
+    // Images: https URLs and inline PNG/JPEG/WebP data (chart snapshots pasted into notes). Never SVG,
+    // which can carry script.
+    image({ href, text, title }) {
+      const safe = /^https:\/\//i.test(href) || /^data:image\/(png|jpe?g|webp);base64,[a-z0-9+/=]+$/i.test(href);
+      if (!safe) return escapeHtml(text ?? '');
+      return `<img src="${escapeHtml(href)}" alt="${escapeHtml(text ?? '')}"${title ? ` title="${escapeHtml(title)}"` : ''} loading="lazy" referrerpolicy="no-referrer" />`;
     },
   },
 });

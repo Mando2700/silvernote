@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { z } from 'zod';
 
 import { body, errorResponse } from '@/lib/api';
-import { accessCookieName, accessProof, clearAttempts, shareStatus, takeAttempt, verifyPasscode } from '@/lib/share/access';
+import { accessCookieName, accessProof, clearSharedAttempts, shareStatus, takeSharedAttempt, verifyPasscode } from '@/lib/share/access';
 import { getShareByToken } from '@/lib/services/shares';
 
 export const dynamic = 'force-dynamic';
@@ -18,10 +18,10 @@ export async function POST(request: Request, context: { params: Promise<{ token:
 
     const forwarded = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ?? 'local';
     const key = `${share.id}:${forwarded}`;
-    if (!takeAttempt(key)) return NextResponse.json({ error: 'Too many attempts. Try again in a few minutes.' }, { status: 429 });
+    if (!(await takeSharedAttempt(key))) return NextResponse.json({ error: 'Too many attempts. Try again in a few minutes.' }, { status: 429 });
     if (!(await verifyPasscode(passcode, share.passcode_hash))) return NextResponse.json({ error: 'That passcode is not right.' }, { status: 403 });
 
-    clearAttempts(key);
+    await clearSharedAttempts(key);
     const response = NextResponse.json({ ok: true });
     response.cookies.set(accessCookieName(share.id), accessProof({ id: share.id, token: share.token, passcode_hash: share.passcode_hash }), {
       httpOnly: true,

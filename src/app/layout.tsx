@@ -10,6 +10,7 @@ export const metadata: Metadata = {
   title: { default: 'SilverNote', template: '%s · SilverNote' },
   description: 'Personal investment research workstation.',
   robots: { index: false, follow: false },
+  appleWebApp: { capable: true, title: 'SilverNote', statusBarStyle: 'black-translucent' },
 };
 
 export const viewport: Viewport = {

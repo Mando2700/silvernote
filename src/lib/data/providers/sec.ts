@@ -86,7 +86,7 @@ export async function fetchSubmissions(cik: string) {
   const recent = payload.filings?.recent;
   const filings: Filing[] = [];
   if (recent) {
-    for (let index = 0; index < recent.accessionNumber.length && filings.length < 120; index += 1) {
+    for (let index = 0; index < recent.accessionNumber.length && filings.length < 1000; index += 1) {
       const accession = recent.accessionNumber[index];
       const primaryDocument = recent.primaryDocument[index] ?? '';
       const cikNumber = String(Number(padCik(cik)));
@@ -124,4 +124,10 @@ export async function fetchFilingText(url: string, maxChars = 120_000) {
     .replace(/\n\s*\n+/g, '\n\n')
     .trim();
   return text.length > maxChars ? `${text.slice(0, maxChars)}\n\n[truncated]` : text;
+}
+
+/** Raw text of any EDGAR archive document (XML ownership forms, exhibits). */
+export async function fetchSecDocument(url: string) {
+  if (!/^https:\/\/www\.sec\.gov\/Archives\/edgar\/data\//.test(url)) throw new Error('Only EDGAR archive documents can be read.');
+  return fetchText(url, { provider: 'sec', limiter: limiters.sec, headers: headers(), timeoutMs: 30_000 });
 }

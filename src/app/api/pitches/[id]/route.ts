@@ -10,7 +10,7 @@ const section = z.object({
   id: z.string().max(40),
   kind: z.string().max(40),
   title: z.string().max(120),
-  content: z.string().max(40_000),
+  content: z.string().max(1_000_000),
   included: z.boolean(),
 });
 
