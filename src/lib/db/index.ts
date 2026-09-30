@@ -85,8 +85,9 @@ async function createPglite(): Promise<Driver> {
 async function createPostgres(url: string): Promise<Driver> {
   const { default: postgres } = await import('postgres');
   const sql = postgres(url, {
-    max: 5,
-    idle_timeout: 30,
+    // Every serverless instance keeps its own pool; a small one stops many instances from exhausting Supabase's connection limit.
+    max: process.env.VERCEL ? 2 : 5,
+    idle_timeout: 20,
     connect_timeout: 20,
     // Supabase's transaction pooler cannot use prepared statements.
     prepare: false,
