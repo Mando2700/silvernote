@@ -3,7 +3,7 @@ import 'server-only';
 import { after } from 'next/server';
 
 import { q, q1 } from '@/lib/db';
-import { forget, purgeExpiredCache } from '@/lib/data/http';
+import { forget, purgeExpiredCache, runInBackground } from '@/lib/data/http';
 import { evaluatePriceAlerts } from '@/lib/services/alerts';
 import { dueIbkrConnections, syncDueIbkr } from '@/lib/services/ibkr';
 import { ingestFundamentals } from '@/lib/services/fundamentals';
@@ -147,7 +147,7 @@ export async function startJob(kind: JobKind, params: Record<string, unknown> = 
   const job: Running = { id, cancelled: false };
   running.set(kind, job);
   const report = reporter(id);
-  const work = (async () => {
+  const work = runInBackground(async () => {
     try {
       if (kind === 'universe') await runUniverse(report);
       else if (kind === 'fundamentals') await runFundamentals(report);
@@ -160,7 +160,7 @@ export async function startJob(kind: JobKind, params: Record<string, unknown> = 
     } finally {
       running.delete(kind);
     }
-  })();
+  });
   keepAlive(work);
   return id;
 }

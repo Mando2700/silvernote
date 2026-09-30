@@ -1,5 +1,7 @@
 import 'server-only';
 
+import { AsyncLocalStorage } from 'node:async_hooks';
+
 import { q, q1 } from '@/lib/db';
 
 export class ProviderError extends Error {
@@ -12,20 +14,36 @@ export class ProviderError extends Error {
   }
 }
 
-/** Spaces out requests to one provider and caps how many run at once. */
+const backgroundWork = new AsyncLocalStorage<true>();
+
+/** Run `fn` as background work: its provider requests yield to the ones a page is waiting on. */
+export function runInBackground<T>(fn: () => Promise<T>): Promise<T> {
+  return backgroundWork.run(true, fn);
+}
+
+/**
+ * Spaces out requests to one provider and caps how many run at once. Background work (jobs) queues
+ * behind requests a page is waiting on and never takes the last slot, so a long sweep can't stall the UI.
+ */
 export class RateLimiter {
   private nextSlot = 0;
   private active = 0;
   private waiting: Array<() => void> = [];
+  private waitingBackground: Array<() => void> = [];
 
   constructor(
     private readonly minIntervalMs: number,
     private readonly concurrency: number,
   ) {}
 
+  private get backgroundLimit() {
+    return Math.max(1, this.concurrency - 1);
+  }
+
   async run<T>(task: () => Promise<T>): Promise<T> {
-    if (this.active >= this.concurrency) {
-      await new Promise<void>((resolve) => this.waiting.push(resolve));
+    const background = backgroundWork.getStore() === true;
+    if (background ? this.active >= this.backgroundLimit || this.waiting.length > 0 : this.active >= this.concurrency) {
+      await new Promise<void>((resolve) => (background ? this.waitingBackground : this.waiting).push(resolve));
     }
     this.active += 1;
     try {
@@ -36,7 +54,8 @@ export class RateLimiter {
       return await task();
     } finally {
       this.active -= 1;
-      this.waiting.shift()?.();
+      if (this.waiting.length) this.waiting.shift()?.();
+      else if (this.active < this.backgroundLimit) this.waitingBackground.shift()?.();
     }
   }
 }
@@ -54,6 +73,21 @@ export const limiters = {
 
 export function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Wait at most `ms` for optional data: past that resolve `undefined` and let the work finish on its
+ * own (its memo/cache entry then serves the next request).
+ */
+export async function within<T>(work: Promise<T>, ms: number): Promise<T | undefined> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<undefined>((resolve) => (timer = setTimeout(() => resolve(undefined), ms)));
+  work.catch(() => {});
+  try {
+    return await Promise.race([work, timeout]);
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 export const BROWSER_UA =

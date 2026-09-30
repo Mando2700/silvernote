@@ -1,7 +1,7 @@
 import { route } from '@/lib/api';
 import { fetchIntraday } from '@/lib/data/providers/nasdaq';
-import { memo } from '@/lib/data/http';
-import { getIndexQuotes } from '@/lib/services/market';
+import { memo, within } from '@/lib/data/http';
+import { getIndexQuotes, INDEX_PROXIES } from '@/lib/services/market';
 import { getCandles } from '@/lib/services/prices';
 
 export const dynamic = 'force-dynamic';
@@ -15,6 +15,9 @@ function thin(values: number[], points: number) {
   return Array.from({ length: points }, (_, index) => values[Math.round(index * step)]);
 }
 
+/** The sparkline is decoration: never hold the strip's prices back for long waiting on one. */
+const SPARK_BUDGET_MS = 2_500;
+
 /** Today's session (minute bars) against the prior close; falls back to recent daily closes. */
 async function daySpark(symbol: string) {
   const intraday = await memo(`intraday:${symbol}`, 60_000, () => fetchIntraday(symbol)).catch(() => null);
@@ -25,8 +28,13 @@ async function daySpark(symbol: string) {
 
 export const GET = route(async () => {
   return memo('indices:strip', 30_000, async () => {
-    const quotes = await getIndexQuotes();
-    const sparks = await Promise.all(quotes.map((item) => daySpark(item.symbol)));
+    // Sparklines only need the symbols: load them alongside the quotes.
+    const [quotes, sparks] = await Promise.all([
+      getIndexQuotes(),
+      Promise.all(
+        INDEX_PROXIES.map(async (item) => (await within(daySpark(item.symbol), SPARK_BUDGET_MS)) ?? { spark: [], previousClose: null }),
+      ),
+    ]);
     return quotes.map((item, index) => ({
       symbol: item.symbol,
       name: item.name,

@@ -1,7 +1,7 @@
 import 'server-only';
 
 import { q } from '@/lib/db';
-import { cached, memo } from '@/lib/data/http';
+import { cached, memo, within } from '@/lib/data/http';
 import * as finnhub from '@/lib/data/providers/finnhub';
 import * as fmp from '@/lib/data/providers/fmp';
 import * as nasdaq from '@/lib/data/providers/nasdaq';
@@ -85,15 +85,19 @@ export async function getQuotes(symbols: string[]): Promise<Record<string, Quote
   return result;
 }
 
+/** How long a page waits for extended-hours prices; slower ones land in the memo for the next refresh. */
+const EXTENDED_QUOTES_BUDGET_MS = 2_500;
+
 /**
  * Pre-market and after-hours prices from Nasdaq (Finnhub's quote carries none), keyed by symbol.
- * Empty during the regular session; symbols without extended trading are left out.
+ * Empty during the regular session; symbols without extended trading, or not loaded within the
+ * budget, are left out.
  */
 export async function getExtendedQuotes(symbols: string[]): Promise<Record<string, ExtendedQuote>> {
   const result: Record<string, ExtendedQuote> = {};
   if (isMarketOpen()) return result;
   const queue = [...new Set(symbols.map((symbol) => symbol.toUpperCase()))];
-  await Promise.all(
+  const loading = Promise.all(
     Array.from({ length: Math.min(4, queue.length) }, async () => {
       for (;;) {
         const symbol = queue.shift();
@@ -113,7 +117,8 @@ export async function getExtendedQuotes(symbols: string[]): Promise<Record<strin
       }
     }),
   );
-  return result;
+  await within(loading, EXTENDED_QUOTES_BUDGET_MS);
+  return { ...result };
 }
 
 export async function getIndexQuotes() {
