@@ -98,3 +98,15 @@ export async function getTaxReport(portfolio: PortfolioRow, userId: string) {
     waitForLongTerm: waitForLongTerm(lots, rates),
   };
 }
+
+// ─── Poland (PIT-38) ─────────────────────────────────────────────────────────
+
+export async function getPolishTaxReport(portfolio: PortfolioRow) {
+  const [{ nbpRates }, { computePlTax, makeRateBefore }] = await Promise.all([import('@/lib/data/providers/nbp'), import('@/lib/finance/tax-pl')]);
+  const transactions = await getTransactions(portfolio.id);
+  const first = transactions.reduce<string | null>((min, row) => (min === null || row.traded_at < min ? row.traded_at : min), null);
+  if (!first) return { years: [], disposals: [], unusedLosses: [], missingRates: [], currency: 'USD', method: 'FIFO' as const };
+  const rates = await nbpRates('USD', Number(first.slice(0, 4)));
+  const result = computePlTax(transactions, makeRateBefore(rates));
+  return { ...result, currency: 'USD', method: 'FIFO' as const };
+}

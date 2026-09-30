@@ -4,6 +4,7 @@ import { evaluate } from '@/lib/ai/calc';
 import { ACTION_TOOLS, isActionTool, proposeAction } from '@/lib/ai/actions';
 import { money, portfolioContext, snapshotLine } from '@/lib/ai/context';
 import { parseChanges, PLATFORM_TOOLS, resolvePortfolio, riskFreeForUser, runPlatformTool } from '@/lib/ai/platform-tools';
+import { RESEARCH_TOOLS, runResearchTool } from '@/lib/ai/research-tools';
 import type { StatementPeriod } from '@/lib/finance/statement-types';
 import { pct } from '@/lib/format';
 import { getPeerSymbols } from '@/lib/services/market';
@@ -143,6 +144,7 @@ export const TOOLS: ToolDefinition[] = [
     },
   },
   ...PLATFORM_TOOLS,
+  ...RESEARCH_TOOLS,
   ...ACTION_TOOLS,
 ];
 
@@ -380,7 +382,7 @@ async function run(name: string, args: Record<string, unknown>, ctx: ToolContext
         })
         .join('\n');
     default:
-      return (await runPlatformTool(name, args, ctx)) ?? `Unknown tool ${name}.`;
+      return (await runPlatformTool(name, args, ctx)) ?? (await runResearchTool(name, args, ctx)) ?? `Unknown tool ${name}.`;
   }
 }
 

@@ -73,6 +73,8 @@ type Submissions = {
       form: string[];
       primaryDocument: string[];
       primaryDocDescription: string[];
+      /** 8-K item numbers, e.g. "2.02,9.01" (2.02 = results of operations, i.e. an earnings release). */
+      items?: string[];
     };
   };
 };
@@ -97,6 +99,7 @@ export async function fetchSubmissions(cik: string) {
         accession,
         primaryDocument,
         description: recent.primaryDocDescription[index] || null,
+        items: recent.items?.[index] || null,
         url: `https://www.sec.gov/Archives/edgar/data/${cikNumber}/${accession.replace(/-/g, '')}/${primaryDocument}`,
       });
     }

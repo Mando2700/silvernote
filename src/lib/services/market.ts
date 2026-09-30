@@ -261,7 +261,7 @@ export async function getNewsForSymbols(symbols: string[], perSymbol = 8) {
 export async function getFilings(symbol: string): Promise<Filing[]> {
   const security = await getSecurity(symbol);
   if (!security?.cik) return [];
-  return cached(`filings-v2:${security.cik}`, 6 * 3600, async () => (await fetchSubmissions(security.cik as string)).filings);
+  return cached(`filings-v3:${security.cik}`, 6 * 3600, async () => (await fetchSubmissions(security.cik as string)).filings);
 }
 
 // ─── Peers & sector context ─────────────────────────────────────────────────

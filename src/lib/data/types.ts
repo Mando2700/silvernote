@@ -54,6 +54,8 @@ export type Filing = {
   primaryDocument: string;
   description: string | null;
   url: string;
+  /** 8-K item numbers ("2.02,9.01"); absent on older cached lists. */
+  items?: string | null;
 };
 
 export type CompanyProfile = {

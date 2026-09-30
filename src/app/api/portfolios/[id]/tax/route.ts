@@ -1,13 +1,25 @@
 import { route, searchParam } from '@/lib/api';
 import { disposalsCsv } from '@/lib/finance/tax-lots';
 import { getPortfolio } from '@/lib/services/portfolio';
-import { getLedger, getTaxReport } from '@/lib/services/tax';
+import { plDisposalsCsv } from '@/lib/finance/tax-pl';
+import { getLedger, getPolishTaxReport, getTaxReport } from '@/lib/services/tax';
 
 export const dynamic = 'force-dynamic';
 
 /** Tax lots, realized gains by year, wash sales and harvesting ideas. `?format=csv&year=2025` exports Form 8949 rows. */
 export const GET = route<{ id: string }>(async ({ request, user, params }) => {
   const portfolio = await getPortfolio(user.id, params.id);
+  if (searchParam(request, 'jurisdiction') === 'PL') {
+    const report = await getPolishTaxReport(portfolio);
+    if (searchParam(request, 'format') === 'csv') {
+      const year = searchParam(request, 'year');
+      const rows = year ? report.disposals.filter((row) => row.sold.startsWith(`${year}-`)) : report.disposals;
+      return new Response(plDisposalsCsv(rows), {
+        headers: { 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': `attachment; filename="PIT-38-${portfolio.name.replace(/[^\w-]+/g, '-')}${year ? `-${year}` : ''}.csv"` },
+      });
+    }
+    return report;
+  }
   if (searchParam(request, 'format') === 'csv') {
     const year = searchParam(request, 'year');
     const { disposals } = await getLedger(portfolio);
