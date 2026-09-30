@@ -2,7 +2,7 @@
 
 import { X } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
-import { useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 
 import { cn } from '@/lib/utils';
@@ -189,10 +189,18 @@ export function Menu({
   align?: 'start' | 'end';
 }) {
   const [open, setOpen] = useState(false);
-  const [pos, setPos] = useState<{ top: number; left?: number; right?: number }>({ top: 0 });
   const ref = useRef<HTMLDivElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const mounted = useMounted();
+  // Place the menu under its trigger once it is in the DOM, before it paints.
+  useLayoutEffect(() => {
+    const rect = ref.current?.getBoundingClientRect();
+    const menu = menuRef.current;
+    if (!open || !rect || !menu) return;
+    menu.style.top = `${rect.bottom + 6}px`;
+    if (align === 'end') menu.style.right = `${window.innerWidth - rect.right}px`;
+    else menu.style.left = `${rect.left}px`;
+  }, [open, align]);
   useEffect(() => {
     if (!open) return;
     const close = (event: PointerEvent) => {
@@ -210,11 +218,7 @@ export function Menu({
     };
   }, [open]);
   useEscape(open, () => setOpen(false));
-  const toggle = () => {
-    const rect = ref.current?.getBoundingClientRect();
-    if (rect) setPos({ top: rect.bottom + 6, ...(align === 'end' ? { right: window.innerWidth - rect.right } : { left: rect.left }) });
-    setOpen((value) => !value);
-  };
+  const toggle = () => setOpen((value) => !value);
   return (
     <div ref={ref} className="relative">
       {trigger({ open, toggle })}
@@ -224,7 +228,6 @@ export function Menu({
         {open ? (
           <motion.div
             ref={menuRef}
-            style={pos}
             className="panel fixed z-[200] min-w-44 bg-surface-3 p-1 shadow-[0_20px_50px_-15px_rgba(0,0,0,0.9)]"
             initial={{ opacity: 0, y: -4, scale: 0.98 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}

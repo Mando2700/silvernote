@@ -179,7 +179,10 @@ export function PriceChart({
     return slots;
   }, [sorted, rangeKey]);
   const futureRef = useRef<number[]>([]);
-  futureRef.current = futureSlots;
+  // A layout effect declared ahead of the ones that draw, so they read this render's slots.
+  useLayoutEffect(() => {
+    futureRef.current = futureSlots;
+  }, [futureSlots]);
 
   const renderBars = (bars: Candle[]) => {
     const priceSeries = priceRef.current;
@@ -493,7 +496,6 @@ export function PriceChart({
     };
   }, [sorted, height]);
 
-  const last = sorted[sorted.length - 1];
   // Return over the visible bars, so zooming or loading older history keeps the figure honest.
   const clampIndex = (value: number) => Math.min(sorted.length - 1, Math.max(0, value));
   const firstIndex = visible ? clampIndex(Math.ceil(visible.from)) : 0;

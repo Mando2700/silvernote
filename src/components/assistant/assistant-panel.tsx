@@ -26,7 +26,10 @@ export function AssistantPanel() {
   const [usedDraftId, setUsedDraftId] = useState<number | null>(null);
   const draft = latestDraft && latestDraft.id !== usedDraftId ? latestDraft : null;
   const draftIdRef = useRef<number | null>(null);
-  draftIdRef.current = latestDraft?.id ?? null;
+  // Declared first so the close effect below sees this render's draft.
+  useEffect(() => {
+    draftIdRef.current = latestDraft?.id ?? null;
+  }, [latestDraft]);
   useEffect(() => {
     if (!assistantOpen && draftIdRef.current !== null) setUsedDraftId(draftIdRef.current);
   }, [assistantOpen]);
