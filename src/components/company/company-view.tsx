@@ -435,7 +435,7 @@ export function CompanyView({ initial }: { initial: CompanyInitial }) {
         {tab === 'overview' ? data ? <Overview data={data} onTab={setTab} /> : <Skeleton className="h-[520px] w-full" /> : null}
         {tab === 'financials' ? <Financials symbol={symbol} isBank={isBank} /> : null}
         {tab === 'dcf' ? <DcfPanel symbol={symbol} /> : null}
-        {tab === 'comps' ? <CompsTool key={symbol} initialSymbol={symbol} /> : null}
+        {tab === 'comps' ? <CompsTool key={`${symbol}:${searchParams.get('peers') ?? ''}`} initialSymbol={symbol} initialPeers={searchParams.get('peers')?.split(',').filter(Boolean)} /> : null}
         {tab === 'insiders' ? <InsidersPanel symbol={symbol} /> : null}
         {tab === 'score' ? <ScorePanel symbol={symbol} /> : null}
         {tab === 'peers' ? <PeersPanel symbol={symbol} /> : null}

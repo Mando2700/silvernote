@@ -5,6 +5,7 @@ import { useState } from 'react';
 import useSWR from 'swr';
 
 import { ColumnChart, LineChart } from '@/components/charts/svg';
+import { useSearchParams } from '@/components/shell/keep-alive';
 import { Page } from '@/components/shell/page';
 import { Button } from '@/components/ui/button';
 import { CompanyLogo } from '@/components/ui/company-logo';
@@ -29,8 +30,8 @@ type EventStudy = {
   window: [number, number];
 };
 
-function EventStudyTool() {
-  const [symbol, setSymbol] = useState('');
+function EventStudyTool({ initialSymbol }: { initialSymbol?: string }) {
+  const [symbol, setSymbol] = useState(initialSymbol ?? '');
   const [source, setSource] = useState<'earnings' | '8-K' | 'custom'>('earnings');
   const [dates, setDates] = useState('');
   const [before, setBefore] = useState('5');
@@ -229,9 +230,9 @@ const COMP_COLUMNS: Array<{ key: string; label: string; format: (value: number) 
   { key: 'score', label: 'Score', format: (value) => value.toFixed(0), xlsx: 'number' },
 ];
 
-export function CompsTool({ initialSymbol }: { initialSymbol?: string }) {
+export function CompsTool({ initialSymbol, initialPeers }: { initialSymbol?: string; initialPeers?: string[] }) {
   const [symbol, setSymbol] = useState(initialSymbol ?? '');
-  const [peers, setPeers] = useState<string[] | null>(null);
+  const [peers, setPeers] = useState<string[] | null>(initialPeers?.length ? initialPeers : null);
   const key = symbol ? `/api/lab/comps?symbol=${symbol}${peers ? `&peers=${peers.join(',')}` : ''}` : null;
   const { data, isLoading } = useSWR<Comps>(key);
   const currentPeers = peers ?? data?.rows.filter((row) => row.symbol !== data.target).map((row) => row.symbol) ?? [];
@@ -383,7 +384,9 @@ export function CompsTool({ initialSymbol }: { initialSymbol?: string }) {
 }
 
 export function Lab() {
-  const [tool, setTool] = useState<'event' | 'comps'>('event');
+  const params = useSearchParams();
+  const [tool, setTool] = useState<'event' | 'comps'>(params.get('tool') === 'comps' ? 'comps' : 'event');
+  const initialSymbol = params.get('symbol')?.toUpperCase() ?? undefined;
   return (
     <Page
       kicker="Event studies · comparable companies · exports"
@@ -391,7 +394,7 @@ export function Lab() {
       description="Tools for coursework and write-ups: every result exports to Excel with its sources and citations."
     >
       <Tabs value={tool} onChange={setTool} tabs={[{ value: 'event', label: 'Event study' }, { value: 'comps', label: 'Comparable companies' }]} />
-      {tool === 'event' ? <EventStudyTool /> : <CompsTool />}
+      {tool === 'event' ? <EventStudyTool key={initialSymbol} initialSymbol={initialSymbol} /> : <CompsTool key={initialSymbol} initialSymbol={initialSymbol} />}
     </Page>
   );
 }

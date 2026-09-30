@@ -370,7 +370,9 @@ export function Watchlists() {
                             animate={{ opacity: 1 }}
                             exit={{ opacity: 0 }}
                             onClick={() => router.push(`/company/${item.symbol}`)}
-                            className="group cursor-pointer border-b border-line hover:bg-white/[0.025]"
+                            data-nav-row
+                            tabIndex={-1}
+                            className="group cursor-pointer border-b border-line outline-none hover:bg-white/[0.025] focus:bg-white/[0.05]"
                           >
                             <td className="px-4 py-2">
                               <ViewTransition name={`company-${item.symbol}`} share="morph" default="none">

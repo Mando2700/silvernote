@@ -721,7 +721,9 @@ export function PortfolioView() {
                         animate={{ opacity: 1, y: 0 }}
                         transition={{ delay: Math.min(index, 15) * 0.02 }}
                         onClick={() => router.push(`/company/${holding.symbol}`)}
-                        className="group cursor-pointer border-b border-line hover:bg-white/[0.025]"
+                        data-nav-row
+                        tabIndex={-1}
+                        className="group cursor-pointer border-b border-line outline-none hover:bg-white/[0.025] focus:bg-white/[0.05]"
                       >
                         {columnOrder.map((key) => (
                           <HoldingCell key={key} column={key} holding={holding} extendedSession={extendedSession} showExtended={showExtended} />

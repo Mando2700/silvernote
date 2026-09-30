@@ -7,6 +7,7 @@ import { KeepAliveProvider, KeepAliveViews } from '@/components/shell/keep-alive
 import { Ambient, RouteProgress, usePanelSpotlight } from '@/components/shell/ambient';
 import { CommandPalette } from '@/components/shell/command-palette';
 import { MobileNav } from '@/components/shell/mobile-nav';
+import { Shortcuts } from '@/components/shell/shortcuts';
 import { Sidebar } from '@/components/shell/sidebar';
 import { Topbar } from '@/components/shell/topbar';
 
@@ -63,6 +64,7 @@ export function AppShell({ user, children }: { user: { email: string | null; loc
         </div>
         <MobileNav user={user} />
         <CommandPalette />
+        <Shortcuts />
         <AssistantPanel />
       </div>
     </KeepAliveProvider>

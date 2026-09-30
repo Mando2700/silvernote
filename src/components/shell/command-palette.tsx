@@ -17,6 +17,7 @@ import {
   Search,
   Settings2,
   Sparkles,
+  SquareTerminal,
 } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
 import { useRouter } from 'next/navigation';
@@ -27,7 +28,8 @@ import useSWR from 'swr';
 import { useShell } from '@/components/shell/providers';
 import { CompanyLogo } from '@/components/ui/company-logo';
 import { Kbd } from '@/components/ui/primitives';
-import { api } from '@/lib/client';
+import { api, revalidate } from '@/lib/client';
+import { COMMAND_EXAMPLES, parseCommand, type ParsedCommand } from '@/lib/commands';
 import { compactNumber, signedPct } from '@/lib/format';
 import { cn } from '@/lib/utils';
 
@@ -63,7 +65,12 @@ const PAGES = [
   { href: '/learn/interview', label: 'Interview prep', icon: GraduationCap, keywords: 'learn interview technicals flashcards banking questions' },
   { href: '/learn/pitch', label: 'Pitch studio', icon: GraduationCap, keywords: 'learn pitch practice grade rating stock pitch' },
   { href: '/learn/examples', label: 'Case library', icon: GraduationCap, keywords: 'learn cases examples buffett burry ackman einhorn theses' },
-  { href: '/settings', label: 'Settings', icon: Settings2, keywords: 'preferences keys data' },
+  { href: '/settings', label: 'Settings', icon: Settings2, keywords: 'preferences keys data notifications density currency' },
+  { href: '/terminal', label: 'Terminal layouts', icon: LayoutDashboard, keywords: 'terminal panels split layout multi launchpad' },
+  { href: '/macro', label: 'Macro', icon: Compass, keywords: 'rates yield curve inflation cpi fred economy credit spreads' },
+  { href: '/calendar', label: 'Calendar', icon: Newspaper, keywords: 'earnings dividends economic releases events fomc cpi' },
+  { href: '/journal', label: 'Decision journal', icon: NotebookPen, keywords: 'journal calls predictions calibration' },
+  { href: '/lab', label: 'Research lab', icon: FlaskConical, keywords: 'event study comps comparable companies excel export university' },
 ];
 
 function Item({ children, onSelect, value, className }: { children: ReactNode; onSelect: () => void; value: string; className?: string }) {
@@ -82,7 +89,7 @@ function Item({ children, onSelect, value, className }: { children: ReactNode; o
 }
 
 export function CommandPalette() {
-  const { paletteOpen, setPaletteOpen, setAssistantOpen } = useShell();
+  const { paletteOpen, setPaletteOpen, setAssistantOpen, askAssistant } = useShell();
   const router = useRouter();
   const [, startTransition] = useTransition();
   const [query, setQuery] = useState('');
@@ -113,6 +120,24 @@ export function CommandPalette() {
   const go = (href: string) => {
     setPaletteOpen(false);
     startTransition(() => router.push(href));
+  };
+
+  const command = parseCommand(query);
+  const run = async (parsed: ParsedCommand) => {
+    if (parsed.kind === 'navigate') return go(parsed.href);
+    setPaletteOpen(false);
+    if (parsed.kind === 'ask') return askAssistant(parsed.prompt, parsed.symbol ? { type: 'company', symbol: parsed.symbol } : undefined);
+    if (parsed.kind === 'alert') {
+      await api('/api/alerts', { body: { symbol: parsed.symbol, kind: parsed.direction === 'above' ? 'price_above' : 'price_below', threshold: parsed.price } });
+      await revalidate('/api/alerts');
+      return toast.success(parsed.label);
+    }
+    const lists = await api<Array<{ id: string; name: string }>>('/api/watchlists');
+    const target = parsed.list ? lists.find((list) => list.name.toLowerCase() === parsed.list?.toLowerCase()) : lists[0];
+    if (!target) return toast.error(parsed.list ? `No watchlist named “${parsed.list}”.` : 'Create a watchlist first.');
+    await api(`/api/watchlists/${target.id}/items`, { body: { symbol: parsed.symbol } });
+    await revalidate('/api/watchlists', '/api/dashboard');
+    toast.success(`${parsed.symbol} added to ${target.name}`);
   };
 
   const lower = query.trim().toLowerCase();
@@ -152,7 +177,7 @@ export function CommandPalette() {
                   autoFocus
                   value={query}
                   onValueChange={setQuery}
-                  placeholder="Jump to a ticker, watchlist, note or page…"
+                  placeholder="Ticker, page or command (NVDA FA, ECO, NVDA vs AMD)…"
                   className="h-12 flex-1 bg-transparent text-[14px] text-ink outline-none placeholder:text-faint"
                 />
                 {isLoading ? <RefreshCw className="size-3.5 animate-spin text-muted" /> : <Kbd>esc</Kbd>}
@@ -161,6 +186,28 @@ export function CommandPalette() {
                 <Command.Empty className="px-3 py-8 text-center text-[12.5px] text-muted">
                   {debounced ? 'No matches.' : 'Type a ticker or company name.'}
                 </Command.Empty>
+
+                {command ? (
+                  <Command.Group heading="Command" className="[&_[cmdk-group-heading]]:kicker [&_[cmdk-group-heading]]:px-2.5 [&_[cmdk-group-heading]]:py-1.5">
+                    <Item value={`cmd-${query}`} onSelect={() => void run(command)}>
+                      <SquareTerminal className="size-4 text-brand" />
+                      <span className="min-w-0 flex-1 truncate text-ink">{command.label}</span>
+                      <Kbd>↵</Kbd>
+                    </Item>
+                  </Command.Group>
+                ) : null}
+
+                {!query ? (
+                  <Command.Group heading="Command line" className="[&_[cmdk-group-heading]]:kicker [&_[cmdk-group-heading]]:px-2.5 [&_[cmdk-group-heading]]:py-1.5">
+                    <div className="flex flex-wrap gap-1.5 px-2.5 pb-2">
+                      {COMMAND_EXAMPLES.map((example) => (
+                        <button key={example} type="button" onClick={() => setQuery(example)} className="rounded-xs border border-line bg-surface-1 px-1.5 py-0.5 font-mono text-[11px] text-muted hover:text-ink">
+                          {example}
+                        </button>
+                      ))}
+                    </div>
+                  </Command.Group>
+                ) : null}
 
                 {data?.securities.length ? (
                   <Command.Group heading="Companies" className="[&_[cmdk-group-heading]]:kicker [&_[cmdk-group-heading]]:px-2.5 [&_[cmdk-group-heading]]:py-1.5">

@@ -583,7 +583,9 @@ export function Explorer() {
                           <div
                             key={row.symbol}
                             onClick={() => router.push(`/company/${row.symbol}`)}
-                            className="group absolute inset-x-0 flex cursor-pointer items-center border-b border-line hover:bg-white/[0.03]"
+                            data-nav-row
+                            tabIndex={-1}
+                            className="group absolute inset-x-0 flex cursor-pointer items-center border-b border-line outline-none hover:bg-white/[0.03] focus:bg-white/[0.05]"
                             style={{ height: ROW_HEIGHT, transform: `translateY(${item.start}px)` }}
                           >
                             <div className="sticky left-0 z-10 flex shrink-0 items-center gap-2 bg-surface-2 px-2.5 group-hover:bg-[#13161b]" style={{ width: widthFor('symbol', FIXED[0].width), height: ROW_HEIGHT }}>
