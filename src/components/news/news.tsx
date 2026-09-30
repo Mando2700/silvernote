@@ -135,8 +135,8 @@ export function News() {
         </div>
       </div>
 
-      <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_300px]">
-        <Panel className="overflow-hidden">
+      <div className="grid grid-cols-1 items-start gap-4 lg:grid-cols-[minmax(0,1fr)_300px]">
+        <Panel className="min-w-0 overflow-hidden">
           <AnimatePresence initial={false}>
             {symbol ? (
               <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="overflow-hidden border-b border-line">
@@ -269,7 +269,7 @@ function HeadlineList({ items, active, onSymbol }: { items: NewsItem[]; active: 
                 <div className="pt-0.5">{lead ? <CompanyLogo symbol={lead} size="md" /> : <span className="grid size-7 place-items-center rounded-[7px] border border-white/10 bg-surface-4"><Newspaper className="size-3.5 text-faint" /></span>}</div>
                 <div className="min-w-0 flex-1">
                   <a href={item.url} target="_blank" rel="noreferrer" className="flex items-start gap-2">
-                    <span className="text-[13.5px] leading-snug font-medium text-ink-2 group-hover:text-ink">{item.title}</span>
+                    <span className="text-[13.5px] leading-snug font-medium [overflow-wrap:anywhere] text-ink-2 group-hover:text-ink">{item.title}</span>
                     <ArrowUpRight className="mt-0.5 size-3.5 shrink-0 text-faint opacity-0 transition-opacity group-hover:opacity-100" />
                   </a>
                   {item.summary ? <p className="mt-1 line-clamp-2 text-[12.5px] leading-relaxed text-muted">{item.summary}</p> : null}
