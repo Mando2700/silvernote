@@ -62,22 +62,18 @@
   --ease-snap: cubic-bezier(0.2, 0.9, 0.1, 1);
 
   --animate-pulse-dot: pulse-dot 2.4s ease-in-out infinite;
-  --animate-sweep: sweep 2.8s linear infinite;
+  --animate-sweep: sweep 2.4s var(--ease-snap) infinite;
   --animate-fade-up: fade-up 0.5s var(--ease-out-expo) both;
-  --animate-scan: scan 2.2s var(--ease-out-expo) infinite;
 
-  @keyframes scan {
-    from { transform: translateX(-100%); opacity: 0; }
-    20% { opacity: 1; }
-    to { transform: translateX(260%); opacity: 0; }
-  }
   @keyframes pulse-dot {
     0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgb(205 212 222 / 0.4); }
     50% { opacity: 0.7; box-shadow: 0 0 0 5px rgb(205 212 222 / 0); }
   }
   @keyframes sweep {
-    from { transform: translateX(-100%); }
-    to { transform: translateX(100%); }
+    0% { transform: translateX(-100%); opacity: 0; }
+    12% { opacity: 1; }
+    70% { transform: translateX(100%); opacity: 1; }
+    80%, 100% { transform: translateX(100%); opacity: 0; }
   }
   @keyframes fade-up {
     from { opacity: 0; transform: translateY(6px); }
@@ -403,6 +399,73 @@ body {
 }
 @keyframes trail {
   to { --trail-angle: 360deg; }
+}
+
+/* Empty-state emblem: a glass tile traced by a light trail, a breathing ion bloom behind it
+   and a hairline orbit carrying a single glowing satellite. */
+.emblem-bloom {
+  position: absolute;
+  inset: -14px;
+  border-radius: 9999px;
+  background: radial-gradient(closest-side, rgb(159 216 255 / 0.16), rgb(205 212 222 / 0.05) 55%, transparent);
+  filter: blur(6px);
+  animation: emblem-breathe 4.8s ease-in-out infinite;
+  pointer-events: none;
+}
+.emblem-tile {
+  position: absolute;
+  inset: 0;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-line-strong);
+  background:
+    linear-gradient(160deg, rgb(255 255 255 / 0.07), transparent 45%),
+    linear-gradient(to bottom, var(--color-surface-4), var(--color-surface-2));
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 0.08),
+    inset 0 -1px 0 rgb(0 0 0 / 0.4),
+    0 8px 24px -10px rgb(0 0 0 / 0.8),
+    0 0 28px -8px rgb(159 216 255 / 0.3);
+}
+.emblem-orbit {
+  position: absolute;
+  inset: -12px;
+  border-radius: 9999px;
+  border: 1px solid transparent;
+  background:
+    conic-gradient(from 200deg, transparent, rgb(205 212 222 / 0.14) 30%, transparent 55%, rgb(159 216 255 / 0.1) 80%, transparent) border-box;
+  -webkit-mask: linear-gradient(#000 0 0) padding-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  animation: emblem-orbit 9s linear infinite;
+  pointer-events: none;
+}
+.emblem::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 4px;
+  height: 4px;
+  margin: -2px 0 0 -2px;
+  border-radius: 9999px;
+  background: var(--color-brand-bright);
+  box-shadow: 0 0 6px 1px rgb(159 216 255 / 0.9), 0 0 14px 2px rgb(159 216 255 / 0.35);
+  animation: emblem-satellite 9s linear infinite;
+  pointer-events: none;
+}
+@keyframes emblem-breathe {
+  0%, 100% { opacity: 0.55; transform: scale(0.94); }
+  50% { opacity: 1; transform: scale(1.06); }
+}
+@keyframes emblem-orbit {
+  to { transform: rotate(360deg); }
+}
+@keyframes emblem-satellite {
+  from { transform: rotate(0deg) translateX(34px) rotate(0deg); }
+  to { transform: rotate(360deg) translateX(34px) rotate(-360deg); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .emblem-bloom, .emblem-orbit, .emblem::after, .emblem .light-trail::before { animation: none; }
 }
 
 /* ─── View transitions (row → company page morph, route crossfades) ─────────── */

@@ -78,8 +78,10 @@ export function Kbd({ children, className }: { children: ReactNode; className?: 
 export function Skeleton({ className }: { className?: string }) {
   return (
     <div className={cn('relative overflow-hidden rounded-sm bg-white/[0.035] [background-image:repeating-linear-gradient(0deg,transparent_0_3px,rgb(255_255_255/0.012)_3px_4px)]', className)}>
-      <div className="absolute inset-0 -translate-x-full animate-sweep bg-gradient-to-r from-transparent via-ion/[0.07] to-transparent" />
-      <div className="absolute inset-y-0 left-0 w-px animate-scan bg-gradient-to-b from-transparent via-ion/50 to-transparent shadow-[0_0_10px_var(--color-ion)]" />
+      <div className="absolute inset-0 -translate-x-full animate-sweep motion-reduce:hidden" aria-hidden>
+        <div className="absolute inset-y-0 right-0 w-1/2 bg-gradient-to-r from-transparent via-white/[0.035] to-ion/[0.06]" />
+        <div className="absolute inset-y-[18%] right-0 w-px bg-gradient-to-b from-transparent via-ion/40 to-transparent" />
+      </div>
     </div>
   );
 }
@@ -88,9 +90,11 @@ export function EmptyState({ icon, title, body, action, className }: { icon?: Re
   return (
     <div className={cn('flex flex-col items-center justify-center gap-2 px-6 py-10 text-center', className)}>
       {icon ? (
-        <div className="relative mb-1 grid size-11 place-items-center rounded-md border border-line-strong bg-surface-3 text-brand-soft shadow-[0_0_24px_-6px_rgba(159,216,255,0.35)]">
-          <span className="absolute -inset-2 animate-[spin_14s_linear_infinite] rounded-full border border-dashed border-white/[0.08]" aria-hidden />
-          {icon}
+        <div className="emblem relative mb-2 grid size-11 place-items-center text-brand-soft">
+          <span className="emblem-bloom" aria-hidden />
+          <span className="emblem-orbit" aria-hidden />
+          <span className="emblem-tile light-trail" aria-hidden />
+          <span className="relative">{icon}</span>
         </div>
       ) : null}
       <div className="text-[13.5px] font-medium text-ink">{title}</div>
