@@ -6,6 +6,7 @@ import { useSyncExternalStore, type ReactNode } from 'react';
 import { KeepAliveProvider, KeepAliveViews } from '@/components/shell/keep-alive';
 import { Ambient, RouteProgress, usePanelSpotlight } from '@/components/shell/ambient';
 import { CommandPalette } from '@/components/shell/command-palette';
+import { MobileNav } from '@/components/shell/mobile-nav';
 import { Sidebar } from '@/components/shell/sidebar';
 import { Topbar } from '@/components/shell/topbar';
 
@@ -55,11 +56,12 @@ export function AppShell({ user, children }: { user: { email: string | null; loc
         <Sidebar collapsed={collapsed} onToggle={toggle} user={user} />
         <div className="relative z-10 flex min-w-0 flex-1 flex-col">
           <Topbar />
-          <main className="mx-auto w-full max-w-[1680px] flex-1 px-5 py-5">
+          <main className="mx-auto w-full max-w-[1680px] flex-1 px-3 pt-4 pb-24 sm:px-5 sm:py-5 md:pb-5">
             {children}
             <KeepAliveViews />
           </main>
         </div>
+        <MobileNav user={user} />
         <CommandPalette />
         <AssistantPanel />
       </div>

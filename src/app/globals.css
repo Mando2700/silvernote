@@ -89,6 +89,15 @@
   --color-loss-fill: #d9772b;
 }
 
+/* Dense mode: every spacing utility (padding, gaps, heights like h-8) scales off --spacing, so one
+   variable tightens the whole app — terminal density without per-component overrides. */
+:root[data-density='compact'] {
+  --spacing: 0.2rem;
+}
+:root[data-density='compact'] body {
+  font-size: 13px;
+}
+
 html {
   color-scheme: dark;
   background: var(--color-bg);

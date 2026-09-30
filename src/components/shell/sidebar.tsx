@@ -1,7 +1,12 @@
 'use client';
 
 import {
+  BookCheck,
   Briefcase,
+  CalendarDays,
+  Globe,
+  LayoutPanelLeft,
+  Microscope,
   Compass,
   Eye,
   FlaskConical,
@@ -20,6 +25,7 @@ import {
 import { motion } from 'motion/react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
+import { useState } from 'react';
 
 import { BrandMark, Wordmark } from '@/components/shell/brand';
 import { useKeepAliveLinks } from '@/components/shell/keep-alive';
@@ -29,21 +35,26 @@ import { CompanyLogo } from '@/components/ui/company-logo';
 import { removeRecentStock, useRecentStocks } from '@/lib/recent-stocks';
 import { cn } from '@/lib/utils';
 
-const NAV = [
+export const NAV = [
   { group: 'Markets', items: [
     { href: '/', label: 'Dashboard', icon: LayoutDashboard },
+    { href: '/terminal', label: 'Terminal', icon: LayoutPanelLeft },
     { href: '/explorer', label: 'Explorer', icon: Compass },
+    { href: '/macro', label: 'Macro', icon: Globe },
+    { href: '/calendar', label: 'Calendar', icon: CalendarDays },
     { href: '/news', label: 'News', icon: Newspaper },
   ] },
   { group: 'Positions', items: [
     { href: '/watchlists', label: 'Watchlists', icon: Eye },
     { href: '/portfolio', label: 'Portfolio', icon: Briefcase },
+    { href: '/journal', label: 'Decision journal', icon: BookCheck },
     { href: '/simulations', label: 'Simulations', icon: FlaskConical },
     { href: '/backtest', label: 'Backtest', icon: History },
   ] },
   { group: 'Research', items: [
     { href: '/notes', label: 'Notes & theses', icon: NotebookPen },
     { href: '/pitches', label: 'Pitches', icon: Presentation },
+    { href: '/lab', label: 'Research lab', icon: Microscope },
     { href: '/assistant', label: 'Grok', icon: Sparkles },
   ] },
   { group: 'Academy', items: [
@@ -97,37 +108,78 @@ function RecentStocks({ collapsed }: { collapsed: boolean }) {
   );
 }
 
-/** One-line data pipeline readout: syncing while a job runs, a warning when the last run failed. */
-function PipelineStatus({ status }: { status: StatusPayload }) {
+/** One-line data pipeline readout: syncing while a job runs, a warning when the last run failed (click to retry). */
+function PipelineStatus({ status, refresh }: { status: StatusPayload; refresh: () => void }) {
+  const [retrying, setRetrying] = useState(false);
   const jobs = Object.values(status.jobs);
-  const state = jobs.some((job) => job?.status === 'running') ? 'sync' : jobs.some((job) => job?.status === 'failed') ? 'failed' : 'ok';
+  const failed = jobs.filter((job) => job?.status === 'failed');
+  const state = jobs.some((job) => job?.status === 'running') || retrying ? 'sync' : failed.length ? 'failed' : 'ok';
   const tone = state === 'failed' ? 'bg-warning' : state === 'sync' ? 'bg-ion' : 'bg-gain';
-  const label = state === 'failed' ? 'Data job failed' : state === 'sync' ? 'Syncing data' : 'Data pipeline online';
+  const label = state === 'failed' ? 'Data job failed · retry' : state === 'sync' ? 'Syncing data' : 'Data pipeline online';
+  const retry = async () => {
+    setRetrying(true);
+    try {
+      await Promise.all(failed.map((job) => fetch('/api/jobs', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ kind: job?.kind }) })));
+      refresh();
+    } finally {
+      setRetrying(false);
+    }
+  };
+  const dot = (
+    <span className="relative flex size-1.5">
+      <span className={cn('absolute inset-0 animate-ping rounded-full opacity-60 [animation-duration:2.8s]', tone)} />
+      <span className={cn('relative size-1.5 rounded-full', tone)} />
+    </span>
+  );
+  const className = 'mx-4 mb-2 flex items-center gap-2 font-mono text-[9.5px] tracking-[0.16em] text-faint uppercase';
+  if (state === 'failed') {
+    return (
+      <button
+        onClick={retry}
+        className={cn(className, 'text-left hover:text-ink-2')}
+        title={failed.map((job) => `${job?.kind}: ${job?.error ?? 'failed'}`).join('\n')}
+        role="status"
+      >
+        {dot}
+        {label}
+      </button>
+    );
+  }
   return (
-    <div className="mx-4 mb-2 flex items-center gap-2 font-mono text-[9.5px] tracking-[0.16em] text-faint uppercase" role="status">
-      <span className="relative flex size-1.5">
-        <span className={cn('absolute inset-0 animate-ping rounded-full opacity-60 [animation-duration:2.8s]', tone)} />
-        <span className={cn('relative size-1.5 rounded-full', tone)} />
-      </span>
+    <div className={className} role="status">
+      {dot}
       {label}
     </div>
   );
 }
 
-export function Sidebar({ collapsed, onToggle, user }: { collapsed: boolean; onToggle: () => void; user: { email: string | null; local: boolean } }) {
+export function Sidebar({
+  collapsed,
+  onToggle,
+  user,
+  drawer = false,
+}: {
+  collapsed: boolean;
+  onToggle: () => void;
+  user: { email: string | null; local: boolean };
+  /** Narrow screens: slide-over navigation instead of the fixed rail. */
+  drawer?: boolean;
+}) {
   const pathname = usePathname();
   const { setAssistantOpen } = useShell();
-  const { status } = useStatus();
+  const { status, refresh } = useStatus();
   const { resolveHref } = useKeepAliveLinks();
   const isActive = (href: string) => (href === '/' ? pathname === '/' : pathname.startsWith(href));
 
   return (
     <aside
       className={cn(
-        'sticky top-0 z-40 flex h-dvh shrink-0 flex-col border-r border-line bg-surface-1/80 backdrop-blur-xl transition-[width] duration-300 ease-[var(--ease-out-expo)]',
+        drawer
+          ? 'fixed inset-y-0 left-0 z-50 flex h-dvh w-[260px] flex-col border-r border-line bg-surface-1 shadow-[24px_0_60px_-20px_rgba(0,0,0,0.9)]'
+          : 'sticky top-0 z-40 hidden h-dvh shrink-0 flex-col border-r border-line bg-surface-1/80 backdrop-blur-xl transition-[width] duration-300 ease-[var(--ease-out-expo)] md:flex',
         // A faint vertical light along the sidebar's edge.
         'after:pointer-events-none after:absolute after:inset-y-0 after:-right-px after:w-px after:bg-gradient-to-b after:from-transparent after:via-ion/25 after:to-transparent',
-        collapsed ? 'w-[60px]' : 'w-[214px]',
+        !drawer && (collapsed ? 'w-[60px]' : 'w-[214px]'),
       )}
     >
       <div className={cn('flex h-13 items-center gap-2.5 border-b border-line', collapsed ? 'justify-center px-0' : 'px-4')}>
@@ -188,7 +240,7 @@ export function Sidebar({ collapsed, onToggle, user }: { collapsed: boolean; onT
         <RecentStocks collapsed={collapsed} />
       </nav>
 
-      {!collapsed && status ? <PipelineStatus status={status} /> : null}
+      {!collapsed && status ? <PipelineStatus status={status} refresh={() => void refresh()} /> : null}
       <div className="border-t border-line p-2">
         <button
           onClick={() => setAssistantOpen(true)}
@@ -223,6 +275,7 @@ export function Sidebar({ collapsed, onToggle, user }: { collapsed: boolean; onT
         </Link>
         <button
           onClick={onToggle}
+          hidden={drawer}
           className={cn('mt-1 flex h-7 w-full items-center gap-2.5 rounded-sm text-[12px] text-faint hover:text-ink-2', collapsed ? 'justify-center' : 'px-2.5')}
           aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
         >

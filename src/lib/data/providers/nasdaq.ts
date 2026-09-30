@@ -3,6 +3,7 @@ import 'server-only';
 import { XMLParser } from 'fast-xml-parser';
 
 import { cleanSecurityName, isCommonStock, normalizeSymbol } from '@/lib/data/eligibility';
+import { htmlToText } from '@/lib/data/entities';
 import { mapSector } from '@/lib/data/sectors';
 import { BROWSER_UA, fetchJson, fetchText, limiters, parseLooseNumber } from '@/lib/data/http';
 import type { Candle, ExtendedQuote, NewsItem, Quote, SecurityRow } from '@/lib/data/types';
@@ -303,7 +304,7 @@ const xml = new XMLParser({ ignoreAttributes: true, removeNSPrefix: true });
 type RssItem = { title?: string; link?: string; description?: string; pubDate?: string; guid?: string; creator?: string; category?: string; tickers?: string };
 
 function stripHtml(value: string) {
-  return value.replace(/<[^>]+>/g, ' ').replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/&#39;/g, "'").replace(/&quot;/g, '"').replace(/\s+/g, ' ').trim();
+  return htmlToText(value);
 }
 
 async function fetchRss(url: string, fallbackSource = 'Nasdaq'): Promise<NewsItem[]> {

@@ -85,7 +85,10 @@ function KeyStats({ data }: { data: CompanyPayload }) {
     { label: 'Net margin', value: revenue && netIncome !== null ? pct(netIncome / revenue) : '—' },
     { label: 'ROE', value: equity && equity > 0 && netIncome !== null ? pct(netIncome / equity) : '—' },
     { label: 'Debt / equity', value: equity && equity > 0 && debt !== null ? multiple(debt / equity, 2) : '—' },
-    { label: 'Dividend yield', value: data.profile?.dividendYield ? pct(data.profile.dividendYield, 2) : '—' },
+    // Indicated (forward) yield when a quote source has it, else what the last fiscal year actually paid.
+    data.profile?.dividendYield
+      ? { label: 'Dividend yield (fwd)', value: pct(data.profile.dividendYield, 2) }
+      : { label: 'Dividend yield (FY)', value: marketCap && n(f.dividends_paid) ? pct(Math.abs(n(f.dividends_paid) as number) / marketCap, 2) : '—' },
     { label: '1Y analyst target', value: data.profile?.oneYearTarget ? `$${price(data.profile.oneYearTarget)}` : '—' },
   ];
   const high = data.profile?.high52 ?? null;

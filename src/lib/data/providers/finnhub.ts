@@ -1,6 +1,7 @@
 import 'server-only';
 
 import { normalizeSymbol } from '@/lib/data/eligibility';
+import { decodeEntities } from '@/lib/data/entities';
 import { fetchJson, limiters, ProviderError } from '@/lib/data/http';
 import type { NewsItem, Quote } from '@/lib/data/types';
 import { env } from '@/lib/env';
@@ -75,11 +76,11 @@ function toNews(items: FinnhubNews[]): NewsItem[] {
     .filter((item) => item.headline && item.url)
     .map((item) => ({
       id: `finnhub:${item.id}`,
-      title: item.headline,
+      title: decodeEntities(item.headline),
       url: item.url,
       source: item.source || 'Finnhub',
       publishedAt: new Date(item.datetime * 1000).toISOString(),
-      summary: item.summary ? item.summary.slice(0, 500) : undefined,
+      summary: item.summary ? decodeEntities(item.summary).slice(0, 500) : undefined,
       symbols: item.related ? item.related.split(',').map((entry) => normalizeSymbol(entry)).filter(Boolean) : [],
       image: item.image || null,
       provider: 'finnhub' as const,

@@ -5,7 +5,7 @@ import { cancelJob, startJob, type JobKind } from '@/lib/jobs';
 
 export const dynamic = 'force-dynamic';
 
-const kinds = z.enum(['universe', 'fundamentals', 'scores', 'panel']);
+const kinds = z.enum(['universe', 'fundamentals', 'scores', 'panel', 'ibkr']);
 
 export const POST = route(async ({ request }) => {
   const input = await body(

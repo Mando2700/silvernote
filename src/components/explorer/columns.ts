@@ -42,7 +42,7 @@ export const METRIC_COLUMNS: MetricColumn[] = [
   { key: 'pfcf', label: 'P/FCF', group: 'Valuation', format: (value) => multiple(value), unit: '×', better: 'lower', width: 74 },
   { key: 'evEbitda', label: 'EV/EBITDA', group: 'Valuation', format: (value) => multiple(value), unit: '×', better: 'lower', width: 86 },
   { key: 'fcfYield', label: 'FCF yield', group: 'Valuation', format: pctFmt, unit: '%', scale: 100, better: 'higher', width: 80 },
-  { key: 'dividendYield', label: 'Dividend yield', short: 'Div yield', group: 'Valuation', format: (value) => pct(value, 2), unit: '%', scale: 100, better: 'higher', width: 82 },
+  { key: 'dividendYield', label: 'Dividend yield (last FY paid)', short: 'Div yld FY', group: 'Valuation', format: (value) => pct(value, 2), unit: '%', scale: 100, better: 'higher', width: 82 },
   { key: 'revenue', label: 'Revenue', group: 'Size', format: (value) => `$${compactNumber(value)}`, unit: '$', better: 'higher', width: 86 },
   { key: 'netIncome', label: 'Net income', group: 'Size', format: (value) => `$${compactNumber(value)}`, unit: '$', better: 'higher', width: 90 },
   { key: 'fcf', label: 'Free cash flow', short: 'FCF', group: 'Size', format: (value) => `$${compactNumber(value)}`, unit: '$', better: 'higher', width: 84 },

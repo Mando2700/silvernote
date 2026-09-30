@@ -1,6 +1,6 @@
 'use client';
 
-import { useInView, useReducedMotion } from 'motion/react';
+import { useReducedMotion } from 'motion/react';
 import { useEffect, useRef, useState } from 'react';
 
 import { cn } from '@/lib/utils';
@@ -8,7 +8,7 @@ import { cn } from '@/lib/utils';
 const DIGITS = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9'];
 
 /**
- * Odometer-style number: each digit rolls vertically to its new value, and the whole figure
+ * Odometer-style number: after the first render, each digit rolls vertically to its new value, and the whole figure
  * briefly glows green/red when the displayed text changes. Tabular figures keep the width
  * steady, and nothing re-renders visibly unless the formatted text actually changes, so
  * sub-cent live ticks don't cause flicker.
@@ -36,8 +36,8 @@ export function RollingNumber({
     setShown({ text, value });
   }
 
-  // First appearance: every digit sits at 0 and rolls up once the number scrolls into view.
-  const inView = useInView(ref, { once: true, margin: '-10% 0px' });
+  // No roll-in on first appearance: a price must never show digits it doesn't have, even for a
+  // moment. Digits render at their value and only roll when a later tick changes them.
 
   // Glow via the Web Animations API so the digits aren't remounted (which would skip the roll).
   useEffect(() => {
@@ -72,7 +72,7 @@ export function RollingNumber({
             <span className="invisible">0</span>
             <span
               className="absolute inset-x-0 top-0 flex flex-col transition-transform duration-[900ms] ease-[cubic-bezier(0.16,1,0.3,1)]"
-              style={{ transform: `translateY(-${inView ? Number(char) * 10 : 0}%)` }}
+              style={{ transform: `translateY(-${Number(char) * 10}%)` }}
             >
               {DIGITS.map((digit) => (
                 <span key={digit} className="h-[1em] leading-none">

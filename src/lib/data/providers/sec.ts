@@ -1,5 +1,6 @@
 import 'server-only';
 
+import { decodeEntities } from '@/lib/data/entities';
 import { normalizeSymbol } from '@/lib/data/eligibility';
 import { fetchJson, fetchText, limiters } from '@/lib/data/http';
 import type { Filing } from '@/lib/data/types';
@@ -114,17 +115,12 @@ export async function fetchSubmissions(cik: string) {
 export async function fetchFilingText(url: string, maxChars = 120_000) {
   if (!/^https:\/\/www\.sec\.gov\/Archives\/edgar\/data\//.test(url)) throw new Error('Only EDGAR archive documents can be read.');
   const html = await fetchText(url, { provider: 'sec', limiter: limiters.sec, headers: headers(), timeoutMs: 60_000 });
-  const text = html
+  const text = decodeEntities(html
     .replace(/<ix:header>[\s\S]*?<\/ix:header>/gi, ' ')
     .replace(/<(script|style)[\s\S]*?<\/\1>/gi, ' ')
     .replace(/<\/(p|div|tr|li|h\d|table|br)>/gi, '\n')
-    .replace(/<[^>]+>/g, ' ')
-    .replace(/&nbsp;|&#160;/g, ' ')
-    .replace(/&amp;/g, '&')
-    .replace(/&#8217;|&rsquo;/g, '’')
-    .replace(/&#8220;|&#8221;|&ldquo;|&rdquo;/g, '"')
-    .replace(/&#\d+;/g, ' ')
-    .replace(/[ \t]+/g, ' ')
+    .replace(/<[^>]+>/g, ' '))
+    .replace(/[ \t\u00a0]+/g, ' ')
     .replace(/\n\s*\n+/g, '\n\n')
     .trim();
   return text.length > maxChars ? `${text.slice(0, maxChars)}\n\n[truncated]` : text;

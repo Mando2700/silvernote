@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
+import { marketSession } from '@/lib/session';
+
 import { aggregateCandles, resolutionForRange } from './candles';
 
 const day = (iso: string, o: number, h: number, l: number, c: number, v: number | null = 10) => ({
@@ -43,5 +45,15 @@ describe('candle density', () => {
     expect(monthly).toHaveLength(2);
     expect(monthly[0]).toEqual({ t: daily[0].t, o: 10, h: 13, l: 9, c: 12, v: 20 });
     expect(monthly[1]).toEqual({ t: daily[2].t, o: 12, h: 15, l: 8, c: 9, v: 10 });
+  });
+});
+
+describe('marketSession', () => {
+  it('classifies New York wall-clock times', () => {
+    expect(marketSession(Date.parse('2026-09-30T11:00:00Z'))).toBe('pre'); // 07:00 EDT
+    expect(marketSession(Date.parse('2026-09-30T15:00:00Z'))).toBe('regular');
+    expect(marketSession(Date.parse('2026-09-30T21:00:00Z'))).toBe('post');
+    expect(marketSession(Date.parse('2026-09-30T02:00:00Z'))).toBe('closed');
+    expect(marketSession(Date.parse('2026-10-03T15:00:00Z'))).toBe('closed'); // Saturday
   });
 });

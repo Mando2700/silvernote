@@ -8,8 +8,23 @@ export type SessionUser = { id: string; email: string | null; local: boolean };
 /** The single owner when SilverNote runs locally without Supabase Auth. */
 export const LOCAL_USER_ID = '00000000-0000-4000-8000-000000000001';
 
+let ownerIdLookup: Promise<string | null> | null = null;
+
+/**
+ * Local mode pointed at the hosted Supabase database: act as the owner's real account so local and
+ * deployed sessions read and write the same rows instead of splitting data under LOCAL_USER_ID.
+ */
+function localUserId(): Promise<string> {
+  if (!env.databaseUrl || !env.ownerEmail) return Promise.resolve(LOCAL_USER_ID);
+  ownerIdLookup ??= import('@/lib/db')
+    .then(({ q1 }) => q1<{ id: string }>('select id::text from auth.users where lower(email) = $1 limit 1', [env.ownerEmail]))
+    .then((row) => row?.id ?? null)
+    .catch(() => null);
+  return ownerIdLookup.then((id) => id ?? LOCAL_USER_ID);
+}
+
 export async function getSessionUser(): Promise<SessionUser | null> {
-  if (!isAuthEnabled()) return { id: LOCAL_USER_ID, email: null, local: true };
+  if (!isAuthEnabled()) return { id: await localUserId(), email: null, local: true };
   const supabase = await createSupabaseServerClient();
   const { data } = await supabase.auth.getUser();
   const user = data.user;

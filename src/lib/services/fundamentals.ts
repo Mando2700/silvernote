@@ -12,6 +12,9 @@ import type { StatementPeriod } from '@/lib/finance/statement-types';
  * companyfacts statements (quarterly, every line item).
  */
 
+/** Bump when the concepts below change so the scheduler rebuilds every company's row. */
+export const FUNDAMENTALS_VERSION = 2;
+
 type Concept = { key: string; tags: string[]; unit: string; kind: 'duration' | 'instant'; sign?: 1 | -1 };
 
 const DURATIONS: Concept[] = [
@@ -26,8 +29,8 @@ const DURATIONS: Concept[] = [
   { key: 'epsDiluted', unit: 'USD-per-shares', kind: 'duration', tags: ['EarningsPerShareDiluted', 'EarningsPerShareBasicAndDiluted'] },
   { key: 'sharesDiluted', unit: 'shares', kind: 'duration', tags: ['WeightedAverageNumberOfDilutedSharesOutstanding'] },
   { key: 'depreciationAmortization', unit: 'USD', kind: 'duration', tags: ['DepreciationDepletionAndAmortization', 'DepreciationAndAmortization'] },
-  { key: 'operatingCashFlow', unit: 'USD', kind: 'duration', tags: ['NetCashProvidedByUsedInOperatingActivities'] },
-  { key: 'capex', unit: 'USD', kind: 'duration', sign: -1, tags: ['PaymentsToAcquirePropertyPlantAndEquipment'] },
+  { key: 'operatingCashFlow', unit: 'USD', kind: 'duration', tags: ['NetCashProvidedByUsedInOperatingActivities', 'NetCashProvidedByUsedInOperatingActivitiesContinuingOperations'] },
+  { key: 'capex', unit: 'USD', kind: 'duration', sign: -1, tags: ['PaymentsToAcquirePropertyPlantAndEquipment', 'PaymentsToAcquireProductiveAssets', 'PaymentsForCapitalImprovements'] },
   { key: 'dividendsPaid', unit: 'USD', kind: 'duration', sign: -1, tags: ['PaymentsOfDividends', 'PaymentsOfDividendsCommonStock'] },
   { key: 'buybacks', unit: 'USD', kind: 'duration', sign: -1, tags: ['PaymentsForRepurchaseOfCommonStock'] },
   { key: 'netInterestIncome', unit: 'USD', kind: 'duration', tags: ['InterestIncomeExpenseNet'] },
@@ -282,7 +285,11 @@ export async function upsertFundamentals(rows: Record<string, unknown>[], option
     `insert into public.fundamentals (symbol, ${columns.join(', ')}, updated_at)
      select symbol, ${columns.join(', ')}, now() from json_to_recordset($1::json) as t(symbol text, ${definitions})
      on conflict (symbol) do update set ${columns.map((column) => `${column} = excluded.${column}`).join(', ')}, updated_at = now()
-     ${options.onlyNewer ? 'where fundamentals.period_end is null or excluded.period_end >= fundamentals.period_end' : ''}`,
+     ${options.onlyNewer
+       ? // Same fiscal year: keep a row built from full company filings, which is richer than frames.
+         `where fundamentals.period_end is null or excluded.period_end > fundamentals.period_end
+            or (excluded.period_end = fundamentals.period_end and fundamentals.source = 'sec-frames')`
+       : ''}`,
     [rows],
   );
 }

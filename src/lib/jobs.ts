@@ -4,7 +4,7 @@ import { q, q1 } from '@/lib/db';
 import { forget, keepAlive, purgeExpiredCache, runInBackground } from '@/lib/data/http';
 import { evaluatePriceAlerts } from '@/lib/services/alerts';
 import { dueIbkrConnections, syncDueIbkr } from '@/lib/services/ibkr';
-import { ingestFundamentals } from '@/lib/services/fundamentals';
+import { FUNDAMENTALS_VERSION, ingestFundamentals } from '@/lib/services/fundamentals';
 import { buildScorePanel } from '@/lib/services/backtest';
 import { getCandles, isMarketOpen } from '@/lib/services/prices';
 import { computeUniverseScore } from '@/lib/services/scores';
@@ -117,6 +117,7 @@ async function runScores(report: Reporter, job: Running, params: { minMarketCap?
 const serverless = Boolean(process.env.VERCEL);
 
 export async function startJob(kind: JobKind, params: Record<string, unknown> = {}): Promise<string> {
+  if (kind === 'fundamentals') params = { version: FUNDAMENTALS_VERSION, ...params };
   const existing = running.get(kind);
   if (existing) return existing.id;
   if (serverless) {
@@ -178,14 +179,37 @@ export async function latestJobs() {
   return byKind;
 }
 
-/** Last completed full run: a targeted run (a few symbols) must not postpone the universe-wide sweep. */
-async function lastFinished(kind: JobKind) {
+/**
+ * Last completed full run: a targeted run (a few symbols) must not postpone the universe-wide sweep,
+ * and a run made by an older version of the job (fewer concepts) does not count.
+ */
+async function lastFinished(kind: JobKind, minVersion = 0) {
   const row = await q1<{ finished_at: Date }>(
     `select finished_at from public.jobs where kind = $1 and status = 'done' and not (coalesce(params, '{}'::jsonb) ? 'symbols')
+       and coalesce((params->>'version')::int, 0) >= $2
      order by finished_at desc limit 1`,
-    [kind],
+    [kind, minVersion],
   );
   return row?.finished_at ? new Date(row.finished_at).getTime() : 0;
+}
+
+/**
+ * Failed runs are retried with exponential backoff (15 min, 30 min, … up to 6 h) instead of
+ * waiting for the next regular window, so one bad run can't leave data stale for a week.
+ */
+export async function inFailureBackoff(kind: JobKind, now = Date.now()) {
+  const rows = await q<{ status: string; finished_at: Date | null }>(
+    `select status, finished_at from public.jobs where kind = $1 order by created_at desc limit 6`,
+    [kind],
+  );
+  let failures = 0;
+  for (const row of rows) {
+    if (row.status !== 'failed') break;
+    failures += 1;
+  }
+  if (!failures || !rows[0]?.finished_at) return false;
+  const wait = Math.min(6 * 3_600_000, 15 * 60_000 * 2 ** (failures - 1));
+  return now - new Date(rows[0].finished_at).getTime() < wait;
 }
 
 async function unscoredCount() {
@@ -210,20 +234,20 @@ export async function schedulerTick() {
     const updated = status?.updated_at ? new Date(status.updated_at).getTime() : 0;
     const maxAge = isMarketOpen() ? 5 * 60_000 : 6 * 3_600_000;
     if (!status?.count || Date.now() - updated > maxAge) {
-      if (!running.has('universe')) await startJob('universe');
+      if (!running.has('universe') && !(await inFailureBackoff('universe'))) await startJob('universe');
       return;
     }
     const week = 7 * 86_400_000;
-    const fundamentalsAt = await lastFinished('fundamentals');
+    const fundamentalsAt = await lastFinished('fundamentals', FUNDAMENTALS_VERSION);
     if (Date.now() - fundamentalsAt > week) {
-      if (!running.has('fundamentals')) await startJob('fundamentals');
+      if (!running.has('fundamentals') && !(await inFailureBackoff('fundamentals'))) await startJob('fundamentals', { version: FUNDAMENTALS_VERSION });
       return;
     }
     const scoresAt = await lastFinished('scores');
     if (!running.has('scores') && !running.has('fundamentals')) {
       // Weekly full sweep, plus a catch-up (at most every 6 hours) for newly listed or missed companies.
       const due = Date.now() - scoresAt > week || (Date.now() - scoresAt > 6 * 3_600_000 && (await unscoredCount()) > 0);
-      if (due) await startJob('scores', { minMarketCap: 0 });
+      if (due && !(await inFailureBackoff('scores'))) await startJob('scores', { minMarketCap: 0 });
     }
     if (Math.random() < 0.05) await purgeExpiredCache().catch(() => {});
   } catch (error) {

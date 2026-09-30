@@ -12,6 +12,7 @@ import { MarketHeatmap } from '@/components/charts/market-heatmap';
 import { ExtendedMove } from '@/components/motion/extended-move';
 import { ScoreRing } from '@/components/motion/score-ring';
 import { Page } from '@/components/shell/page';
+import { useSnapshotSession } from '@/components/shell/topbar';
 import { Button } from '@/components/ui/button';
 import { CompanyLogo } from '@/components/ui/company-logo';
 import { Menu, Modal } from '@/components/ui/overlay';
@@ -21,6 +22,7 @@ import { useColumnDrag } from '@/lib/column-drag';
 import { useExtendedQuotes } from '@/lib/extended-client';
 import { compactNumber } from '@/lib/format';
 import type { ScreenDefinition } from '@/lib/schemas';
+import { SESSION_CHANGE_LABEL } from '@/lib/session';
 import { cn } from '@/lib/utils';
 
 import { CAP_BUCKETS, EMPTY_SCREEN, METRIC_BY_KEY, METRIC_COLUMNS, PRESETS, type ExplorerRow, type Filter, type MetricKey, type ScreenState } from './columns';
@@ -160,6 +162,7 @@ function FilterRow({ filter, onChange, onRemove }: { filter: Filter; onChange: (
 }
 
 export function Explorer() {
+  const session = useSnapshotSession();
   const router = useRouter();
   const params = useSearchParams();
   const { data, isLoading } = useSWR<UniversePayload>('/api/universe', { refreshInterval: 5 * 60_000 });
@@ -545,7 +548,7 @@ export function Explorer() {
                       {[
                         { key: 'symbol' as const, label: 'Company', width: widthFor('symbol', FIXED[0].width), fallback: FIXED[0].width, align: 'left' },
                         { key: 'sector' as const, label: 'Sector', width: widthFor('sector', FIXED[1].width), fallback: FIXED[1].width, align: 'left' },
-                        ...columnDrag.order.map((key) => ({ key, label: METRIC_BY_KEY[key].short ?? METRIC_BY_KEY[key].label, width: widthFor(key, METRIC_BY_KEY[key].width), fallback: METRIC_BY_KEY[key].width, align: 'right' as const })),
+                        ...columnDrag.order.map((key) => ({ key, label: key === 'changePct' ? SESSION_CHANGE_LABEL[session].short : (METRIC_BY_KEY[key].short ?? METRIC_BY_KEY[key].label), width: widthFor(key, METRIC_BY_KEY[key].width), fallback: METRIC_BY_KEY[key].width, align: 'right' as const })),
                       ].map((column, index) => {
                         const sortable = column.key !== 'sector';
                         const active = screen.sort.key === column.key;

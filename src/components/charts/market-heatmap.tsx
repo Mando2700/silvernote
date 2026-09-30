@@ -7,11 +7,13 @@ import { useRouter } from 'next/navigation';
 import { useEffect, useMemo, useRef, useState, useTransition } from 'react';
 
 import { useMarketColors } from '@/components/shell/providers';
+import { useSnapshotSession } from '@/components/shell/topbar';
 import { Button } from '@/components/ui/button';
 import { CompanyLogo } from '@/components/ui/company-logo';
 import { Segmented } from '@/components/ui/primitives';
 import { sectorPerformance, SECTOR_UNIVERSE_SIZE } from '@/lib/finance/sectors';
 import { compactNumber, price, signedPct } from '@/lib/format';
+import { SESSION_CHANGE_LABEL } from '@/lib/session';
 import { luminance, NEUTRAL_FILL } from '@/lib/theme';
 import { cn } from '@/lib/utils';
 
@@ -101,6 +103,7 @@ function layout(items: HeatmapItem[], width: number, height: number, focus: stri
 }
 
 export function MarketHeatmap({ items, height = 520, className }: { items: HeatmapItem[]; height?: number; className?: string }) {
+  const session = useSnapshotSession();
   const [containerRef, size] = useSize<HTMLDivElement>();
   const [mode, setMode] = useState<Mode>('change');
   const [focus, setFocus] = useState<string | null>(null);
@@ -149,7 +152,7 @@ export function MarketHeatmap({ items, height = 520, className }: { items: Heatm
             value={mode}
             onChange={setMode}
             options={[
-              { value: 'change', label: 'Day change' },
+              { value: 'change', label: SESSION_CHANGE_LABEL[session].long },
               { value: 'score', label: 'SilverNote Score' },
             ]}
           />

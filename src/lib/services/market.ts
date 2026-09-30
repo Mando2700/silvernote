@@ -11,11 +11,12 @@ import { isMarketOpen } from '@/lib/services/prices';
 import { regularSession } from '@/lib/session';
 import { getSecuritiesBySymbols, getSecurity } from '@/lib/services/universe';
 
+/** Index-tracking funds: quoted everywhere, used for charts, benchmarks and as the index strip's fallback. */
 export const INDEX_PROXIES = [
-  { symbol: 'SPY', name: 'S&P 500' },
-  { symbol: 'QQQ', name: 'Nasdaq 100' },
-  { symbol: 'DIA', name: 'Dow 30' },
-  { symbol: 'IWM', name: 'Russell 2000' },
+  { symbol: 'SPY', name: 'S&P 500', index: '^GSPC' },
+  { symbol: 'QQQ', name: 'Nasdaq 100', index: '^NDX' },
+  { symbol: 'DIA', name: 'Dow 30', index: '^DJI' },
+  { symbol: 'IWM', name: 'Russell 2000', index: '^RUT' },
 ] as const;
 
 // ─── Quotes ─────────────────────────────────────────────────────────────────
@@ -159,6 +160,19 @@ export async function getCompanyProfile(symbol: string): Promise<CompanyProfile>
     };
   });
   const summary = await cached(`summary:${upper}`, 6 * 3600, () => nasdaq.fetchSummary(upper)).catch(() => null);
+  // Nasdaq only publishes dividend fields for Nasdaq listings; NYSE names (KO, JPM, …) come from Finnhub's indicated rate.
+  const dividend =
+    summary?.dividendYield == null && finnhub.finnhubEnabled()
+      ? await cached(`fh-dividend:${upper}`, 12 * 3600, async () => {
+          const metric = await finnhub.fetchMetrics(upper);
+          const yieldPct = Number(metric.dividendYieldIndicatedAnnual ?? metric.currentDividendYieldTTM);
+          const perShare = Number(metric.dividendPerShareAnnual ?? metric.dividendPerShareTTM);
+          return {
+            dividendYield: Number.isFinite(yieldPct) && yieldPct > 0 ? yieldPct / 100 : null,
+            annualDividend: Number.isFinite(perShare) && perShare > 0 ? perShare : null,
+          };
+        }).catch(() => null)
+      : null;
   return {
     symbol: upper,
     name: security?.name ?? upper,
@@ -178,8 +192,8 @@ export async function getCompanyProfile(symbol: string): Promise<CompanyProfile>
     fiscalYearEnd: base.fiscalYearEnd,
     oneYearTarget: summary?.oneYearTarget ?? null,
     forwardPE: summary?.forwardPE ?? null,
-    dividendYield: summary?.dividendYield ?? null,
-    annualDividend: summary?.annualDividend ?? null,
+    dividendYield: summary?.dividendYield ?? dividend?.dividendYield ?? null,
+    annualDividend: summary?.annualDividend ?? dividend?.annualDividend ?? null,
     exDividendDate: summary?.exDividendDate ?? null,
     averageVolume: summary?.averageVolume ?? null,
     high52: summary?.high52 ?? null,

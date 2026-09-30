@@ -1,6 +1,6 @@
 'use client';
 
-import { Bell, Database, RefreshCw, Search, Sparkles } from 'lucide-react';
+import { Bell, Database, Menu as MenuIcon, RefreshCw, Search, Sparkles } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
@@ -17,6 +17,7 @@ import { Kbd } from '@/components/ui/primitives';
 import { api, revalidate } from '@/lib/client';
 import { plural, price, relativeTime } from '@/lib/format';
 import { cn } from '@/lib/utils';
+import { marketSession, type MarketSession } from '@/lib/session';
 
 export type StatusPayload = {
   user: { email: string | null; local: boolean };
@@ -28,7 +29,7 @@ export type StatusPayload = {
     secUserAgentCustomized: boolean;
   };
   universe: { count: number; common: number; updated_at: string | null } | null;
-  jobs: Partial<Record<'universe' | 'fundamentals' | 'scores', JobInfo>>;
+  jobs: Partial<Record<'universe' | 'fundamentals' | 'scores' | 'ibkr', JobInfo>>;
   scores: { scored: number; fresh: number } | null;
   marketOpen: boolean;
   usage: { fmpCallsToday: number };
@@ -36,7 +37,13 @@ export type StatusPayload = {
 
 type JobInfo = { id: string; kind: string; status: string; total: number; done: number; message: string | null; error: string | null; finished_at: string | null };
 
-type IndexItem = { symbol: string; name: string; price: number | null; changePct: number | null; spark: number[]; previousClose: number | null };
+type IndexItem = { symbol: string; name: string; kind?: 'index' | 'fund'; price: number | null; changePct: number | null; spark: number[]; previousClose: number | null };
+
+/** The session the market snapshot (universe prices and changes) was taken in. */
+export function useSnapshotSession(): MarketSession {
+  const { status } = useStatus();
+  return status?.universe?.updated_at ? marketSession(status.universe.updated_at) : 'regular';
+}
 
 export function useStatus() {
   const { data, mutate } = useSWR<StatusPayload>('/api/status', {
@@ -51,7 +58,7 @@ function IndexStrip() {
   return (
     <div className="hidden items-center gap-4 xl:flex">
       {data.map((item) => (
-        <Link key={item.symbol} href={`/company/${item.symbol}`} className="group flex items-center gap-2" title={item.name}>
+        <Link key={item.symbol} href={`/company/${item.symbol}`} className="group flex items-center gap-2" title={item.kind === 'index' ? `${item.name} index level · opens ${item.symbol}` : `${item.name} tracking fund (index level unavailable)`}>
           <div className="flex flex-col leading-tight">
             <span className="font-mono text-[10px] tracking-wider text-muted group-hover:text-ink-2">{item.name}</span>
             <span className="flex items-baseline gap-1.5">
@@ -356,26 +363,31 @@ function AlertsBell() {
 }
 
 export function Topbar() {
-  const { setPaletteOpen, setAssistantOpen } = useShell();
+  const { setPaletteOpen, setAssistantOpen, setNavOpen } = useShell();
   const { status, refresh } = useStatus();
   const onGrokPage = usePathname()?.startsWith('/assistant') ?? false;
   return (
-    <header className="sticky top-0 z-30 flex h-13 items-center gap-3 border-b border-line bg-bg/70 px-4 backdrop-blur-xl backdrop-saturate-150">
+    <header className="sticky top-0 z-30 flex h-13 items-center gap-2 border-b border-line bg-bg/70 px-3 backdrop-blur-xl backdrop-saturate-150 sm:gap-3 sm:px-4">
+      <button onClick={() => setNavOpen(true)} className="grid size-8 shrink-0 place-items-center rounded-sm text-muted hover:bg-white/5 hover:text-ink md:hidden" aria-label="Open navigation">
+        <MenuIcon className="size-4.5" />
+      </button>
       <button
         onClick={() => setPaletteOpen(true)}
         className="group relative flex h-8 w-full max-w-md items-center gap-2 overflow-hidden rounded-sm border border-line bg-surface-1/80 px-2.5 text-left text-[12.5px] text-faint transition-[border-color,color,box-shadow] duration-300 hover:border-ion/30 hover:text-muted hover:shadow-[0_0_22px_-8px_rgba(159,216,255,0.55)]"
       >
         <Search className="size-3.5 transition-colors group-hover:text-ion" />
         <span className="flex-1 truncate">Search tickers, watchlists, notes…</span>
-        <span className="flex items-center gap-0.5">
+        <span className="hidden items-center gap-0.5 sm:flex">
           <Kbd>⌘</Kbd>
           <Kbd>K</Kbd>
         </span>
       </button>
-      <div className="ml-auto flex items-center gap-3">
+      <div className="ml-auto flex items-center gap-2 sm:gap-3">
         <IndexStrip />
-        <MarketStatus open={status?.marketOpen} />
-        <JobsIndicator status={status} refresh={() => void refresh()} />
+        <span className="hidden sm:contents">
+          <MarketStatus open={status?.marketOpen} />
+          <JobsIndicator status={status} refresh={() => void refresh()} />
+        </span>
         <AlertsBell />
         <IconButton label="Assistant" variant="outline" size="sm" onClick={() => setAssistantOpen(true)} disabled={onGrokPage} className="disabled:pointer-events-none disabled:opacity-40">
           <Sparkles className="size-3.5 text-brand" />

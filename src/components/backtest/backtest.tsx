@@ -586,10 +586,10 @@ export function Backtest() {
                     value={draft.rebalance}
                     onChange={(value) => set('rebalance', value)}
                     options={[
-                      { value: '1', label: 'Monthly' },
-                      { value: '3', label: 'Quarterly' },
+                      { value: '1', label: '1M' },
+                      { value: '3', label: '3M' },
                       { value: '6', label: '6M' },
-                      { value: '12', label: 'Yearly' },
+                      { value: '12', label: '12M' },
                     ]}
                   />
                 </Field>

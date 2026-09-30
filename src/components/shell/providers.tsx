@@ -15,9 +15,24 @@ export type Preferences = {
   benchmark: string;
   riskFreeRate: number | null;
   aiModel: string | null;
+  /** Compact tightens spacing app-wide for more information per screen. */
+  density: 'comfortable' | 'compact';
+  /** Currency portfolio totals are also shown in (holdings stay in their trading currency). */
+  baseCurrency: string;
+  /** Which tax rules the Tax tab applies. */
+  taxJurisdiction: 'US' | 'PL';
 };
 
-const DEFAULT_PREFS: Preferences = { marketColors: 'red-green', motion: 'system', benchmark: 'SPY', riskFreeRate: null, aiModel: null };
+const DEFAULT_PREFS: Preferences = {
+  marketColors: 'red-green',
+  motion: 'system',
+  benchmark: 'SPY',
+  riskFreeRate: null,
+  aiModel: null,
+  density: 'comfortable',
+  baseCurrency: 'USD',
+  taxJurisdiction: 'US',
+};
 
 type AssistantContextValue =
   | { type: 'company'; symbol: string; name?: string }
@@ -27,6 +42,9 @@ type AssistantContextValue =
 type ShellState = {
   paletteOpen: boolean;
   setPaletteOpen: (open: boolean) => void;
+  /** The navigation drawer on narrow screens. */
+  navOpen: boolean;
+  setNavOpen: (open: boolean) => void;
   assistantOpen: boolean;
   setAssistantOpen: (open: boolean) => void;
   assistantContext: AssistantContextValue;
@@ -55,6 +73,7 @@ export function useMarketColors() {
 
 function ShellProvider({ children }: { children: ReactNode }) {
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const [navOpen, setNavOpen] = useState(false);
   const [assistantOpen, setAssistantOpen] = useState(false);
   const [assistantContext, setAssistantContext] = useState<AssistantContextValue>({ type: 'general' });
   const [pendingPrompt, setPendingPrompt] = useState<{ id: number; text: string } | null>(null);
@@ -67,7 +86,15 @@ function ShellProvider({ children }: { children: ReactNode }) {
     const root = document.documentElement;
     root.dataset.market = prefs.marketColors;
     root.dataset.motion = prefs.motion;
-  }, [prefs.marketColors, prefs.motion]);
+    root.dataset.density = prefs.density;
+  }, [prefs.marketColors, prefs.motion, prefs.density]);
+
+  // Close the drawer whenever the route changes. Adjusting state during render keeps it in step with the URL.
+  const [navPath, setNavPath] = useState(pathname);
+  if (navPath !== pathname) {
+    setNavPath(pathname);
+    if (navOpen) setNavOpen(false);
+  }
 
   // Many buttons fire `void save()`-style handlers; when one of their API calls fails and nothing
   // catches it, show the server's message instead of failing silently.
@@ -101,6 +128,8 @@ function ShellProvider({ children }: { children: ReactNode }) {
     () => ({
       paletteOpen,
       setPaletteOpen,
+      navOpen,
+      setNavOpen,
       assistantOpen,
       setAssistantOpen,
       assistantContext,
@@ -110,7 +139,7 @@ function ShellProvider({ children }: { children: ReactNode }) {
       prefs,
       updatePrefs,
     }),
-    [paletteOpen, assistantOpen, assistantContext, askAssistant, pendingPrompt, prefs, updatePrefs],
+    [paletteOpen, navOpen, assistantOpen, assistantContext, askAssistant, pendingPrompt, prefs, updatePrefs],
   );
 
   const reducedMotion = prefs.motion === 'reduced' ? 'always' : prefs.motion === 'full' ? 'never' : 'user';

@@ -260,8 +260,21 @@ export function PriceChart({
         horzLine: { color: 'rgba(255,255,255,0.18)', width: 1, style: LineStyle.Solid, labelBackgroundColor: '#1c2027' },
       },
       // Drag the price axis to scale vertically and the time axis to scale horizontally; double-click an axis to reset.
-      handleScale: { mouseWheel: true, pinch: true, axisPressedMouseMove: { time: true, price: true }, axisDoubleClickReset: { time: true, price: true } },
+      // The plain wheel scrolls the page; ⌘/Ctrl + wheel (and trackpad pinch, which arrives as Ctrl + wheel) zooms below.
+      handleScale: { mouseWheel: false, pinch: true, axisPressedMouseMove: { time: true, price: true }, axisDoubleClickReset: { time: true, price: true } },
+      handleScroll: { mouseWheel: false, pressedMouseMove: true, horzTouchDrag: true, vertTouchDrag: false },
     });
+    const onWheel = (event: WheelEvent) => {
+      if (!event.ctrlKey && !event.metaKey) return;
+      event.preventDefault();
+      const range = chart.timeScale().getVisibleLogicalRange();
+      if (!range) return;
+      // Zoom around the latest visible bar, matching rightBarStaysOnScroll.
+      const factor = Math.exp(Math.max(-0.5, Math.min(0.5, event.deltaY * 0.01)));
+      const span = Math.max(5, (range.to - range.from) * factor);
+      chart.timeScale().setVisibleLogicalRange({ from: range.to - span, to: range.to });
+    };
+    host.addEventListener('wheel', onWheel, { passive: false });
     const volume = chart.addSeries(HistogramSeries, { priceFormat: { type: 'volume' }, priceScaleId: 'volume', lastValueVisible: false, priceLineVisible: false });
     volume.priceScale().applyOptions({ scaleMargins: { top: 0.84, bottom: 0 } });
     chartRef.current = chart;
@@ -297,6 +310,7 @@ export function PriceChart({
     };
     chart.timeScale().subscribeVisibleLogicalRangeChange(onRange);
     return () => {
+      host.removeEventListener('wheel', onWheel);
       if (reachTimerRef.current !== null) clearTimeout(reachTimerRef.current);
       reachTimerRef.current = null;
       cancelAnimation();

@@ -7,6 +7,8 @@ const fetchQuote = vi.fn(async (symbol: string, assetClass: 'stocks' | 'etf') =>
 
 vi.mock('@/lib/data/providers/nasdaq', () => ({ fetchQuote }));
 vi.mock('@/lib/data/providers/finnhub', () => ({ finnhubEnabled: () => false }));
+// Straight to the loader: no database cache between runs.
+vi.mock('@/lib/data/http', async (original) => ({ ...(await original<typeof import('@/lib/data/http')>()), cached: <T,>(_key: string, _ttl: number, load: () => Promise<T>) => load() }));
 vi.mock('@/lib/services/universe', () => ({ getSecuritiesBySymbols: vi.fn(async () => []), getSecurity: vi.fn(async () => null) }));
 
 const { getQuotes } = await import('./market');

@@ -70,3 +70,57 @@ export async function fetchIntradayCandles(symbol: string, interval: string, day
   });
   return candles;
 }
+
+type DayPayload = {
+  chart?: {
+    result?: Array<{
+      meta?: { regularMarketPrice?: number; chartPreviousClose?: number; previousClose?: number; regularMarketTime?: number; currency?: string };
+      timestamp?: number[];
+      indicators?: { quote?: Array<{ close?: (number | null)[] }> };
+    }> | null;
+  };
+};
+
+export type YahooDay = { symbol: string; price: number; previousClose: number | null; change: number | null; changePct: number | null; time: number; spark: number[]; currency: string | null };
+
+/**
+ * Last price, prior close and today's 5-minute path for any Yahoo symbol: indices (^GSPC), futures
+ * (CL=F), currencies (EURUSD=X), yields (^TNX) and crypto (BTC-USD) — none of which the other free
+ * sources quote.
+ */
+export async function fetchYahooDay(symbol: string): Promise<YahooDay | null> {
+  const payload = await fetchJson<DayPayload>(`https://query2.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?range=1d&interval=5m`, {
+    provider: 'yahoo',
+    limiter: limiters.yahoo,
+    headers: { 'User-Agent': 'Mozilla/5.0' },
+  });
+  const result = payload.chart?.result?.[0];
+  const price = result?.meta?.regularMarketPrice;
+  if (!result || typeof price !== 'number' || !Number.isFinite(price)) return null;
+  const previousClose = result.meta?.chartPreviousClose ?? result.meta?.previousClose ?? null;
+  const change = previousClose ? price - previousClose : null;
+  return {
+    symbol,
+    price,
+    previousClose,
+    change,
+    changePct: change !== null && previousClose ? (change / previousClose) * 100 : null,
+    time: (result.meta?.regularMarketTime ?? Math.floor(Date.now() / 1000)) * 1000,
+    spark: (result.indicators?.quote?.[0]?.close ?? []).filter((value): value is number => typeof value === 'number' && Number.isFinite(value)),
+    currency: result.meta?.currency ?? null,
+  };
+}
+
+/** Daily closes for any Yahoo symbol over `range` (e.g. 1y, 5y), oldest first. */
+export async function fetchYahooDaily(symbol: string, range = '1y'): Promise<Array<{ t: number; c: number }>> {
+  const payload = await fetchJson<DayPayload>(`https://query2.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?range=${range}&interval=1d`, {
+    provider: 'yahoo',
+    limiter: limiters.yahoo,
+    headers: { 'User-Agent': 'Mozilla/5.0' },
+  });
+  const result = payload.chart?.result?.[0];
+  const closes = result?.indicators?.quote?.[0]?.close ?? [];
+  return (result?.timestamp ?? [])
+    .map((t, index) => ({ t, c: closes[index] }))
+    .filter((point): point is { t: number; c: number } => typeof point.c === 'number' && Number.isFinite(point.c));
+}
