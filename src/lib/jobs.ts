@@ -1,5 +1,7 @@
 import 'server-only';
 
+import { after } from 'next/server';
+
 import { q, q1 } from '@/lib/db';
 import { forget, purgeExpiredCache } from '@/lib/data/http';
 import { evaluatePriceAlerts } from '@/lib/services/alerts';
@@ -32,6 +34,7 @@ const globalForJobs = globalThis as unknown as {
   __silvernoteJobs?: Map<JobKind, Running>;
   __silvernoteScheduler?: ReturnType<typeof setInterval>;
   __silvernoteTicking?: boolean;
+  __silvernoteLastTick?: number;
 };
 const running = (globalForJobs.__silvernoteJobs ??= new Map());
 
@@ -113,9 +116,29 @@ async function runScores(report: Reporter, job: Running, params: { minMarketCap?
   report(total, total, `Scored ${scored.toLocaleString()} companies`);
 }
 
+const serverless = Boolean(process.env.VERCEL);
+
+/** Keep the instance alive until `work` settles when there is a request to attach it to (Vercel freezes it otherwise). */
+function keepAlive(work: Promise<unknown>) {
+  try {
+    after(() => work);
+  } catch {
+    // outside a request (local interval tick): the long-lived server keeps running anyway
+  }
+}
+
 export async function startJob(kind: JobKind, params: Record<string, unknown> = {}): Promise<string> {
   const existing = running.get(kind);
   if (existing) return existing.id;
+  if (serverless) {
+    // Each serverless instance has its own `running` map; another one may already be on this job.
+    const other = await q1<{ id: string }>(
+      `select id from public.jobs where kind = $1 and status = 'running' and started_at > now() - interval '10 minutes'
+       order by started_at desc limit 1`,
+      [kind],
+    );
+    if (other) return other.id;
+  }
   const row = await q1<{ id: string }>(
     `insert into public.jobs (kind, status, params, started_at) values ($1, 'running', $2::jsonb, now()) returning id`,
     [kind, JSON.stringify(params)],
@@ -124,7 +147,7 @@ export async function startJob(kind: JobKind, params: Record<string, unknown> = 
   const job: Running = { id, cancelled: false };
   running.set(kind, job);
   const report = reporter(id);
-  void (async () => {
+  const work = (async () => {
     try {
       if (kind === 'universe') await runUniverse(report);
       else if (kind === 'fundamentals') await runFundamentals(report);
@@ -138,6 +161,7 @@ export async function startJob(kind: JobKind, params: Record<string, unknown> = 
       running.delete(kind);
     }
   })();
+  keepAlive(work);
   return id;
 }
 
@@ -155,7 +179,9 @@ export async function latestJobs() {
   const byKind = Object.fromEntries(rows.map((row) => [row.kind, row])) as Partial<Record<JobKind, JobRow>>;
   // A job row left "running" by a previous server process is stale.
   for (const row of rows) {
-    if (row.status === 'running' && !running.has(row.kind)) {
+    // Serverless: another instance may own it; only call it stale once it outlived a function's max duration.
+    const owned = serverless && row.started_at && Date.now() - new Date(row.started_at).getTime() < 10 * 60_000;
+    if (row.status === 'running' && !running.has(row.kind) && !owned) {
       row.status = 'failed';
       row.error = row.error ?? 'Interrupted by a server restart';
     }
@@ -219,6 +245,14 @@ export async function schedulerTick() {
 }
 
 export function startScheduler() {
+  if (serverless) {
+    // Timers don't fire while a serverless instance is frozen: tick after a response instead, at most once a minute per instance.
+    const now = Date.now();
+    if (now - (globalForJobs.__silvernoteLastTick ?? 0) < 60_000) return;
+    globalForJobs.__silvernoteLastTick = now;
+    keepAlive(Promise.resolve().then(schedulerTick));
+    return;
+  }
   if (globalForJobs.__silvernoteScheduler) return;
   globalForJobs.__silvernoteScheduler = setInterval(() => void schedulerTick(), 60_000);
   setTimeout(() => void schedulerTick(), 2_000);

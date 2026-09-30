@@ -3,6 +3,8 @@ import 'server-only';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
+import { after } from 'next/server';
+
 import { env } from '@/lib/env';
 
 type Row = Record<string, unknown>;
@@ -82,12 +84,52 @@ async function createPglite(): Promise<Driver> {
   };
 }
 
+/** A query with no answer this long is on a dead socket (typically left over from a frozen instance). */
+const QUERY_WATCHDOG_MS = 60_000;
+const SERVERLESS_IDLE_SECONDS = 5;
+
+/**
+ * Serverless instances are frozen between requests with their sockets still open, and on Supabase's
+ * session pooler every open socket pins one of its few slots. After each query, keep the request
+ * alive until the pool's idle timeout has closed the sockets (what @vercel/functions'
+ * attachDatabasePool does for pools it knows; it doesn't support postgres.js). Stay on the session
+ * pooler: postgres.js loses replies on the transaction pooler (6543).
+ */
+let idleHold: { timer: ReturnType<typeof setTimeout>; resolve: () => void } | null = null;
+function holdUntilPoolIdle() {
+  if (idleHold) {
+    clearTimeout(idleHold.timer);
+    idleHold.resolve();
+  }
+  let resolve = () => {};
+  const done = new Promise<void>((settle) => (resolve = settle));
+  const hold = {
+    resolve,
+    timer: setTimeout(() => {
+      if (idleHold === hold) idleHold = null;
+      resolve();
+    }, SERVERLESS_IDLE_SECONDS * 1000 + 500),
+  };
+  idleHold = hold;
+  try {
+    after(() => done);
+  } catch {
+    // outside a request scope (a background job's later queries): the job itself keeps the instance alive
+    clearTimeout(hold.timer);
+    if (idleHold === hold) idleHold = null;
+    resolve();
+  }
+}
+
 async function createPostgres(url: string): Promise<Driver> {
   const { default: postgres } = await import('postgres');
+  const serverless = Boolean(process.env.VERCEL);
   const sql = postgres(url, {
     // Every serverless instance keeps its own pool; a small one stops many instances from exhausting Supabase's connection limit.
-    max: process.env.VERCEL ? 2 : 5,
-    idle_timeout: 20,
+    max: serverless ? 2 : 5,
+    // Close idle sockets before the instance is frozen, and recycle long-lived ones.
+    idle_timeout: serverless ? SERVERLESS_IDLE_SECONDS : 20,
+    max_lifetime: serverless ? 5 * 60 : null,
     connect_timeout: 20,
     // Supabase's transaction pooler cannot use prepared statements.
     prepare: false,
@@ -115,8 +157,28 @@ async function createPostgres(url: string): Promise<Driver> {
     },
   });
 
-  const run = async <T>(runner: typeof sql, text: string, params?: unknown[]) =>
-    (await runner.unsafe(text, normalizeParams(params) as never[])) as unknown as T[];
+  globalForDb.__silvernoteSql = sql;
+
+  const run = async <T>(runner: typeof sql, text: string, params?: unknown[]) => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const watchdog = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => {
+        // Drop the whole pool so the next request connects afresh instead of queueing behind dead sockets.
+        if (globalForDb.__silvernoteSql === sql) {
+          globalForDb.__silvernoteSql = undefined;
+          globalForDb.__silvernoteDb = undefined;
+        }
+        void sql.end({ timeout: 0 }).catch(() => {});
+        reject(new Error('The database did not answer in time. Please retry.'));
+      }, QUERY_WATCHDOG_MS);
+    });
+    try {
+      return (await Promise.race([runner.unsafe(text, normalizeParams(params) as never[]), watchdog])) as unknown as T[];
+    } finally {
+      clearTimeout(timer);
+      if (serverless) holdUntilPoolIdle();
+    }
+  };
 
   return {
     kind: 'postgres',
@@ -206,6 +268,8 @@ async function init(): Promise<Driver> {
 
 const globalForDb = globalThis as unknown as {
   __silvernoteDb?: Promise<Driver>;
+  /** The live postgres.js pool, so a watchdog on a replaced pool can't discard its successor. */
+  __silvernoteSql?: unknown;
   __silvernoteMigrationCheck?: { at: number; files: string; running: Promise<void> | null };
 };
 
