@@ -8,7 +8,9 @@ import {
   createSeriesMarkers,
   CrosshairMode,
   HistogramSeries,
+  LineSeries,
   LineStyle,
+  PriceScaleMode,
   type AutoscaleInfoProvider,
   type IChartApi,
   type ISeriesApi,
@@ -27,6 +29,12 @@ import { regularSession } from '@/lib/session';
 import { cn } from '@/lib/utils';
 
 export type ChartMarker = { t: number; label: string; tone?: 'brand' | 'muted' };
+
+/** Extra series drawn on the chart: indicators (pane 0 = on price, 1+ = own pane below) and compared tickers. */
+export type ChartOverlay = { id: string; label: string; color: string; points: Array<{ t: number; value: number }>; pane?: number; kind?: 'line' | 'histogram'; dashed?: boolean; width?: number };
+
+/** User drawings: horizontal price levels and two-point trend lines. */
+export type ChartDrawing = { id: string; kind: 'hline'; price: number } | { id: string; kind: 'trend'; from: { t: number; price: number }; to: { t: number; price: number } };
 
 type Hover = { t: number; o: number; h: number; l: number; c: number; v: number | null } | null;
 type Mode = 'area' | 'candles';
@@ -129,6 +137,10 @@ export function PriceChart({
   onReachStart,
   intraday = false,
   className,
+  overlays = [],
+  percentMode = false,
+  drawings = [],
+  onPick,
 }: {
   candles: Candle[];
   mode?: Mode;
@@ -144,6 +156,12 @@ export function PriceChart({
   /** Bars are sub-daily: show times on the axis and in the header. */
   intraday?: boolean;
   className?: string;
+  overlays?: ChartOverlay[];
+  /** Show % change from the first visible bar (for comparing tickers). */
+  percentMode?: boolean;
+  drawings?: ChartDrawing[];
+  /** Click on the plot: the bar time and price under the cursor (for drawing tools). */
+  onPick?: (point: { t: number; price: number }) => void;
 }) {
   const hostRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
@@ -491,6 +509,90 @@ export function PriceChart({
       }
     };
   }, [series, sorted, markers, targetPrice]);
+
+  // Indicator and comparison series; panes below the price (RSI, MACD) are created on demand.
+  useEffect(() => {
+    const chart = chartRef.current;
+    if (!chart || !series) return;
+    const added = overlays.map((overlay) => {
+      const pane = overlay.pane ?? 0;
+      const data = overlay.points.map((point) => ({ time: point.t as UTCTimestamp, value: point.value }));
+      if (overlay.kind === 'histogram') {
+        const histogram = chart.addSeries(HistogramSeries, { priceLineVisible: false, lastValueVisible: false, priceFormat: { type: 'price', precision: 2, minMove: 0.01 } }, pane);
+        histogram.setData(data.map((point) => ({ ...point, color: withAlpha(point.value >= 0 ? market.gainFill : market.lossFill, 0.6) })));
+        return histogram;
+      }
+      const line = chart.addSeries(
+        LineSeries,
+        { color: overlay.color, lineWidth: (overlay.width ?? 1.5) as 1, lineStyle: overlay.dashed ? LineStyle.Dashed : LineStyle.Solid, priceLineVisible: false, lastValueVisible: pane > 0 || percentMode, crosshairMarkerVisible: false, title: pane > 0 || percentMode ? overlay.label : '' },
+        pane,
+      );
+      line.setData(data);
+      return line;
+    });
+    const panes = chart.panes();
+    for (let index = 1; index < panes.length; index += 1) panes[index].setHeight(Math.round(height * 0.26));
+    return () => {
+      if (chartRef.current !== chart) return;
+      for (const item of added) {
+        try {
+          chart.removeSeries(item);
+        } catch {
+          // already detached
+        }
+      }
+      // Drop emptied panes (from the bottom up) so the price pane takes the room back.
+      const remaining = chart.panes();
+      for (let index = remaining.length - 1; index >= 1; index -= 1) {
+        if (!remaining[index].getSeries().length) chart.removePane(index);
+      }
+    };
+  }, [overlays, series, market, height, percentMode]);
+
+  useEffect(() => {
+    chartRef.current?.priceScale('right').applyOptions({ mode: percentMode ? PriceScaleMode.Percentage : PriceScaleMode.Normal });
+  }, [percentMode, series]);
+
+  // Drawings: price levels as price lines, trend lines as two-point line series.
+  useEffect(() => {
+    const chart = chartRef.current;
+    if (!chart || !series) return;
+    const lines = drawings.filter((drawing) => drawing.kind === 'hline').map((drawing) => series.createPriceLine({ price: drawing.price, color: '#9fd8ff', lineWidth: 1, lineStyle: LineStyle.Solid, axisLabelVisible: true, title: '' }));
+    const trends = drawings.flatMap((drawing) => {
+      if (drawing.kind !== 'trend' || drawing.from.t === drawing.to.t) return [];
+      const [a, b] = drawing.from.t < drawing.to.t ? [drawing.from, drawing.to] : [drawing.to, drawing.from];
+      const line = chart.addSeries(LineSeries, { color: '#9fd8ff', lineWidth: 1, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false });
+      line.setData([{ time: a.t as UTCTimestamp, value: a.price }, { time: b.t as UTCTimestamp, value: b.price }]);
+      return [line];
+    });
+    return () => {
+      if (chartRef.current !== chart) return;
+      try {
+        for (const line of lines) series.removePriceLine(line);
+        for (const trend of trends) chart.removeSeries(trend);
+      } catch {
+        // already detached
+      }
+    };
+  }, [drawings, series]);
+
+  const onPickRef = useRef(onPick);
+  useEffect(() => {
+    onPickRef.current = onPick;
+  }, [onPick]);
+  useEffect(() => {
+    const chart = chartRef.current;
+    if (!chart || !series) return;
+    const onClick: Parameters<IChartApi['subscribeClick']>[0] = (param) => {
+      if (!onPickRef.current || !param.point || param.time === undefined || param.paneIndex) return;
+      const value = series.coordinateToPrice(param.point.y);
+      if (value !== null) onPickRef.current({ t: Number(param.time), price: value });
+    };
+    chart.subscribeClick(onClick);
+    return () => {
+      if (chartRef.current === chart) chart.unsubscribeClick(onClick);
+    };
+  }, [series]);
 
   useEffect(() => {
     const chart = chartRef.current;

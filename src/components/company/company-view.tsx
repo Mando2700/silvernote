@@ -6,6 +6,7 @@ import { useCallback, useEffect, useMemo, useState, ViewTransition } from 'react
 import useSWR from 'swr';
 
 import { PriceChart, type ChartMarker } from '@/components/charts/price-chart';
+import { useChartStudies } from '@/components/charts/stock-chart';
 import { ColumnChart } from '@/components/charts/svg';
 import { AlertButton, TradeButton, WatchlistMenu } from '@/components/company/actions';
 import { DcfPanel } from '@/components/company/dcf-panel';
@@ -136,6 +137,7 @@ function Overview({ data, onTab }: { data: CompanyPayload; onTab: (tab: Tab) => 
   const { data: candles } = useSWR<{ candles: Candle[]; range: string }>(
     `/api/company/${symbol}/candles?range=${range}${pages > 1 ? `&pages=${pages}` : ''}`,
   );
+  const studies = useChartStudies(symbol, candles?.candles ?? [], range);
   const loadOlder = useCallback(() => setHistory((current) => ({ view, pages: current.view === view ? Math.min(current.pages * 2, 32) : 2 })), [view]);
   const { data: workspace } = useSWR<WorkspaceData>(`/api/workspaces/${symbol}`);
   const { data: statements } = useSWR<StandardizedStatements>(`/api/company/${symbol}/statements`);
@@ -159,7 +161,8 @@ function Overview({ data, onTab }: { data: CompanyPayload; onTab: (tab: Tab) => 
     <>
       <div className="flex flex-wrap items-center justify-between gap-2 px-4 pt-3.5">
         <Segmented size="xs" value={range} onChange={setRange} options={RANGES.map((value) => ({ value, label: value.toUpperCase() }))} />
-        <div className="flex items-center gap-1.5">
+        <div className="flex flex-wrap items-center gap-1.5">
+          {studies.toolbar}
           <Segmented
             size="xs"
             value={mode}
@@ -190,6 +193,10 @@ function Overview({ data, onTab }: { data: CompanyPayload; onTab: (tab: Tab) => 
             onReachStart={loadOlder}
             markers={markers}
             targetPrice={workspace?.meta?.target_price ?? null}
+            overlays={studies.overlays}
+            percentMode={studies.percentMode}
+            drawings={studies.drawings}
+            onPick={studies.onPick}
           />
         ) : (
           <Skeleton className="h-[340px] w-full" />
