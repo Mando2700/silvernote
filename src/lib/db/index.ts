@@ -92,6 +92,27 @@ async function createPostgres(url: string): Promise<Driver> {
     // Supabase's transaction pooler cannot use prepared statements.
     prepare: false,
     onnotice: () => {},
+    // normalizeParams already hands json/jsonb params over as JSON text. postgres.js would
+    // JSON.stringify them again once it learns the param type, storing a JSON string scalar.
+    types: {
+      json: {
+        to: 114,
+        from: [114, 3802],
+        serialize: (value: unknown) => (typeof value === 'string' ? value : JSON.stringify(value)),
+        parse: (value: string) => {
+          const parsed = JSON.parse(value);
+          // Rows written before this fix hold the JSON text as a string scalar; unwrap them.
+          if (typeof parsed === 'string' && /^\s*[[{]/.test(parsed)) {
+            try {
+              return JSON.parse(parsed);
+            } catch {
+              return parsed;
+            }
+          }
+          return parsed;
+        },
+      },
+    },
   });
 
   const run = async <T>(runner: typeof sql, text: string, params?: unknown[]) =>
