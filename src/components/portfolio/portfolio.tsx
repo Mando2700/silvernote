@@ -19,7 +19,11 @@ import { TaxPanel } from '@/components/portfolio/tax';
 import { Delta } from '@/components/motion/delta';
 import { ScoreRing } from '@/components/motion/score-ring';
 import { Page } from '@/components/shell/page';
+import { AnalyticsPanel } from '@/components/portfolio/analytics';
+import { RebalancePanel } from '@/components/portfolio/rebalance';
+import { PolishTaxPanel } from '@/components/portfolio/tax-pl';
 import { useShell } from '@/components/shell/providers';
+import { useBaseCurrency } from '@/lib/fx-client';
 import { Button, Magnetic } from '@/components/ui/button';
 import { CompanyLogo } from '@/components/ui/company-logo';
 import { Menu, Modal } from '@/components/ui/overlay';
@@ -404,7 +408,8 @@ function RiskPanel({ portfolioId, benchmark, concentration }: { portfolioId: str
 export function PortfolioView() {
   const router = useRouter();
   const params = useSearchParams();
-  const { askAssistant, setAssistantContext } = useShell();
+  const { askAssistant, setAssistantContext, prefs } = useShell();
+  const base = useBaseCurrency();
   const { data: portfolios, mutate: refreshList, isLoading } = useSWR<PortfolioListItem[]>('/api/portfolios');
   const selectedId = params.get('id') ?? portfolios?.[0]?.id ?? null;
   const { data: savedDetail, mutate: refreshDetail } = useSWR<Detail>(selectedId ? `/api/portfolios/${selectedId}` : null, { refreshInterval: 60_000 });
@@ -412,9 +417,9 @@ export function PortfolioView() {
   const detail = useMemo(() => (savedDetail ? withLivePrices(savedDetail, live) : undefined), [savedDetail, live]);
   /** Outside regular hours: whether day changes show extended trading or the last regular session. */
   const [changeView, setChangeView] = useState<'extended' | 'regular'>('extended');
-  const [tab, setTab] = useState<'holdings' | 'risk' | 'bonds' | 'tax' | 'transactions'>(() => {
+  const [tab, setTab] = useState<'holdings' | 'risk' | 'analytics' | 'rebalance' | 'bonds' | 'tax' | 'transactions'>(() => {
     const requested = params.get('tab');
-    return requested === 'risk' || requested === 'bonds' || requested === 'tax' || requested === 'transactions' ? requested : 'holdings';
+    return requested === 'risk' || requested === 'analytics' || requested === 'rebalance' || requested === 'bonds' || requested === 'tax' || requested === 'transactions' ? requested : 'holdings';
   });
   const [trading, setTrading] = useState(false);
   const [creating, setCreating] = useState(false);
@@ -614,6 +619,7 @@ export function PortfolioView() {
             <div className="mt-2 text-[48px] leading-none font-semibold tracking-[-0.035em] text-ink">
               <RollingNumber value={summary?.totalValue} format={(value) => money(value, { digits: 0 })} />
             </div>
+            {base.rate && summary ? <div className="num mt-1 text-[13px] text-muted">≈ {base.format(summary.totalValue)}</div> : null}
             <div className="mt-2 flex items-center gap-2 text-[13px]">
               <span className="text-muted">{showExtended && extendedSession ? SESSION_LABEL[extendedSession] : 'Today'}</span>
               <Delta value={showExtended ? summary?.extended?.change : summary?.dayChange} kind="money" digits={0} />
@@ -641,6 +647,8 @@ export function PortfolioView() {
             options={[
               { value: 'holdings', label: 'Holdings & allocation' },
               { value: 'risk', label: 'Risk' },
+              { value: 'analytics', label: 'Factors & attribution' },
+              { value: 'rebalance', label: 'Rebalance' },
               { value: 'bonds', label: 'Bonds' },
               { value: 'tax', label: 'Tax' },
               { value: 'transactions', label: `Transactions${detail ? ` (${detail.transactions.length})` : ''}` },
@@ -788,7 +796,13 @@ export function PortfolioView() {
 
       {tab === 'bonds' && selectedId ? <BondsPanel portfolioId={selectedId} onChanged={refresh} /> : null}
 
-      {tab === 'tax' && selectedId ? <TaxPanel portfolioId={selectedId} onPortfolioChanged={refresh} /> : null}
+      {tab === 'analytics' && selectedId ? <AnalyticsPanel portfolioId={selectedId} /> : null}
+
+      {tab === 'rebalance' && selectedId && detail ? <RebalancePanel key={selectedId} portfolioId={selectedId} holdings={detail.holdings} /> : null}
+
+      {tab === 'tax' && selectedId ? (
+        prefs.taxJurisdiction === 'PL' ? <PolishTaxPanel portfolioId={selectedId} /> : <TaxPanel portfolioId={selectedId} onPortfolioChanged={refresh} />
+      ) : null}
 
       {tab === 'transactions' && detail ? (
         <Panel>

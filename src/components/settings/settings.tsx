@@ -10,6 +10,7 @@ import { IbkrPanel } from '@/components/settings/ibkr';
 import { Page } from '@/components/shell/page';
 import { useShell, type Preferences } from '@/components/shell/providers';
 import { Button } from '@/components/ui/button';
+import { NotificationsPanel } from '@/components/settings/notifications';
 import { Badge, Input, Panel, PanelHeader, Segmented, Select, Skeleton } from '@/components/ui/primitives';
 import { api, revalidate } from '@/lib/client';
 import { relativeTime } from '@/lib/format';
@@ -106,6 +107,16 @@ export function Settings() {
                   })}
                 </div>
               </Row>
+              <Row label="Density" hint="Compact tightens spacing everywhere for more data per screen, terminal style.">
+                <Segmented
+                  value={prefs.density}
+                  onChange={(density) => void save({ density }, 'Density updated')}
+                  options={[
+                    { value: 'comfortable', label: 'Comfortable' },
+                    { value: 'compact', label: 'Compact' },
+                  ]}
+                />
+              </Row>
               <Row label="Motion" hint="System follows your OS “reduce motion” setting.">
                 <Segmented
                   value={prefs.motion}
@@ -133,6 +144,25 @@ export function Settings() {
                 </Select>
               </Row>
               <RiskFreeRow value={prefs.riskFreeRate} onSave={(riskFreeRate) => void save({ riskFreeRate }, 'Risk-free rate updated')} />
+              <Row label="Base currency" hint="Portfolio totals are also shown converted to this currency.">
+                <Select value={prefs.baseCurrency} onChange={(event) => void save({ baseCurrency: event.target.value }, 'Base currency updated')} className="w-60">
+                  {['USD', 'PLN', 'EUR', 'GBP', 'CHF', 'JPY', 'CAD', 'AUD', 'SEK', 'NOK', 'CZK'].map((code) => (
+                    <option key={code} value={code}>
+                      {code}
+                    </option>
+                  ))}
+                </Select>
+              </Row>
+              <Row label="Tax rules" hint="Which country's capital-gains rules the Tax tab applies.">
+                <Segmented
+                  value={prefs.taxJurisdiction}
+                  onChange={(taxJurisdiction) => void save({ taxJurisdiction }, 'Tax rules updated')}
+                  options={[
+                    { value: 'US', label: 'United States (8949)' },
+                    { value: 'PL', label: 'Poland (PIT-38)' },
+                  ]}
+                />
+              </Row>
             </div>
           </Panel>
 
@@ -166,6 +196,8 @@ export function Settings() {
 
         <div className="flex flex-col gap-4">
           <IbkrPanel />
+
+          <NotificationsPanel />
 
           <Panel>
             <PanelHeader kicker="Data" title="Sources" />

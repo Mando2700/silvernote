@@ -1,30 +1,31 @@
 'use client';
 
-import { ArrowUpRight, Briefcase, Eye, Newspaper, NotebookPen, Plus } from 'lucide-react';
+import { ArrowUpRight, Eye, Newspaper, NotebookPen, Plus, Sparkles } from 'lucide-react';
 import { motion } from 'motion/react';
-import dynamic from 'next/dynamic';
 import Link from 'next/link';
 import { useMemo, useState } from 'react';
 import useSWR from 'swr';
 
+import { BriefModal, type Brief } from '@/components/briefs/brief-view';
 import { BRAND, LineChart, type LineSeries } from '@/components/charts/svg';
 import { MarketHeatmap, type HeatmapItem } from '@/components/charts/market-heatmap';
 import { AnimatedNumber } from '@/components/motion/animated-number';
 import { Delta } from '@/components/motion/delta';
 import { ExtendedMove } from '@/components/motion/extended-move';
 import { ScoreRing } from '@/components/motion/score-ring';
-import { ScrambleText } from '@/components/motion/scramble-text';
+import { MacroTape } from '@/components/macro/macro-tape';
+import { useSearchParams } from '@/components/shell/keep-alive';
 import { Page } from '@/components/shell/page';
-import { Button, Magnetic } from '@/components/ui/button';
+import { Button } from '@/components/ui/button';
 import { CompanyLogo } from '@/components/ui/company-logo';
 import { EmptyState, Panel, PanelHeader, Segmented, Skeleton } from '@/components/ui/primitives';
+import { api } from '@/lib/client';
 import { useExtendedQuotes } from '@/lib/extended-client';
+import { useBaseCurrency } from '@/lib/fx-client';
 import { money, price, relativeTime, signedPct } from '@/lib/format';
 import { regularSession, sessionHours } from '@/lib/session';
 import { SERIES_COLORS } from '@/lib/theme';
 import { cn } from '@/lib/utils';
-
-const HeroCanvas = dynamic(() => import('@/components/hero/hero-canvas').then((module) => module.HeroCanvas), { ssr: false });
 
 type MarketRow = { symbol: string; name: string; sector: string | null; price: number | null; changePct: number | null; marketCap: number | null; score: number | null };
 
@@ -54,137 +55,198 @@ function greeting() {
   return 'Good evening';
 }
 
-function Hero({ data }: { data: DashboardData | undefined }) {
-  const today = new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
-  const breadth = data?.breadth;
-  const advancingShare = breadth && breadth.total ? breadth.advancers / breadth.total : 0.5;
-  const sorted = data ? [...data.sectors].filter((sector) => sector.changePct !== null).sort((a, b) => (b.changePct ?? 0) - (a.changePct ?? 0)) : [];
-  const best = sorted[0];
-  const worst = sorted[sorted.length - 1];
+type CalendarDay = {
+  date: string;
+  earnings: Array<{ symbol: string; time: 'pre' | 'post' | 'unknown'; epsForecast: number | null; mine: boolean }>;
+  dividends: Array<{ symbol: string; amount: number | null; mine: boolean }>;
+  economy: Array<{ name: string; time: string | null; major: boolean; consensus: string | null }>;
+};
 
+function isoIn(days: number) {
+  const date = new Date();
+  date.setDate(date.getDate() + days);
+  return date.toLocaleDateString('en-CA');
+}
+
+/** Portfolio at a glance, with the total also in the base currency when it isn't USD. */
+function PortfolioCard({ data }: { data: DashboardData | undefined }) {
+  const base = useBaseCurrency();
+  const portfolio = data?.portfolio;
+  const breadth = data?.breadth;
+  const sorted = data ? [...data.sectors].filter((sector) => sector.changePct !== null).sort((a, b) => (b.changePct ?? 0) - (a.changePct ?? 0)) : [];
   return (
-    <Panel className="hud relative overflow-hidden">
-      <div className="absolute inset-0 bg-[radial-gradient(ellipse_80%_120%_at_70%_120%,rgba(205,212,222,0.1),transparent_60%),radial-gradient(ellipse_50%_80%_at_95%_0%,rgba(159,216,255,0.08),transparent_60%)]" />
-      <HeroCanvas className="absolute inset-0 opacity-90" />
-      <div className="absolute inset-0 bg-gradient-to-r from-surface-2 via-surface-2/70 to-transparent" />
-      <div className="relative grid gap-6 p-6 md:grid-cols-[1.25fr_1fr]">
+    <Panel className="hud flex flex-col justify-between gap-3 p-4">
+      <div>
+        <div className="kicker flex items-center gap-2">
+          <span className="size-1.5 animate-pulse-dot rounded-full bg-ion" aria-hidden />
+          {greeting()} · {new Date().toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}
+        </div>
+        {portfolio ? (
+          <Link href="/portfolio" className="group mt-2 block">
+            <div className="text-[11.5px] text-muted">
+              {portfolio.name} · {portfolio.positions} positions
+            </div>
+            <div className="text-[34px] leading-tight font-semibold tracking-[-0.03em] text-ink">
+              <AnimatedNumber value={portfolio.totalValue} format={(value) => money(value, { digits: 0 })} />
+            </div>
+            {base.rate ? <div className="num text-[12px] text-muted">≈ {base.format(portfolio.totalValue)}</div> : null}
+            <div className="mt-1 flex flex-wrap gap-x-4 text-[12.5px]">
+              <span className="flex items-center gap-1.5">
+                <span className="text-muted">Today</span>
+                <Delta value={portfolio.dayChange} kind="money" digits={0} />
+                <Delta value={portfolio.dayChangePct} className="text-[11.5px]" />
+              </span>
+              <span className="flex items-center gap-1.5">
+                <span className="text-muted">Unrealized</span>
+                <Delta value={portfolio.unrealized} kind="money" digits={0} />
+              </span>
+            </div>
+          </Link>
+        ) : (
+          <div className="mt-3">
+            <p className="text-[12.5px] text-muted">No portfolio yet. Record trades or import from a broker to see your numbers here.</p>
+            <Link href="/portfolio">
+              <Button size="sm" variant="primary" className="mt-2" icon={<Plus className="size-3.5" />}>
+                Create a portfolio
+              </Button>
+            </Link>
+          </div>
+        )}
+      </div>
+      {breadth ? (
         <div>
-          <div className="kicker flex items-center gap-2">
-            <span className="size-1.5 animate-pulse-dot rounded-full bg-ion" aria-hidden />
-            <ScrambleText text={`${greeting()} · ${today}`} duration={900} />
+          <div className="flex h-1.5 overflow-hidden rounded-full bg-surface-4">
+            <div className="h-full bg-gain-fill" style={{ width: `${(breadth.advancers / Math.max(1, breadth.total)) * 100}%` }} />
+            <div className="h-full flex-1 bg-loss-fill" />
           </div>
-          {data?.portfolio ? (
-            <>
-              <div className="mt-4 text-[12px] text-muted">
-                {data.portfolio.name} · {data.portfolio.positions} positions
-              </div>
-              <div className="mt-1 text-[52px] leading-none font-semibold tracking-[-0.035em] text-ink [text-shadow:0_0_32px_rgba(205,212,222,0.28),0_0_2px_rgba(255,255,255,0.3)]">
-                <AnimatedNumber value={data.portfolio.totalValue} format={(value) => money(value, { digits: 0 })} />
-              </div>
-              <div className="mt-3 flex flex-wrap items-center gap-x-5 gap-y-1 text-[13px]">
-                <span className="flex items-center gap-1.5">
-                  <span className="text-muted">Today</span>
-                  <Delta value={data.portfolio.dayChange} kind="money" digits={0} />
-                  <Delta value={data.portfolio.dayChangePct} className="text-[12px]" />
-                </span>
-                <span className="flex items-center gap-1.5">
-                  <span className="text-muted">Unrealized</span>
-                  <Delta value={data.portfolio.unrealized} kind="money" digits={0} />
-                  <Delta value={data.portfolio.unrealizedPct} className="text-[12px]" />
-                </span>
-              </div>
-              <div className="mt-5 flex gap-2">
-                <Magnetic>
-                  <Link href="/portfolio">
-                    <Button variant="primary" icon={<Briefcase className="size-3.5" />}>
-                      Open portfolio
-                    </Button>
-                  </Link>
-                </Magnetic>
-                <Link href="/explorer">
-                  <Button variant="outline">Explore the market</Button>
-                </Link>
-              </div>
-            </>
-          ) : (
-            <>
-              <h1 className="mt-4 max-w-md text-[34px] leading-[1.05] font-semibold tracking-[-0.03em] text-ink">
-                Every US stock, scored, charted and <span className="text-silver">ready for your thesis.</span>
-              </h1>
-              <p className="mt-3 max-w-md text-[13px] leading-relaxed text-muted">
-                Start a portfolio or a watchlist to see your numbers here. Everything else is live below.
-              </p>
-              <div className="mt-5 flex gap-2">
-                <Magnetic>
-                  <Link href="/portfolio">
-                    <Button variant="primary" icon={<Plus className="size-3.5" />}>
-                      Create a portfolio
-                    </Button>
-                  </Link>
-                </Magnetic>
-                <Link href="/explorer">
-                  <Button variant="outline">Explore the market</Button>
-                </Link>
-              </div>
-            </>
-          )}
-        </div>
-        <div className="flex flex-col justify-end gap-4">
-          <div>
-            <div className="mb-2 flex items-baseline justify-between">
-              <span className="kicker">Market breadth</span>
-              <span className="text-[11.5px] text-muted">{breadth ? `${breadth.total.toLocaleString()} stocks` : ''}</span>
-            </div>
-            <div className="relative">
-              <div className="flex h-2.5 overflow-hidden rounded-full bg-surface-4 shadow-[inset_0_1px_2px_rgba(0,0,0,0.6)]">
-                <motion.div
-                  className="h-full bg-gradient-to-r from-gain-fill/70 to-gain-fill"
-                  initial={{ width: '50%' }}
-                  animate={{ width: `${advancingShare * 100}%` }}
-                  transition={{ duration: 1, ease: [0.16, 1, 0.3, 1] }}
-                />
-                <div className="w-[2px] bg-surface-2" />
-                <div className="h-full flex-1 bg-gradient-to-r from-loss-fill to-loss-fill/70" />
-              </div>
-              {/* Glowing marker riding the split between advancers and decliners. */}
-              <motion.div
-                className="absolute -top-1 -bottom-1 w-[2px] -translate-x-1/2 rounded-full bg-white shadow-[0_0_10px_2px_rgba(159,216,255,0.8)]"
-                initial={{ left: '50%' }}
-                animate={{ left: `${advancingShare * 100}%` }}
-                transition={{ duration: 1, ease: [0.16, 1, 0.3, 1] }}
-                aria-hidden
-              />
-              {/* Quarter ticks under the gauge. */}
-              <div className="pointer-events-none absolute inset-x-0 -bottom-2 flex justify-between px-px" aria-hidden>
-                {[0, 1, 2, 3, 4].map((tick) => (
-                  <span key={tick} className={cn('w-px bg-white/15', tick === 2 ? 'h-1.5' : 'h-1')} />
-                ))}
-              </div>
-            </div>
-            <div className="mt-3 flex justify-between text-[12px]">
-              <span className="text-gain">
-                <span className="num">{breadth?.advancers.toLocaleString() ?? '—'}</span> advancing
-              </span>
-              <span className="text-loss">
-                <span className="num">{breadth?.decliners.toLocaleString() ?? '—'}</span> declining
-              </span>
-            </div>
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div className="rounded-sm border border-line bg-surface-1/70 p-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] backdrop-blur transition-colors hover:border-gain/30">
-              <div className="text-[11px] text-muted">Leading sector</div>
-              <div className="mt-1 truncate text-[13.5px] font-medium text-ink">{best?.sector ?? '—'}</div>
-              <Delta value={best?.changePct ?? null} alreadyPercent className="text-[12px]" />
-            </div>
-            <div className="rounded-sm border border-line bg-surface-1/70 p-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] backdrop-blur transition-colors hover:border-loss/30">
-              <div className="text-[11px] text-muted">Lagging sector</div>
-              <div className="mt-1 truncate text-[13.5px] font-medium text-ink">{worst?.sector ?? '—'}</div>
-              <Delta value={worst?.changePct ?? null} alreadyPercent className="text-[12px]" />
-            </div>
+          <div className="mt-1.5 flex justify-between text-[11px]">
+            <span className="text-gain">{breadth.advancers.toLocaleString()} up</span>
+            <span className="truncate px-2 text-muted">
+              {sorted[0] ? `${sorted[0].sector} leads` : ''}
+            </span>
+            <span className="text-loss">{breadth.decliners.toLocaleString()} down</span>
           </div>
         </div>
+      ) : null}
+    </Panel>
+  );
+}
+
+/** Events for the investor's own names over the next week, plus today's major US releases. */
+function WeekAhead() {
+  const { data } = useSWR<{ days: CalendarDay[] }>(`/api/calendar?from=${isoIn(0)}&to=${isoIn(7)}`, { refreshInterval: 15 * 60_000 });
+  const today = data?.days[0]?.date === isoIn(0) ? data.days[0] : null;
+  const items = (data?.days ?? []).flatMap((day) => [
+    ...day.earnings.filter((row) => row.mine).map((row) => ({ key: `e-${row.symbol}`, date: day.date, symbol: row.symbol, text: `Earnings ${row.time === 'pre' ? 'before open' : row.time === 'post' ? 'after close' : ''}${row.epsForecast !== null ? ` · est $${row.epsForecast.toFixed(2)}` : ''}` })),
+    ...day.dividends.filter((row) => row.mine).map((row) => ({ key: `d-${row.symbol}`, date: day.date, symbol: row.symbol, text: `Ex-dividend${row.amount ? ` $${row.amount}` : ''}` })),
+  ]);
+  const major = today?.economy.filter((row) => row.major).slice(0, 4) ?? [];
+  return (
+    <Panel className="flex flex-col">
+      <PanelHeader kicker="Your names · next 7 days" title="Week ahead" actions={<Link href="/calendar" className="text-[11.5px] text-brand-soft hover:underline">Calendar</Link>} />
+      <div className="flex-1 px-4 pb-3">
+        {!data ? (
+          <Skeleton className="h-24" />
+        ) : items.length ? (
+          items.slice(0, 6).map((item) => (
+            <Link key={item.key} href={`/company/${item.symbol}`} className="flex items-center gap-2 border-t border-line py-1.5 text-[12px] hover:bg-white/[0.02]">
+              <span className="w-14 shrink-0 text-[11px] text-faint">{new Date(`${item.date}T12:00:00Z`).toLocaleDateString('en-US', { weekday: 'short', day: 'numeric', timeZone: 'UTC' })}</span>
+              <CompanyLogo symbol={item.symbol} size="xs" />
+              <span className="font-mono font-semibold text-ink">{item.symbol}</span>
+              <span className="truncate text-muted">{item.text}</span>
+            </Link>
+          ))
+        ) : (
+          <p className="py-2 text-[12px] text-muted">No earnings or ex-dividend dates for your holdings and watchlists this week.</p>
+        )}
+        {major.length ? (
+          <div className="mt-2 border-t border-line pt-2">
+            <div className="kicker mb-1 text-[9.5px]">US data today</div>
+            {major.map((row, index) => (
+              <div key={`${row.name}-${index}`} className="truncate text-[11.5px] text-ink-2">
+                <span className="num mr-1.5 text-faint">{row.time ?? ''}</span>
+                {row.name}
+                {row.consensus ? <span className="text-muted"> · cons {row.consensus}</span> : null}
+              </div>
+            ))}
+          </div>
+        ) : null}
       </div>
     </Panel>
+  );
+}
+
+/** Grok's scheduled output: the morning brief first, then red teams and previews. */
+function BriefsCard({ open }: { open: (brief: Brief) => void }) {
+  const { data, mutate } = useSWR<Brief[]>('/api/briefs', { refreshInterval: 10 * 60_000 });
+  const [generating, setGenerating] = useState(false);
+  const latest = data?.find((brief) => brief.kind === 'morning');
+  const others = (data ?? []).filter((brief) => brief !== latest).slice(0, 3);
+  const generate = async () => {
+    setGenerating(true);
+    try {
+      open(await api<Brief>('/api/briefs', { body: { kind: 'morning' } }));
+      void mutate();
+    } finally {
+      setGenerating(false);
+    }
+  };
+  return (
+    <Panel className="flex flex-col">
+      <PanelHeader
+        kicker="Grok · written for you"
+        title="Briefs"
+        actions={
+          <Button size="xs" variant="outline" icon={<Sparkles className="size-3 text-brand" />} loading={generating} onClick={() => void generate()}>
+            Brief me now
+          </Button>
+        }
+      />
+      <div className="flex-1 px-4 pb-3">
+        {latest ? (
+          <button onClick={() => open(latest)} className="block w-full rounded-sm border border-line bg-surface-1/60 p-2.5 text-left hover:border-brand/30">
+            <div className="flex items-center justify-between text-[11px] text-muted">
+              <span>{latest.title}</span>
+              <span>{relativeTime(latest.created_at)}</span>
+            </div>
+            <p className="mt-1 line-clamp-3 text-[12px] leading-snug text-ink-2">{latest.content.replace(/[#*_>`]/g, '').slice(0, 320)}</p>
+          </button>
+        ) : (
+          <p className="text-[12px] leading-relaxed text-muted">A morning brief lands here before each US open (and on your phone once notifications are on), with red-team reviews of your theses every Sunday.</p>
+        )}
+        {others.map((brief) => (
+          <button key={brief.id} onClick={() => open(brief)} className="flex w-full items-center justify-between gap-2 border-t border-line py-1.5 text-left text-[12px] hover:bg-white/[0.02]">
+            <span className="truncate text-ink-2">{brief.title}</span>
+            <span className="shrink-0 text-[11px] text-faint">{relativeTime(brief.created_at)}</span>
+          </button>
+        ))}
+      </div>
+    </Panel>
+  );
+}
+
+function Today({ data }: { data: DashboardData | undefined }) {
+  const [brief, setBrief] = useState<Brief | null>(null);
+  const params = useSearchParams();
+  const wanted = params.get('brief');
+  const { data: briefs } = useSWR<Brief[]>(wanted ? '/api/briefs' : null);
+  // Opened from a notification (/?brief=morning): show the newest brief of that kind once.
+  const [shownFor, setShownFor] = useState<string | null>(null);
+  if (wanted && briefs && shownFor !== wanted) {
+    setShownFor(wanted);
+    const match = briefs.find((item) => item.kind === wanted);
+    if (match) setBrief(match);
+  }
+  return (
+    <div className="flex flex-col gap-3">
+      <MacroTape />
+      <div className="grid gap-3 lg:grid-cols-3">
+        <PortfolioCard data={data} />
+        <WeekAhead />
+        <BriefsCard open={setBrief} />
+      </div>
+      <BriefModal brief={brief} onClose={() => setBrief(null)} />
+    </div>
   );
 }
 
@@ -281,7 +343,7 @@ export function Dashboard() {
 
   return (
     <Page>
-      <Hero data={data} />
+      <Today data={data} />
 
       <Panel>
         <PanelHeader kicker="Live market" title="Market map" />
