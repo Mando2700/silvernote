@@ -21,6 +21,8 @@ import { CompanyLogo } from '@/components/ui/company-logo';
 import { EmptyState, Panel, PanelHeader, Segmented, Skeleton } from '@/components/ui/primitives';
 import { api } from '@/lib/client';
 import { useExtendedQuotes } from '@/lib/extended-client';
+import { useLivePrices } from '@/lib/live-client';
+import { type LiveDetail, withLivePrices } from '@/lib/portfolio-live';
 import { useBaseCurrency } from '@/lib/fx-client';
 import { money, price, relativeTime, signedPct } from '@/lib/format';
 import { regularSession, sessionHours } from '@/lib/session';
@@ -71,7 +73,14 @@ function isoIn(days: number) {
 /** Portfolio at a glance, with the total also in the base currency when it isn't USD. */
 function PortfolioCard({ data }: { data: DashboardData | undefined }) {
   const base = useBaseCurrency();
-  const portfolio = data?.portfolio;
+  const id = data?.portfolio?.id;
+  // Same source and live revaluation as the portfolio page, so both show the same total.
+  const { data: saved } = useSWR<LiveDetail>(id ? `/api/portfolios/${id}` : null, { refreshInterval: 60_000 });
+  const live = useLivePrices(useMemo(() => (saved?.holdings ?? []).map((holding) => holding.symbol), [saved]));
+  const summary = useMemo(() => (saved ? withLivePrices(saved, live).summary : null), [saved, live]);
+  const merged = data?.portfolio ? { ...data.portfolio, ...(summary ?? {}) } : data?.portfolio;
+  // Includes the pre-market / after-hours move when a session is open.
+  const portfolio = merged && summary ? { ...merged, totalValue: summary.totalValue + (summary.extended?.change ?? 0) } : merged;
   const breadth = data?.breadth;
   const sorted = data ? [...data.sectors].filter((sector) => sector.changePct !== null).sort((a, b) => (b.changePct ?? 0) - (a.changePct ?? 0)) : [];
   return (

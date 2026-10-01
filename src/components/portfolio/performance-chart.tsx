@@ -68,10 +68,10 @@ function cutoff(range: Range, last: number) {
   return last - (RANGES.find((item) => item.value === range)?.days ?? 0) * DAY;
 }
 
-function withLiveEnd(points: Point[], live: number | null | undefined) {
+function withLiveEnd(points: Point[], live: number | null | undefined, rebase = true) {
   const end = points[points.length - 1];
   if (!end || live == null || !(live > 0)) return points;
-  return [...points.slice(0, -1), { ...end, value: live, twr: end.invested ? (live / end.invested) * 100 : end.twr }];
+  return [...points.slice(0, -1), { ...end, value: live, twr: rebase && end.invested ? (live / end.invested) * 100 : end.twr }];
 }
 
 function timeLabel(t: number) {
@@ -82,7 +82,7 @@ function dateLabel(t: number, withYear = false) {
   return new Date(t * 1000).toLocaleDateString('en-US', { month: 'short', day: 'numeric', ...(withYear ? { year: 'numeric' } : {}), timeZone: 'UTC' });
 }
 
-/** `live` is the headline's streamed total: on 1D the chart ends on it instead of the last (up to minutes old) server print. */
+/** `live` is the headline's streamed total: the chart ends on it instead of the last (up to minutes old) server print. */
 export function PerformanceChart({ portfolioId, live }: { portfolioId: string; live?: number | null }) {
   const { data } = useSWR<Performance>(`/api/portfolios/${portfolioId}/performance`);
   const [picked, setRange] = useState<Range>('3M');
@@ -115,7 +115,7 @@ export function PerformanceChart({ portfolioId, live }: { portfolioId: string; l
 
   const from = cutoff(range, last);
   const startIndex = Math.max(0, all.findIndex((point) => point.t >= from) - 1);
-  const points = range === '1D' && intraday ? withLiveEnd(intraday.points, live) : all.slice(startIndex);
+  const points = range === '1D' && intraday ? withLiveEnd(intraday.points, live) : withLiveEnd(all.slice(startIndex), live, false);
   const name = benchmarkName(data.benchmark);
   // Nothing is added or withdrawn within a session, so both measures agree on 1D.
   const basis: Basis = range === '1D' ? 'twr' : pickedBasis;

@@ -32,10 +32,11 @@ import { StatTile } from '@/components/ui/stat-tile';
 import { TickerSearch } from '@/components/ui/ticker-search';
 import { localToday } from '@/lib/dates';
 import { api, revalidate } from '@/lib/client';
-import { type LivePrice, useLivePrices } from '@/lib/live-client';
+import { useLivePrices } from '@/lib/live-client';
 import { fixed, money, pct, price, shortDate, signedPct } from '@/lib/format';
 import { cn } from '@/lib/utils';
 import { useSearchParams } from '@/components/shell/keep-alive';
+import { withLivePrices } from '@/lib/portfolio-live';
 
 type PortfolioListItem = { id: string; name: string; benchmark: string; cash: number; summary: Summary };
 type Summary = { totalValue: number; invested: number; fixedIncome: number; bonds: number; cash: number; costBasis: number; unrealized: number; unrealizedPct: number | null; realized: number; dayChange: number; dayChangePct: number | null; extended?: { session: 'pre' | 'post'; change: number; changePct: number | null } | null; positions: number; unpriced?: string[]; pricesAsOf?: number | null };
@@ -539,6 +540,8 @@ export function PortfolioView() {
   const summary = detail?.summary;
   const extendedSession = summary?.extended?.session ?? null;
   const showExtended = extendedSession !== null && changeView === 'extended';
+  // With extended hours on, the headline value includes the pre-market / after-hours move.
+  const displayTotal = summary ? summary.totalValue + (showExtended ? (summary.extended?.change ?? 0) : 0) : undefined;
 
   return (
     <Page
@@ -617,9 +620,9 @@ export function PortfolioView() {
           <div>
             <div className="kicker">{detail?.portfolio.name ?? '…'} · benchmark {detail?.portfolio.benchmark}</div>
             <div className="mt-2 text-[48px] leading-none font-semibold tracking-[-0.035em] text-ink">
-              <RollingNumber value={summary?.totalValue} format={(value) => money(value, { digits: 0 })} />
+              <RollingNumber value={displayTotal} format={(value) => money(value, { digits: 0 })} />
             </div>
-            {base.rate && summary ? <div className="num mt-1 text-[13px] text-muted">≈ {base.format(summary.totalValue)}</div> : null}
+            {base.rate && summary ? <div className="num mt-1 text-[13px] text-muted">≈ {base.format(displayTotal ?? summary.totalValue)}</div> : null}
             <div className="mt-2 flex items-center gap-2 text-[13px]">
               <span className="text-muted">{showExtended && extendedSession ? SESSION_LABEL[extendedSession] : 'Today'}</span>
               <Delta value={showExtended ? summary?.extended?.change : summary?.dayChange} kind="money" digits={0} />
@@ -752,7 +755,7 @@ export function PortfolioView() {
               />
             </Panel>
           )}
-          {selectedId && detail.holdings.length ? <PerformanceChart portfolioId={selectedId} live={summary?.totalValue} /> : null}
+          {selectedId && detail.holdings.length ? <PerformanceChart portfolioId={selectedId} live={displayTotal} /> : null}
           {detail.holdings.length ? (
             <div className="grid gap-4 xl:grid-cols-[1.4fr_1fr]">
               <Panel>
@@ -907,48 +910,4 @@ export function PortfolioView() {
       {detail && sharing !== 'closed' ? <ShareStudio open={sharing === 'open'} onClose={() => setSharing('dismissed')} detail={detail} /> : null}
     </Page>
   );
-}
-
-/** Revalue holdings and the summary with real-time prices (same arithmetic as the server). */
-function withLivePrices(detail: Detail, live: Record<string, LivePrice | undefined>): Detail {
-  if (!detail.holdings.some((holding) => live[holding.symbol])) return detail;
-  const holdings = detail.holdings.map((holding) => {
-    const tick = live[holding.symbol];
-    if (!tick) return holding;
-    // Outside regular hours, trades move the extended-session price; the regular close stays put.
-    if (holding.extendedPrice != null && holding.price !== null) {
-      if (tick.timestamp <= (holding.priceAsOf ?? 0)) return holding;
-      const change = tick.price - holding.price;
-      return { ...holding, extendedPrice: tick.price, extendedChange: change * holding.shares, extendedChangePct: holding.price ? (change / holding.price) * 100 : null };
-    }
-    const marketValue = tick.price * holding.shares;
-    return {
-      ...holding,
-      price: tick.price,
-      marketValue,
-      dayChange: tick.change !== null ? tick.change * holding.shares : holding.dayChange,
-      dayChangePct: tick.changePct ?? holding.dayChangePct,
-      unrealized: marketValue - holding.costBasis,
-      unrealizedPct: holding.costBasis > 0 ? (marketValue - holding.costBasis) / holding.costBasis : null,
-    };
-  });
-  const invested = holdings.reduce((sum, holding) => sum + holding.marketValue, 0);
-  const total = invested + detail.summary.fixedIncome + detail.summary.cash;
-  const dayChange = holdings.reduce((sum, holding) => sum + holding.dayChange, 0);
-  const extendedChange = holdings.reduce((sum, holding) => sum + (holding.extendedChange ?? 0), 0);
-  const costBasis = detail.summary.costBasis;
-  return {
-    ...detail,
-    holdings: holdings.map((holding) => ({ ...holding, weight: total > 0 ? holding.marketValue / total : 0 })),
-    summary: {
-      ...detail.summary,
-      totalValue: total,
-      invested,
-      unrealized: invested - costBasis,
-      unrealizedPct: costBasis > 0 ? (invested - costBasis) / costBasis : null,
-      dayChange,
-      dayChangePct: total - dayChange > 0 ? dayChange / (total - dayChange) : null,
-      extended: detail.summary.extended ? { ...detail.summary.extended, change: extendedChange, changePct: total > 0 ? extendedChange / total : null } : null,
-    },
-  };
 }
