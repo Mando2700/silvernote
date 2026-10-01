@@ -77,10 +77,9 @@ export function Kbd({ children, className }: { children: ReactNode; className?: 
 
 export function Skeleton({ className }: { className?: string }) {
   return (
-    <div className={cn('relative overflow-hidden rounded-sm bg-white/[0.035] [background-image:repeating-linear-gradient(0deg,transparent_0_3px,rgb(255_255_255/0.012)_3px_4px)]', className)}>
+    <div className={cn('relative overflow-hidden rounded-sm bg-white/[0.035]', className)}>
       <div className="absolute inset-0 -translate-x-full animate-sweep motion-reduce:hidden" aria-hidden>
-        <div className="absolute inset-y-0 right-0 w-1/2 bg-gradient-to-r from-transparent via-white/[0.035] to-ion/[0.06]" />
-        <div className="absolute inset-y-[18%] right-0 w-px bg-gradient-to-b from-transparent via-ion/40 to-transparent" />
+        <div className="absolute inset-y-0 right-0 w-1/2 bg-gradient-to-r from-transparent to-white/[0.04]" />
       </div>
     </div>
   );
@@ -90,12 +89,7 @@ export function EmptyState({ icon, title, body, action, className }: { icon?: Re
   return (
     <div className={cn('flex flex-col items-center justify-center gap-2 px-6 py-10 text-center', className)}>
       {icon ? (
-        <div className="emblem relative mb-2 grid size-11 place-items-center text-brand-soft">
-          <span className="emblem-bloom" aria-hidden />
-          <span className="emblem-orbit" aria-hidden />
-          <span className="emblem-tile light-trail" aria-hidden />
-          <span className="relative">{icon}</span>
-        </div>
+        <div className="mb-2 grid size-10 place-items-center rounded-md border border-line bg-surface-2 text-muted">{icon}</div>
       ) : null}
       <div className="text-[13.5px] font-medium text-ink">{title}</div>
       {body ? <div className="max-w-sm text-[12.5px] leading-relaxed text-muted">{body}</div> : null}
