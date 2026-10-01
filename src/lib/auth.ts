@@ -29,9 +29,9 @@ export async function getSessionUser(): Promise<SessionUser | null> {
   const { data } = await supabase.auth.getUser();
   const user = data.user;
   if (!user) return null;
-  // Single-user app: only the configured owner may use it, even if someone else signs up.
+  // Only the emails listed in OWNER_EMAIL may use it, even if someone else signs up.
   // Without OWNER_EMAIL nobody is admitted, so a missing setting can never open the app to everyone.
-  if (!env.ownerEmail || user.email?.toLowerCase() !== env.ownerEmail) return null;
+  if (!user.email || !env.allowedEmails.includes(user.email.toLowerCase())) return null;
   return { id: user.id, email: user.email ?? null, local: false };
 }
 

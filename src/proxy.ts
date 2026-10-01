@@ -3,7 +3,7 @@ import { NextResponse, type NextRequest } from 'next/server';
 
 /**
  * Auth gate for Supabase mode: refreshes the session cookie on every request, sends signed-out
- * visitors to /login (401 JSON for API calls) and admits only OWNER_EMAIL. In local mode (no
+ * visitors to /login (401 JSON for API calls) and admits only the emails in OWNER_EMAIL. In local mode (no
  * Supabase settings) it does nothing; the dev/prod servers bind to 127.0.0.1 instead.
  */
 
@@ -20,7 +20,7 @@ export async function proxy(request: NextRequest) {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL?.trim();
   const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY?.trim();
   if (!url || !key) return NextResponse.next();
-  const owner = process.env.OWNER_EMAIL?.trim().toLowerCase();
+  const allowedEmails = (process.env.OWNER_EMAIL ?? '').toLowerCase().split(',').map((email) => email.trim()).filter(Boolean);
 
   let response = NextResponse.next({ request });
   const supabase = createServerClient(url, key, {
@@ -38,7 +38,7 @@ export async function proxy(request: NextRequest) {
   const {
     data: { user },
   } = await supabase.auth.getUser();
-  const allowed = Boolean(user && owner && user.email?.toLowerCase() === owner);
+  const allowed = Boolean(user?.email && allowedEmails.includes(user.email.toLowerCase()));
   const path = request.nextUrl.pathname;
   const isPublic = PUBLIC_PREFIXES.some((prefix) => path === prefix || path.startsWith(prefix));
 

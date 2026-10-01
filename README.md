@@ -75,7 +75,7 @@ Use Supabase when you want your data in a managed Postgres, or before running Si
 1. Create a free organization and project at supabase.com.
 2. In **Project Settings → Database → Connection string**, copy the **Session pooler** URI (port 5432) and set it as `DATABASE_URL`.
 3. In **Project Settings → API**, copy the project URL and the anon key into `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_ANON_KEY`.
-4. Set `OWNER_EMAIL` to the one email address allowed to use the app.
+4. Set `OWNER_EMAIL` to the email address allowed to use the app (comma-separate more addresses to let others register; each gets their own separate data).
 5. Create the tables and row-level security policies:
 
    ```bash
@@ -109,7 +109,7 @@ Everything fetched is cached in Postgres, so each source is called only as often
 - **Motion** for UI animation and scroll-linked charts, **D3** for the treemap and SVG charts, **Lightweight Charts** for price charts, **three.js** for the sign-in page's point field, **ExcelJS** for exports, **web-push** for notifications.
 - **Database**: one SQL migration set in `supabase/migrations/` runs on either the built-in PGlite (Postgres compiled to WebAssembly, stored in `./.silvernote/db`) or Supabase Postgres. Personal tables have owner-only row-level security; market cache tables are server-only.
 - **Server**: route handlers under `src/app/api` are the only way the browser reaches data or Grok. The scheduler refreshes prices every 5 minutes during market hours (plus a real-time Finnhub stream for the stocks on screen when a key is set), fundamentals and scores weekly (failed runs retry with backoff), evaluates alerts, delivers notifications and writes scheduled briefs. Locally it runs inside the server process; on Vercel it is driven by `/api/cron` (see Scheduler below).
-- **Auth**: in Supabase mode `src/proxy.ts` refreshes the session on each request and admits only `OWNER_EMAIL`; in local mode there is no sign-in and the server binds to 127.0.0.1.
+- **Auth**: in Supabase mode `src/proxy.ts` refreshes the session on each request and admits only the emails in `OWNER_EMAIL`; in local mode there is no sign-in and the server binds to 127.0.0.1.
 
 A note on the brief: it suggested Supabase Edge Functions for the data and AI proxies. SilverNote uses Next.js route handlers instead, so the same code runs locally without Docker or the Supabase CLI and on any Node host. The data never leaves your server either way.
 

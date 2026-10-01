@@ -14,8 +14,16 @@ export const env = {
   get supabaseAnonKey() {
     return read('NEXT_PUBLIC_SUPABASE_ANON_KEY');
   },
+  /** OWNER_EMAIL may list several comma-separated addresses; the first is the primary owner. */
+  get allowedEmails() {
+    return read('OWNER_EMAIL')
+      .toLowerCase()
+      .split(',')
+      .map((email) => email.trim())
+      .filter(Boolean);
+  },
   get ownerEmail() {
-    return read('OWNER_EMAIL').toLowerCase();
+    return this.allowedEmails[0] ?? '';
   },
   get secUserAgent() {
     return read('SEC_USER_AGENT') || 'SilverNote personal research tool (contact@example.com)';

@@ -16,13 +16,13 @@ function safeNext(value: FormDataEntryValue | null) {
 
 export async function authenticate(_previous: LoginState, formData: FormData): Promise<LoginState> {
   if (!isAuthEnabled()) redirect('/');
-  if (!env.ownerEmail) return { error: 'Set OWNER_EMAIL in the server environment before signing in.' };
+  if (!env.allowedEmails.length) return { error: 'Set OWNER_EMAIL in the server environment before signing in.' };
 
   const email = String(formData.get('email') ?? '').trim().toLowerCase();
   const password = String(formData.get('password') ?? '');
   const mode = formData.get('mode') === 'signup' ? 'signup' : 'signin';
   if (!email || password.length < 8) return { error: 'Enter your email and a password of at least 8 characters.' };
-  if (email !== env.ownerEmail) return { error: 'This SilverNote belongs to its owner. Use the owner account.' };
+  if (!env.allowedEmails.includes(email)) return { error: 'This SilverNote is invite-only. Use an email that has been allowed.' };
 
   const supabase = await createSupabaseServerClient();
   if (mode === 'signup') {
@@ -32,7 +32,7 @@ export async function authenticate(_previous: LoginState, formData: FormData): P
     const { data, error } = await supabase.auth.signUp({ email, password, options: { emailRedirectTo: host ? `${protocol}://${host}/auth/callback` : undefined } });
     if (error) return { error: error.message };
     if (data.session) {
-      // Supabase handed out a session without email confirmation, so anyone who knows OWNER_EMAIL could
+      // Supabase handed out a session without email confirmation, so anyone who knew an allowed email could
       // have claimed it first. Don't sign in on that basis.
       await supabase.auth.signOut();
       return {

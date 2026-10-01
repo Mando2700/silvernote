@@ -61,7 +61,7 @@ export function LoginForm({ next, initialError, ownerConfigured }: { next: strin
               ) : null}
             </AnimatePresence>
             <Button type="submit" variant="primary" size="md" loading={pending} icon={pending ? undefined : mode === 'signin' ? <Lock className="size-3.5" /> : <ArrowRight className="size-3.5" />} className="mt-1 w-full">
-              {mode === 'signin' ? 'Sign in' : 'Create owner account'}
+              {mode === 'signin' ? 'Sign in' : 'Create account'}
             </Button>
           </form>
         </div>
@@ -71,7 +71,7 @@ export function LoginForm({ next, initialError, ownerConfigured }: { next: strin
           onClick={() => setMode((value) => (value === 'signin' ? 'signup' : 'signin'))}
           className="mx-auto mt-4 block text-[12px] text-muted hover:text-ink-2"
         >
-          {mode === 'signin' ? 'First run? Create the owner account' : 'Already set up? Sign in'}
+          {mode === 'signin' ? 'New here? Create an account' : 'Already set up? Sign in'}
         </button>
       </motion.div>
     </main>
