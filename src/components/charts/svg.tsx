@@ -65,13 +65,16 @@ export function ScrollReveal({ children, className }: { children: ReactNode; cla
   );
 }
 
-export function Legend({ items, className }: { items: Array<{ label: string; color: string; kind?: 'rect' | 'line' }>; className?: string }) {
+export function Legend({ items, className }: { items: Array<{ label: string; color: string; kind?: 'rect' | 'line'; dashed?: boolean }>; className?: string }) {
   return (
     <div className={cn('flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-ink-2', className)}>
       {items.map((item) => (
         <span key={item.label} className="flex items-center gap-1.5">
           {item.kind === 'line' ? (
-            <span className="h-[2px] w-3 rounded-full" style={{ background: item.color }} />
+            <span
+              className="h-[2px] w-3.5 rounded-full"
+              style={{ background: item.dashed ? `repeating-linear-gradient(90deg, ${item.color} 0 4px, transparent 4px 6px)` : item.color }}
+            />
           ) : (
             <span className="size-2.5 rounded-[2px]" style={{ background: item.color }} />
           )}
@@ -329,7 +332,7 @@ export function LineChart({
 
   return (
     <div className={cn('flex flex-col gap-2', className)}>
-      {series.length > 1 ? <Legend items={series.map((item, index) => ({ label: item.label, color: colors[index], kind: 'line' }))} /> : null}
+      {series.length > 1 ? <Legend items={series.map((item, index) => ({ label: item.label, color: colors[index], kind: 'line', dashed: item.dashed }))} /> : null}
       <div
         ref={ref}
         className="relative w-full"

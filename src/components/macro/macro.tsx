@@ -118,7 +118,7 @@ export function Macro() {
               categories={curve.map((point) => point.label)}
               series={[
                 { label: 'Today', values: curve.map((point) => point.now), emphasis: true },
-                { label: '1 month ago', values: curve.map((point) => point.monthAgo), color: SERIES_COLORS[0], dashed: true },
+                { label: '1 month ago', values: curve.map((point) => point.monthAgo), color: SERIES_COLORS[1], dashed: true },
                 { label: '1 year ago', values: curve.map((point) => point.yearAgo), color: SERIES_COLORS[2] },
               ]}
               format={(value) => `${value.toFixed(2)}%`}
