@@ -56,7 +56,7 @@ function IndexStrip() {
   const { data } = useSWR<IndexItem[]>('/api/indices', { refreshInterval: 60_000 });
   if (!data?.length) return null;
   return (
-    <div className="hidden items-center gap-4 xl:flex">
+    <div className="ml-2 hidden items-center gap-4 xl:flex">
       {data.map((item) => (
         <Link key={item.symbol} href={`/company/${item.symbol}`} className="group flex items-center gap-2" title={item.kind === 'index' ? `${item.name} index level · opens ${item.symbol}` : `${item.name} tracking fund (index level unavailable)`}>
           <div className="flex flex-col leading-tight">
@@ -382,8 +382,8 @@ export function Topbar() {
           <Kbd>K</Kbd>
         </span>
       </button>
+      <IndexStrip />
       <div className="ml-auto flex items-center gap-2 sm:gap-3">
-        <IndexStrip />
         <span className="hidden sm:contents">
           <MarketStatus open={status?.marketOpen} />
           <JobsIndicator status={status} refresh={() => void refresh()} />
