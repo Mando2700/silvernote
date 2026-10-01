@@ -410,8 +410,6 @@ body {
   to { --trail-angle: 360deg; }
 }
 
-}
-
 /* ─── View transitions (row → company page morph, route crossfades) ─────────── */
 ::view-transition-group(.morph) {
   animation-duration: 420ms;
