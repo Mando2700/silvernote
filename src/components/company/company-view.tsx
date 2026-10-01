@@ -65,7 +65,7 @@ function n(value: unknown) {
   return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }
 
-function KeyStats({ data }: { data: CompanyPayload }) {
+function KeyStats({ data, profileLoading }: { data: CompanyPayload; profileLoading: boolean }) {
   const f = data.fundamentals ?? {};
   const marketCap = data.security?.market_cap ?? null;
   const netIncome = n(f.net_income);
@@ -104,7 +104,7 @@ function KeyStats({ data }: { data: CompanyPayload }) {
         {stats.map((stat) => (
           <div key={stat.label}>
             <div className="text-[11px] text-muted">{stat.label}</div>
-            <div className="num mt-0.5 text-[14px] font-medium text-ink">{stat.value}</div>
+            {profileLoading && stat.value === '—' ? <Skeleton className="mt-1 h-3.5 w-12" /> : <div className="num mt-0.5 text-[14px] font-medium text-ink">{stat.value}</div>}
           </div>
         ))}
       </div>
@@ -125,7 +125,7 @@ function KeyStats({ data }: { data: CompanyPayload }) {
   );
 }
 
-function Overview({ data, onTab }: { data: CompanyPayload; onTab: (tab: Tab) => void }) {
+function Overview({ data, profileLoading, onTab }: { data: CompanyPayload; profileLoading: boolean; onTab: (tab: Tab) => void }) {
   const [range, setRange] = useState<(typeof RANGES)[number]>('1y');
   const [mode, setMode] = useState<'area' | 'candles'>('area');
   const [fullscreen, setFullscreen] = useState(false);
@@ -228,7 +228,7 @@ function Overview({ data, onTab }: { data: CompanyPayload; onTab: (tab: Tab) => 
       ) : null}
       <div className="flex flex-col gap-4">
         {fullscreen ? null : <Panel>{chartBody}</Panel>}
-        <KeyStats data={data} />
+        <KeyStats data={data} profileLoading={profileLoading} />
         {annual.length ? (
           <Panel>
             <PanelHeader
@@ -273,7 +273,15 @@ function Overview({ data, onTab }: { data: CompanyPayload; onTab: (tab: Tab) => 
         <Panel>
           <PanelHeader kicker={[data.profile?.sector, data.profile?.industry].filter(Boolean).join(' · ') || 'Company'} title="About" />
           <div className="px-4 pb-4">
-            <p className="line-clamp-[10] text-[12.5px] leading-relaxed text-ink-2">{data.profile?.description ?? 'No description available.'}</p>
+            {profileLoading ? (
+              <div className="flex flex-col gap-2">
+                <Skeleton className="h-3 w-full" />
+                <Skeleton className="h-3 w-full" />
+                <Skeleton className="h-3 w-2/3" />
+              </div>
+            ) : (
+              <p className="line-clamp-[10] text-[12.5px] leading-relaxed text-ink-2">{data.profile?.description ?? 'No description available.'}</p>
+            )}
             <div className="mt-3 grid grid-cols-2 gap-x-4 gap-y-2 text-[12px]">
               {[
                 ['Exchange', data.profile?.exchange ?? data.security?.exchange],
@@ -308,7 +316,15 @@ function Overview({ data, onTab }: { data: CompanyPayload; onTab: (tab: Tab) => 
               </Button>
             }
           />
-          <NewsList items={(news?.news ?? []).slice(0, 5)} compact />
+          {news ? (
+            <NewsList items={news.news.slice(0, 5)} compact />
+          ) : (
+            <div className="flex flex-col gap-3 px-4 pb-4">
+              <Skeleton className="h-3.5 w-full" />
+              <Skeleton className="h-3.5 w-5/6" />
+              <Skeleton className="h-3.5 w-full" />
+            </div>
+          )}
         </Panel>
       </div>
     </div>
@@ -321,7 +337,10 @@ export function CompanyView({ initial }: { initial: CompanyInitial }) {
   const searchParams = useSearchParams();
   const active = usePageActive();
   const tab = (searchParams.get('tab') as Tab) ?? 'overview';
-  const { data, mutate } = useSWR<CompanyPayload>(`/api/company/${symbol}`, { refreshInterval: 30_000 });
+  // The profile comes from slow providers on a cold symbol, so it loads on its own and the page never waits for it.
+  const { data: core, mutate } = useSWR<CompanyPayload>(`/api/company/${symbol}?lean=1`, { refreshInterval: 30_000 });
+  const { data: profileData } = useSWR<{ profile: CompanyProfile | null }>(`/api/company/${symbol}/profile`);
+  const data = useMemo(() => (core ? { ...core, profile: profileData?.profile ?? null } : undefined), [core, profileData]);
   const { askAssistant, setAssistantContext } = useShell();
 
   const setTab = (next: Tab) => {
@@ -439,7 +458,7 @@ export function CompanyView({ initial }: { initial: CompanyInitial }) {
       </Panel>
 
       <div className={cn('min-h-[50vh]')}>
-        {tab === 'overview' ? data ? <Overview data={data} onTab={setTab} /> : <Skeleton className="h-[520px] w-full" /> : null}
+        {tab === 'overview' ? data ? <Overview data={data} profileLoading={!profileData} onTab={setTab} /> : <Skeleton className="h-[520px] w-full" /> : null}
         {tab === 'financials' ? <Financials symbol={symbol} isBank={isBank} /> : null}
         {tab === 'dcf' ? <DcfPanel symbol={symbol} /> : null}
         {tab === 'comps' ? <CompsTool key={`${symbol}:${searchParams.get('peers') ?? ''}`} initialSymbol={symbol} initialPeers={searchParams.get('peers')?.split(',').filter(Boolean)} /> : null}

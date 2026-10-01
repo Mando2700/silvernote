@@ -138,6 +138,8 @@ export async function getIndexQuotes() {
 export async function getCompanyProfile(symbol: string): Promise<CompanyProfile> {
   const upper = symbol.toUpperCase();
   const security = await getSecurity(upper);
+  // Nasdaq's summary is the slowest call here and does not depend on the base profile: start it alongside.
+  const summaryRequest = cached(`summary:${upper}`, 6 * 3600, () => nasdaq.fetchSummary(upper)).catch(() => null);
   const base = await cached(`profile:${upper}`, 7 * 86_400, async () => {
     const [description, submissions, fmpProfile, finnhubProfile] = await Promise.all([
       nasdaq.fetchCompanyDescription(upper).catch(() => null),
@@ -159,7 +161,7 @@ export async function getCompanyProfile(symbol: string): Promise<CompanyProfile>
       exchange: fmpProfile?.exchange ?? finnhubProfile?.exchange ?? security?.exchange ?? null,
     };
   });
-  const summary = await cached(`summary:${upper}`, 6 * 3600, () => nasdaq.fetchSummary(upper)).catch(() => null);
+  const summary = await summaryRequest;
   // Nasdaq only publishes dividend fields for Nasdaq listings; NYSE names (KO, JPM, …) come from Finnhub's indicated rate.
   const dividend =
     summary?.dividendYield == null && finnhub.finnhubEnabled()

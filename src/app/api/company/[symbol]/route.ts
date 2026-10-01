@@ -1,15 +1,18 @@
-import { notFound, route, symbolSchema } from '@/lib/api';
+import { notFound, route, searchParam, symbolSchema } from '@/lib/api';
 import { q, q1 } from '@/lib/db';
 import { getCompanyProfile, getLiveQuote } from '@/lib/services/market';
 import { getSecurity } from '@/lib/services/universe';
 
 export const dynamic = 'force-dynamic';
 
-export const GET = route<{ symbol: string }>(async ({ user, params }) => {
+export const GET = route<{ symbol: string }>(async ({ request, user, params }) => {
   const symbol = symbolSchema.parse(params.symbol);
+  // ?lean=1 leaves the profile out: its provider calls can take seconds on a cold symbol, and
+  // the company page loads it separately from /profile so the rest renders without waiting.
+  const lean = searchParam(request, 'lean') === '1';
   const security = await getSecurity(symbol);
   const [profile, quote, score, watchlists, workspace, fundamentals] = await Promise.all([
-    getCompanyProfile(symbol).catch(() => null),
+    lean ? Promise.resolve(null) : getCompanyProfile(symbol).catch(() => null),
     getLiveQuote(symbol).catch(() => null),
     q1('select overall, label, confidence, sub_scores, payload, input_level, calculated_at from public.scores where symbol = $1', [symbol]),
     q<{ id: string; name: string; member: boolean }>(
