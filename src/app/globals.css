@@ -615,3 +615,16 @@ body {
     grid-template-columns: repeat(auto-fill, minmax(min(100%, 320px), 1fr));
   }
 }
+
+/* Windows draws native <select> popups with each option's own colors; selects here have a transparent
+   background and light text, which left options as light-on-white until hovered. */
+select,
+option,
+optgroup {
+  color-scheme: dark;
+}
+option,
+optgroup {
+  background-color: var(--color-surface-3);
+  color: var(--color-ink);
+}
