@@ -87,15 +87,16 @@ export async function notify(userId: string, notice: Notice) {
 /** Deliver alert events that haven't gone out yet (older than two days are just marked, not sent). */
 export async function deliverPendingEvents() {
   if (!pushEnabled() && !telegramEnabled()) return 0;
-  const events = await q<{ id: string; user_id: string; symbol: string; message: string; created_at: Date }>(
-    `select id, user_id, symbol, message, created_at from public.alert_events
+  const events = await q<{ id: string; user_id: string; symbol: string; kind: string; message: string; created_at: Date }>(
+    `select id, user_id, symbol, kind, message, created_at from public.alert_events
      where delivered_at is null order by created_at limit 50`,
   );
   let delivered = 0;
   for (const event of events) {
     const fresh = Date.now() - new Date(event.created_at).getTime() < 2 * 86_400_000;
     if (fresh) {
-      await notify(event.user_id, { title: `${event.symbol} alert`, body: event.message, url: `/company/${event.symbol}`, tag: `alert-${event.id}` });
+      const macro = event.symbol === 'MACRO';
+      await notify(event.user_id, { title: macro ? 'Macro alert' : event.kind === 'earnings_result' ? `${event.symbol} earnings results` : event.kind === 'earnings' ? `${event.symbol} reports soon` : `${event.symbol} alert`, body: event.message, url: macro ? '/macro' : `/company/${event.symbol}`, tag: `alert-${event.id}` });
       delivered += 1;
     }
     await q('update public.alert_events set delivered_at = now() where id = $1', [event.id]);

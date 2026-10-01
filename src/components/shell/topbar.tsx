@@ -337,7 +337,7 @@ function AlertsBell() {
                 data.events.map((event) => (
                   <Link
                     key={event.id}
-                    href={`/company/${event.symbol}`}
+                    href={event.symbol === 'MACRO' ? '/macro' : `/company/${event.symbol}`}
                     onClick={() => setOpen(false)}
                     className="block border-b border-line px-3.5 py-2.5 last:border-0 hover:bg-white/[0.03]"
                   >

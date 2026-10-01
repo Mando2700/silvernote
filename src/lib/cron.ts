@@ -1,29 +1,16 @@
 import 'server-only';
 
-import { q, q1 } from '@/lib/db';
+import { q } from '@/lib/db';
 import { env } from '@/lib/env';
 import { todayInNewYork } from '@/lib/dates';
 import { schedulerTick } from '@/lib/jobs';
+import { claimSlot } from '@/lib/slots';
 import { evaluateEventAlerts, evaluatePriceAlerts } from '@/lib/services/alerts';
+import { evaluateEarningsResults, evaluateEarningsWatch, evaluateMacroWatch } from '@/lib/services/auto-alerts';
 import { earningsPreview, morningBrief, weeklyRedTeam } from '@/lib/services/briefs';
 import { upcomingEarnings } from '@/lib/services/calendar';
 import { getUserSymbols } from '@/lib/services/news';
 import { deliverPendingEvents } from '@/lib/services/notify';
-
-/**
- * Take a named slot for `seconds`: true for exactly one caller until it expires. Lets overlapping
- * cron invocations (Vercel, GitHub, a page load) agree on who does a piece of work.
- */
-export async function claimSlot(key: string, seconds: number) {
-  const row = await q1<{ key: string }>(
-    `insert into public.api_cache (key, payload, fetched_at, expires_at) values ($1, '{}'::jsonb, now(), now() + ($2 || ' seconds')::interval)
-     on conflict (key) do update set fetched_at = now(), expires_at = excluded.expires_at
-       where public.api_cache.expires_at <= now()
-     returning key`,
-    [`slot:${key}`, String(seconds)],
-  );
-  return Boolean(row);
-}
 
 function newYorkClock(now = new Date()) {
   const parts = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', weekday: 'short', hour: 'numeric', minute: 'numeric', hourCycle: 'h23' }).formatToParts(now);
@@ -39,7 +26,7 @@ function isoWeek(date = new Date()) {
 }
 
 async function owners() {
-  const rows = await q<{ user_id: string; data: { notify?: { morningBrief?: boolean; weeklyRedTeam?: boolean } } | null }>(
+  const rows = await q<{ user_id: string; data: { notify?: { morningBrief?: boolean; weeklyRedTeam?: boolean; earningsWatch?: boolean; macro?: boolean } } | null }>(
     `select u.user_id, s.data from (select distinct user_id from public.portfolios union select user_id from public.user_settings
        union select user_id from public.watchlists) u left join public.user_settings s on s.user_id = u.user_id`,
   );
@@ -62,6 +49,19 @@ export async function runCron(): Promise<Step[]> {
   await run('scheduler', () => schedulerTick());
   await run('price alerts', async () => ((await claimSlot('cron:price-alerts', 240)) ? evaluatePriceAlerts() : 'skipped'));
   await run('event alerts', async () => ((await claimSlot('cron:event-alerts', 25 * 60)) ? evaluateEventAlerts() : 'skipped'));
+  await run('watch alerts', async () => {
+    let fired = 0;
+    for (const owner of await owners()) {
+      const notify = owner.data?.notify ?? {};
+      if (!(await claimSlot(`cron:watch-alerts:${owner.user_id}`, 10 * 60))) continue;
+      if (notify.earningsWatch !== false) {
+        fired += await evaluateEarningsWatch(owner.user_id).catch(() => 0);
+        fired += await evaluateEarningsResults(owner.user_id).catch(() => 0);
+      }
+      if (notify.macro !== false) fired += await evaluateMacroWatch(owner.user_id).catch(() => 0);
+    }
+    return fired;
+  });
   await run('deliver', () => deliverPendingEvents());
 
   if (!env.xaiKey) return steps;

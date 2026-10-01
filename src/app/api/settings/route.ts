@@ -26,6 +26,8 @@ const schema = z.object({
       telegram: z.boolean().optional(),
       morningBrief: z.boolean().optional(),
       weeklyRedTeam: z.boolean().optional(),
+      earningsWatch: z.boolean().optional(),
+      macro: z.boolean().optional(),
     })
     .optional(),
 });

@@ -155,7 +155,7 @@ function AlertsView() {
         {events?.events.length ? (
           <div className="flex flex-col">
             {events.events.map((event) => (
-              <Link key={event.id} href={`/company/${event.symbol}`} className="border-t border-line px-4 py-2.5 hover:bg-white/[0.025]">
+              <Link key={event.id} href={event.symbol === 'MACRO' ? '/macro' : `/company/${event.symbol}`} className="border-t border-line px-4 py-2.5 hover:bg-white/[0.025]">
                 <div className="flex justify-between text-[11px]">
                   <span className="font-mono font-semibold text-ink">{event.symbol}</span>
                   <span className="text-faint">{relativeTime(event.created_at)}</span>

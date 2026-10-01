@@ -457,3 +457,24 @@ export async function fetchEconomicCalendar(date: string): Promise<EconomicEvent
       previous: clean(row.previous),
     }));
 }
+
+export type EarningsSurprise = { fiscalQuarter: string; reportedOn: string; eps: number | null; consensus: number | null; surprisePct: number | null };
+
+/** Reported vs consensus EPS for a company's last few quarters, newest first. */
+export async function fetchEarningsSurprises(symbol: string): Promise<EarningsSurprise[]> {
+  const data = await get<{ earningsSurpriseTable?: { rows?: Array<{ fiscalQtrEnd?: string; dateReported?: string; eps?: unknown; consensusForecast?: unknown; percentageSurprise?: unknown }> | null } }>(
+    `/company/${apiSymbol(symbol)}/earnings-surprise`,
+  );
+  return (data?.earningsSurpriseTable?.rows ?? []).flatMap((row) => {
+    // Dates come as M/D/YYYY.
+    const match = row.dateReported?.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+    if (!match) return [];
+    return [{
+      fiscalQuarter: row.fiscalQtrEnd ?? '',
+      reportedOn: `${match[3]}-${match[1].padStart(2, '0')}-${match[2].padStart(2, '0')}`,
+      eps: parseLooseNumber(row.eps),
+      consensus: parseLooseNumber(row.consensusForecast),
+      surprisePct: parseLooseNumber(row.percentageSurprise),
+    }];
+  });
+}

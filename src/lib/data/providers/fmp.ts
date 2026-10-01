@@ -229,3 +229,20 @@ export async function fetchAnalystEstimates(symbol: string) {
       analysts: row.numAnalystsRevenue ?? null,
     }));
 }
+
+type FmpEarnings = { date?: string; epsActual?: number | null; epsEstimated?: number | null; revenueActual?: number | null; revenueEstimated?: number | null };
+
+/** Quarterly reports with EPS and revenue, actual and consensus, newest first (rows not yet reported have null actuals). */
+export async function fetchEarningsReports(symbol: string) {
+  const rows = await get<FmpEarnings[]>('/earnings', { symbol: symbol.replace('.', '-'), limit: '6' });
+  return (Array.isArray(rows) ? rows : [])
+    .filter((row) => typeof row.date === 'string' && row.date)
+    .map((row) => ({
+      date: row.date as string,
+      epsActual: row.epsActual ?? null,
+      epsEstimate: row.epsEstimated ?? null,
+      revenueActual: row.revenueActual ?? null,
+      revenueEstimate: row.revenueEstimated ?? null,
+    }))
+    .sort((a, b) => b.date.localeCompare(a.date));
+}

@@ -21,7 +21,7 @@ export type Preferences = {
   baseCurrency: string;
   /** Which tax rules the Tax tab applies. */
   taxJurisdiction: 'US' | 'PL';
-  notify?: { push?: boolean; telegram?: boolean; morningBrief?: boolean; weeklyRedTeam?: boolean };
+  notify?: { push?: boolean; telegram?: boolean; morningBrief?: boolean; weeklyRedTeam?: boolean; earningsWatch?: boolean; macro?: boolean };
   /** Yahoo symbols on the dashboard's macro tape (empty = default). */
   macroTape?: string[];
   /** Saved Terminal layouts (see components/terminal). */

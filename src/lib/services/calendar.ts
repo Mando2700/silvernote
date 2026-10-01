@@ -9,6 +9,9 @@ import { getSecuritiesBySymbols } from '@/lib/services/universe';
 /** US releases that move the whole market. Everything else from the US is shown as normal importance. */
 const MAJOR = /\b(CPI|PPI|PCE|nonfarm|non-farm|payrolls|unemployment rate|FOMC|fed(eral)? (funds|interest)|interest rate decision|GDP|retail sales|ISM|JOLTS|jobless claims|consumer (confidence|sentiment)|powell)\b/i;
 
+/** Whether a US release is one of the market-moving ones. */
+export const isMajorRelease = (name: string) => MAJOR.test(name);
+
 export type CalendarDay = {
   date: string;
   earnings: Array<nasdaq.EarningsEvent & { mine: boolean }>;
@@ -40,7 +43,7 @@ function dividendsOn(date: string) {
   return cached(`cal:dividends:${date}`, ttlFor(date), () => nasdaq.fetchDividendCalendar(date)).catch(() => [] as nasdaq.DividendEvent[]);
 }
 
-function economyOn(date: string) {
+export function economyOn(date: string) {
   return cached(`cal:economy-v2:${date}`, date < todayInNewYork() ? 30 * 86_400 : 3600, () => nasdaq.fetchEconomicCalendar(date)).catch(() => [] as nasdaq.EconomicEvent[]);
 }
 
@@ -76,7 +79,7 @@ export async function getCalendar(userId: string, from: string, to: string, minM
       }),
     economy: day.economy
       .filter((row) => row.country === 'United States')
-      .map((row) => ({ ...row, major: MAJOR.test(row.name) })),
+      .map((row) => ({ ...row, major: isMajorRelease(row.name) })),
   }));
 }
 

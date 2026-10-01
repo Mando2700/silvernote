@@ -102,6 +102,20 @@ export function NotificationsPanel() {
           </div>
           <Switch checked={notify.weeklyRedTeam !== false} onChange={(value) => void set({ weeklyRedTeam: value })} label="Weekly red team" />
         </div>
+        <div className="flex items-center justify-between gap-4 border-t border-line pt-3">
+          <div>
+            <div className="font-medium text-ink">Earnings alerts</div>
+            <p className="text-[11.5px] text-muted">A heads-up the day before or morning of earnings for every company you hold or watch.</p>
+          </div>
+          <Switch checked={notify.earningsWatch !== false} onChange={(value) => void set({ earningsWatch: value })} label="Earnings alerts" />
+        </div>
+        <div className="flex items-center justify-between gap-4">
+          <div>
+            <div className="font-medium text-ink">Macro alerts</div>
+            <p className="text-[11.5px] text-muted">Major US releases (CPI, jobs, FOMC, GDP…): a morning heads-up, then the result against consensus.</p>
+          </div>
+          <Switch checked={notify.macro !== false} onChange={(value) => void set({ macro: value })} label="Macro alerts" />
+        </div>
         <MacroTapeRow />
       </div>
     </Panel>
