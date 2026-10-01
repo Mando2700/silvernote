@@ -65,6 +65,11 @@ export function ScrollReveal({ children, className }: { children: ReactNode; cla
   );
 }
 
+/** End labels hug the plot edges instead of centering on them, so they never spill outside the card. */
+function edgeAnchor(index: number, count: number) {
+  return count > 1 && index === 0 ? 'start' : count > 1 && index === count - 1 ? 'end' : 'middle';
+}
+
 export function Legend({ items, className }: { items: Array<{ label: string; color: string; kind?: 'rect' | 'line'; dashed?: boolean }>; className?: string }) {
   return (
     <div className={cn('flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-ink-2', className)}>
@@ -357,14 +362,14 @@ export function LineChart({
                 </g>
               ))}
               {time
-                ? time.ticks.map((tick) => (
-                    <text key={tick.at} x={xTime?.(tick.at) ?? 0} y={innerHeight + 15} textAnchor="middle" fontSize={10} fill={AXIS_TEXT}>
+                ? time.ticks.map((tick, index) => (
+                    <text key={tick.at} x={xTime?.(tick.at) ?? 0} y={innerHeight + 15} textAnchor={edgeAnchor(index, time.ticks.length)} fontSize={10} fill={AXIS_TEXT}>
                       {tick.label}
                     </text>
                   ))
                 : categories.map((category, index) =>
                 index % labelEvery === 0 || index === categories.length - 1 ? (
-                  <text key={index} x={xAt(index)} y={innerHeight + 15} textAnchor="middle" fontSize={10} fill={hover === index ? '#eceef1' : AXIS_TEXT}>
+                  <text key={index} x={xAt(index)} y={innerHeight + 15} textAnchor={edgeAnchor(index, categories.length)} fontSize={10} fill={hover === index ? '#eceef1' : AXIS_TEXT}>
                     {category}
                   </text>
                 ) : null,
