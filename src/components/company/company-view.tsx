@@ -65,7 +65,8 @@ function n(value: unknown) {
   return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }
 
-function KeyStats({ data, profileLoading }: { data: CompanyPayload; profileLoading: boolean }) {
+function KeyStats({ data, profileLoading }: { data: CompanyPayload | null; profileLoading: boolean }) {
+  if (!data) return <Skeleton className="h-[236px] w-full" />;
   const f = data.fundamentals ?? {};
   const marketCap = data.security?.market_cap ?? null;
   const netIncome = n(f.net_income);
@@ -125,11 +126,11 @@ function KeyStats({ data, profileLoading }: { data: CompanyPayload; profileLoadi
   );
 }
 
-function Overview({ data, profileLoading, onTab }: { data: CompanyPayload; profileLoading: boolean; onTab: (tab: Tab) => void }) {
+// `data` is the core payload (null until it lands) and `profile` the best profile so far: everything else on the tab loads on its own.
+function Overview({ symbol, data, profile, profileLoading, descriptionLoading, onTab }: { symbol: string; data: CompanyPayload | null; profile: CompanyProfile | null; profileLoading: boolean; descriptionLoading: boolean; onTab: (tab: Tab) => void }) {
   const [range, setRange] = useState<(typeof RANGES)[number]>('1y');
   const [mode, setMode] = useState<'area' | 'candles'>('area');
   const [fullscreen, setFullscreen] = useState(false);
-  const symbol = data.symbol;
   // Pages of older history loaded as the chart is zoomed out; a new symbol or range starts from one page.
   const [history, setHistory] = useState({ view: '', pages: 1 });
   const view = `${symbol}:${range}`;
@@ -141,7 +142,7 @@ function Overview({ data, profileLoading, onTab }: { data: CompanyPayload; profi
   const loadOlder = useCallback(() => setHistory((current) => ({ view, pages: current.view === view ? Math.min(current.pages * 2, 32) : 2 })), [view]);
   const { data: workspace } = useSWR<WorkspaceData>(`/api/workspaces/${symbol}`);
   const { data: statements } = useSWR<StandardizedStatements>(`/api/company/${symbol}/statements`);
-  const { data: news } = useSWR<{ news: NewsItem[] }>(`/api/company/${symbol}/news`);
+  const { data: news } = useSWR<{ news: NewsItem[] }>(`/api/company/${symbol}/news?headlines=1`);
 
   const markers: ChartMarker[] = useMemo(() => {
     const seen = new Set<string>();
@@ -228,7 +229,7 @@ function Overview({ data, profileLoading, onTab }: { data: CompanyPayload; profi
       ) : null}
       <div className="flex flex-col gap-4">
         {fullscreen ? null : <Panel>{chartBody}</Panel>}
-        <KeyStats data={data} profileLoading={profileLoading} />
+        <KeyStats data={data ? { ...data, profile } : null} profileLoading={profileLoading} />
         {annual.length ? (
           <Panel>
             <PanelHeader
@@ -258,7 +259,7 @@ function Overview({ data, profileLoading, onTab }: { data: CompanyPayload; profi
         <Panel>
           <PanelHeader
             kicker="SilverNote Score"
-            title={data.score ? `${data.score.label} · ${data.score.confidence} confidence` : 'Not scored yet'}
+            title={!data ? 'Loading' : data.score ? `${data.score.label} · ${data.score.confidence} confidence` : 'Not scored yet'}
             actions={
               <Button size="xs" variant="ghost" onClick={() => onTab('score')}>
                 Breakdown
@@ -266,30 +267,30 @@ function Overview({ data, profileLoading, onTab }: { data: CompanyPayload; profi
             }
           />
           <div className="flex items-center gap-4 px-4 pb-4">
-            <ScoreRing score={data.score?.overall ?? null} size="md" subScores={data.score?.sub_scores} label={data.score?.label} confidence={data.score?.confidence} />
-            <p className="text-[12.5px] leading-relaxed text-ink-2">{data.score?.payload?.shortSummary ?? 'Open the Score tab to calculate the full breakdown for this company.'}</p>
+            <ScoreRing score={data?.score?.overall ?? null} size="md" subScores={data?.score?.sub_scores} label={data?.score?.label} confidence={data?.score?.confidence} />
+            <p className="text-[12.5px] leading-relaxed text-ink-2">{data ? (data.score?.payload?.shortSummary ?? 'Open the Score tab to calculate the full breakdown for this company.') : ''}</p>
           </div>
         </Panel>
         <Panel>
-          <PanelHeader kicker={[data.profile?.sector, data.profile?.industry].filter(Boolean).join(' · ') || 'Company'} title="About" />
+          <PanelHeader kicker={[profile?.sector, profile?.industry].filter(Boolean).join(' · ') || 'Company'} title="About" />
           <div className="px-4 pb-4">
-            {profileLoading ? (
+            {descriptionLoading ? (
               <div className="flex flex-col gap-2">
                 <Skeleton className="h-3 w-full" />
                 <Skeleton className="h-3 w-full" />
                 <Skeleton className="h-3 w-2/3" />
               </div>
             ) : (
-              <p className="line-clamp-[10] text-[12.5px] leading-relaxed text-ink-2">{data.profile?.description ?? 'No description available.'}</p>
+              <p className="line-clamp-[10] text-[12.5px] leading-relaxed text-ink-2">{profile?.description ?? 'No description available.'}</p>
             )}
             <div className="mt-3 grid grid-cols-2 gap-x-4 gap-y-2 text-[12px]">
               {[
-                ['Exchange', data.profile?.exchange ?? data.security?.exchange],
-                ['Country', data.profile?.country ?? data.security?.country],
-                ['CEO', data.profile?.ceo],
-                ['Employees', data.profile?.employees ? data.profile.employees.toLocaleString() : null],
-                ['Fiscal year ends', data.profile?.fiscalYearEnd ? `${data.profile.fiscalYearEnd.slice(0, 2)}/${data.profile.fiscalYearEnd.slice(2)}` : null],
-                ['SIC', data.profile?.sicDescription],
+                ['Exchange', profile?.exchange ?? data?.security?.exchange],
+                ['Country', profile?.country ?? data?.security?.country],
+                ['CEO', profile?.ceo],
+                ['Employees', profile?.employees ? profile.employees.toLocaleString() : null],
+                ['Fiscal year ends', profile?.fiscalYearEnd ? `${profile.fiscalYearEnd.slice(0, 2)}/${profile.fiscalYearEnd.slice(2)}` : null],
+                ['SIC', profile?.sicDescription],
               ]
                 .filter(([, value]) => value)
                 .map(([label, value]) => (
@@ -299,9 +300,9 @@ function Overview({ data, profileLoading, onTab }: { data: CompanyPayload; profi
                   </div>
                 ))}
             </div>
-            {data.profile?.website ? (
-              <a href={data.profile.website.startsWith('http') ? data.profile.website : `https://${data.profile.website}`} target="_blank" rel="noreferrer" className="mt-3 inline-flex items-center gap-1 text-[12px] text-brand-soft hover:underline">
-                {data.profile.website.replace(/^https?:\/\//, '')} <ExternalLink className="size-3" />
+            {profile?.website ? (
+              <a href={profile.website.startsWith('http') ? profile.website : `https://${profile.website}`} target="_blank" rel="noreferrer" className="mt-3 inline-flex items-center gap-1 text-[12px] text-brand-soft hover:underline">
+                {profile.website.replace(/^https?:\/\//, '')} <ExternalLink className="size-3" />
               </a>
             ) : null}
           </div>
@@ -339,8 +340,12 @@ export function CompanyView({ initial }: { initial: CompanyInitial }) {
   const tab = (searchParams.get('tab') as Tab) ?? 'overview';
   // The profile comes from slow providers on a cold symbol, so it loads on its own and the page never waits for it.
   const { data: core, mutate } = useSWR<CompanyPayload>(`/api/company/${symbol}?lean=1`, { refreshInterval: 30_000 });
-  const { data: profileData } = useSWR<{ profile: CompanyProfile | null }>(`/api/company/${symbol}/profile`);
-  const data = useMemo(() => (core ? { ...core, profile: profileData?.profile ?? null } : undefined), [core, profileData]);
+  // A quick first pass (description, identity) lands before the full one (forward P/E, 52-week range, dividend).
+  const { data: quickProfile } = useSWR<{ profile: CompanyProfile | null }>(`/api/company/${symbol}/profile?fast=1`);
+  // Asked for after the quick one so the two do not compete for the same provider slots.
+  const { data: fullProfile } = useSWR<{ profile: CompanyProfile | null }>(quickProfile ? `/api/company/${symbol}/profile?lite=1` : null);
+  const profile = fullProfile ? fullProfile.profile : (quickProfile?.profile ?? null);
+  const data = useMemo(() => (core ? { ...core, profile } : undefined), [core, profile]);
   const { askAssistant, setAssistantContext } = useShell();
 
   const setTab = (next: Tab) => {
@@ -458,7 +463,7 @@ export function CompanyView({ initial }: { initial: CompanyInitial }) {
       </Panel>
 
       <div className={cn('min-h-[50vh]')}>
-        {tab === 'overview' ? data ? <Overview data={data} profileLoading={!profileData} onTab={setTab} /> : <Skeleton className="h-[520px] w-full" /> : null}
+        {tab === 'overview' ? <Overview symbol={symbol} data={data ?? null} profile={profile} profileLoading={!fullProfile} descriptionLoading={!fullProfile && !quickProfile} onTab={setTab} /> : null}
         {tab === 'financials' ? <Financials symbol={symbol} isBank={isBank} /> : null}
         {tab === 'dcf' ? <DcfPanel symbol={symbol} /> : null}
         {tab === 'comps' ? <CompsTool key={`${symbol}:${searchParams.get('peers') ?? ''}`} initialSymbol={symbol} initialPeers={searchParams.get('peers')?.split(',').filter(Boolean)} /> : null}

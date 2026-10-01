@@ -1,7 +1,7 @@
 import 'server-only';
 
 import { q } from '@/lib/db';
-import { cached, within } from '@/lib/data/http';
+import { cached, runUrgent, within } from '@/lib/data/http';
 import * as finnhub from '@/lib/data/providers/finnhub';
 import * as fmp from '@/lib/data/providers/fmp';
 import * as nasdaq from '@/lib/data/providers/nasdaq';
@@ -135,36 +135,65 @@ export async function getIndexQuotes() {
 
 // ─── Profiles ───────────────────────────────────────────────────────────────
 
-export async function getCompanyProfile(symbol: string): Promise<CompanyProfile> {
+/**
+ * `fast` is the first paint of the company page: it leaves out the Nasdaq summary (forward P/E, 52-week range,
+ * target, dividend) and the rate-limited Finnhub/FMP lookups, which queue for seconds on a cold symbol. The
+ * description, website and filing details alone come back in about a second. `lite` adds the Nasdaq summary back but
+ * still skips Finnhub/FMP (CEO, headcount, IPO date, logo), which the company page does not show.
+ */
+export async function getCompanyProfile(symbol: string, options: { fast?: boolean; lite?: boolean } = {}): Promise<CompanyProfile> {
   const upper = symbol.toUpperCase();
   const security = await getSecurity(upper);
   // Nasdaq's summary is the slowest call here and does not depend on the base profile: start it alongside.
-  const summaryRequest = cached(`summary:${upper}`, 6 * 3600, () => nasdaq.fetchSummary(upper)).catch(() => null);
-  const base = await cached(`profile:${upper}`, 7 * 86_400, async () => {
-    const [description, submissions, fmpProfile, finnhubProfile] = await Promise.all([
-      nasdaq.fetchCompanyDescription(upper).catch(() => null),
-      security?.cik ? fetchSubmissions(security.cik).catch(() => null) : Promise.resolve(null),
-      fmp.fmpEnabled() ? fmp.fetchProfile(upper).catch(() => null) : Promise.resolve(null),
-      finnhub.finnhubEnabled() ? finnhub.fetchProfile(upper).catch(() => null) : Promise.resolve(null),
-    ]);
-    return {
-      description: fmpProfile?.description ?? description?.description ?? null,
-      website: fmpProfile?.website ?? finnhubProfile?.weburl ?? description?.website ?? submissions?.website ?? null,
-      ceo: fmpProfile?.ceo ?? null,
-      employees: fmpProfile?.fullTimeEmployees ? Number(fmpProfile.fullTimeEmployees) || null : null,
-      ipoDate: fmpProfile?.ipoDate ?? finnhubProfile?.ipo ?? null,
-      logo: fmpProfile?.image ?? finnhubProfile?.logo ?? null,
-      sic: submissions?.sic ?? null,
-      sicDescription: submissions?.sicDescription ?? null,
-      fiscalYearEnd: submissions?.fiscalYearEnd ?? null,
-      country: fmpProfile?.country ?? finnhubProfile?.country ?? security?.country ?? null,
-      exchange: fmpProfile?.exchange ?? finnhubProfile?.exchange ?? security?.exchange ?? null,
-    };
-  });
+  const summaryRequest = options.fast ? Promise.resolve(null) : cached(`summary:${upper}`, 6 * 3600, () => nasdaq.fetchSummary(upper)).catch(() => null);
+  const identity = () =>
+    cached(`profile-id:${upper}`, 7 * 86_400, async () => {
+      const [description, submissions] = await Promise.all([
+        nasdaq.fetchCompanyDescription(upper).catch(() => null),
+        security?.cik ? fetchSubmissions(security.cik).catch(() => null) : Promise.resolve(null),
+      ]);
+      return {
+        description: description?.description ?? null,
+        website: description?.website ?? submissions?.website ?? null,
+        sic: submissions?.sic ?? null,
+        sicDescription: submissions?.sicDescription ?? null,
+        fiscalYearEnd: submissions?.fiscalYearEnd ?? null,
+      };
+    });
+  const base = options.fast || options.lite
+    ? {
+        ...(await identity()),
+        ceo: null,
+        employees: null,
+        ipoDate: null,
+        logo: null,
+        country: security?.country ?? null,
+        exchange: security?.exchange ?? null,
+      }
+    : await cached(`profile:${upper}`, 7 * 86_400, async () => {
+        const [id, fmpProfile, finnhubProfile] = await Promise.all([
+          identity(),
+          fmp.fmpEnabled() ? fmp.fetchProfile(upper).catch(() => null) : Promise.resolve(null),
+          finnhub.finnhubEnabled() ? finnhub.fetchProfile(upper).catch(() => null) : Promise.resolve(null),
+        ]);
+        return {
+          description: fmpProfile?.description ?? id.description,
+          website: fmpProfile?.website ?? finnhubProfile?.weburl ?? id.website,
+          ceo: fmpProfile?.ceo ?? null,
+          employees: fmpProfile?.fullTimeEmployees ? Number(fmpProfile.fullTimeEmployees) || null : null,
+          ipoDate: fmpProfile?.ipoDate ?? finnhubProfile?.ipo ?? null,
+          logo: fmpProfile?.image ?? finnhubProfile?.logo ?? null,
+          sic: id.sic,
+          sicDescription: id.sicDescription,
+          fiscalYearEnd: id.fiscalYearEnd,
+          country: fmpProfile?.country ?? finnhubProfile?.country ?? security?.country ?? null,
+          exchange: fmpProfile?.exchange ?? finnhubProfile?.exchange ?? security?.exchange ?? null,
+        };
+      });
   const summary = await summaryRequest;
   // Nasdaq only publishes dividend fields for Nasdaq listings; NYSE names (KO, JPM, …) come from Finnhub's indicated rate.
   const dividend =
-    summary?.dividendYield == null && finnhub.finnhubEnabled()
+    !options.fast && summary?.dividendYield == null && finnhub.finnhubEnabled()
       ? await cached(`fh-dividend:${upper}`, 12 * 3600, async () => {
           const metric = await finnhub.fetchMetrics(upper);
           const yieldPct = Number(metric.dividendYieldIndicatedAnnual ?? metric.currentDividendYieldTTM);
@@ -218,8 +247,21 @@ function dedupe(items: NewsItem[]) {
   return result;
 }
 
-export async function getCompanyNews(symbol: string): Promise<NewsItem[]> {
+/**
+ * `headlines` is for a glance (the company overview): Finnhub plus whatever Nasdaq's slower RSS feed returns within
+ * a moment, kept briefly. The full merge is left to the News tab.
+ */
+export async function getCompanyNews(symbol: string, options: { headlines?: boolean } = {}): Promise<NewsItem[]> {
   const upper = symbol.toUpperCase();
+  if (options.headlines) {
+    return cached(`news-glance:${upper}`, 60, async () => {
+      const [finnhubItems, nasdaqItems] = await Promise.all([
+        finnhub.finnhubEnabled() ? runUrgent(() => finnhub.fetchCompanyNews(upper, 21)).catch(() => []) : Promise.resolve([]),
+        within(nasdaq.fetchSymbolNews(upper), 800).catch(() => []),
+      ]);
+      return dedupe([...finnhubItems, ...(nasdaqItems ?? [])]).slice(0, 10);
+    });
+  }
   return cached(`news:${upper}`, 5 * 60, async () => {
     const results = await Promise.allSettled([
       finnhub.finnhubEnabled() ? finnhub.fetchCompanyNews(upper, 21) : Promise.resolve([]),

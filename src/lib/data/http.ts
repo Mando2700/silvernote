@@ -18,6 +18,13 @@ export class ProviderError extends Error {
 
 const backgroundWork = new AsyncLocalStorage<true>();
 
+const urgentWork = new AsyncLocalStorage<true>();
+
+/** Run `fn` as urgent: its provider requests jump the queue ahead of other waiting requests (the price a page header waits on). */
+export function runUrgent<T>(fn: () => Promise<T>): Promise<T> {
+  return urgentWork.run(true, fn);
+}
+
 /** Run `fn` as background work: its provider requests yield to the ones a page is waiting on. */
 export function runInBackground<T>(fn: () => Promise<T>): Promise<T> {
   return backgroundWork.run(true, fn);
@@ -44,8 +51,13 @@ export class RateLimiter {
 
   async run<T>(task: () => Promise<T>): Promise<T> {
     const background = backgroundWork.getStore() === true;
+    const urgent = !background && urgentWork.getStore() === true;
     if (background ? this.active >= this.backgroundLimit || this.waiting.length > 0 : this.active >= this.concurrency) {
-      await new Promise<void>((resolve) => (background ? this.waitingBackground : this.waiting).push(resolve));
+      await new Promise<void>((resolve) => {
+        if (background) this.waitingBackground.push(resolve);
+        else if (urgent) this.waiting.unshift(resolve);
+        else this.waiting.push(resolve);
+      });
     }
     this.active += 1;
     try {
