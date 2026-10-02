@@ -20,7 +20,7 @@ import { cn } from '@/lib/utils';
 
 type Point = { t: number; value: number; invested: number; twr: number; benchmark: number; nasdaq?: number };
 type Performance = { benchmark: string; points: Point[] };
-type Range = '1D' | '1W' | '1M' | '3M' | '6M' | 'YTD' | '1Y' | '2Y' | '5Y' | 'ALL';
+type Range = '1D' | '1W' | '1M' | '3M' | '6M' | 'YTD' | '1Y' | '2Y' | '3Y' | '5Y' | '10Y' | 'ALL';
 type Compare = 'benchmark' | 'nasdaq' | 'both';
 type Mode = 'value' | 'return';
 /** Time-weighted: the holdings' return, independent of deposits. Money-weighted: the return on the money actually at work. */
@@ -48,7 +48,9 @@ const RANGES: Array<{ value: Range; days?: number }> = [
   { value: 'YTD' },
   { value: '1Y', days: 365 },
   { value: '2Y', days: 730 },
+  { value: '3Y', days: 1096 },
   { value: '5Y', days: 1826 },
+  { value: '10Y', days: 3652 },
   { value: 'ALL' },
 ];
 const HEIGHT = 280;
@@ -97,10 +99,10 @@ export function PerformanceChart({ portfolioId, live }: { portfolioId: string; l
   const first = all[0]?.t ?? 0;
   const last = all[all.length - 1]?.t ?? 0;
   const hasIntraday = (intraday?.points.length ?? 0) > 2;
-  const ranges = RANGES.filter((item) => (item.value === '1D' ? hasIntraday : item.value === 'ALL' || cutoff(item.value, last) > first - 3 * DAY));
+  const ranges = RANGES.filter((item) => (item.value === '1D' ? hasIntraday || !intraday : item.value === 'ALL' || cutoff(item.value, last) > first - 3 * DAY));
   const range = ranges.some((item) => item.value === picked) ? picked : 'ALL';
   const [mode, setMode] = useState<Mode>('value');
-  const [compare, setCompare] = useState<Compare>('benchmark');
+  const [compare, setCompare] = useState<Compare>('both');
   const [pickedBasis, setBasis] = useState<Basis>('twr');
   const [fullscreen, setFullscreen] = useState(false);
 
