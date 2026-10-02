@@ -473,7 +473,7 @@ export function PriceChart({
     };
     animation.frame = requestAnimationFrame(step);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- helpers only read refs
-  }, [series, sorted, animationKey, rangeKey]);
+  }, [series, sorted, animationKey, rangeKey, baseline]);
 
   useEffect(() => {
     onReachStartRef.current = onReachStart;
