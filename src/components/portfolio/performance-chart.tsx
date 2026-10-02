@@ -101,7 +101,7 @@ export function PerformanceChart({ portfolioId, live }: { portfolioId: string; l
   const hasIntraday = (intraday?.points.length ?? 0) > 2;
   const ranges = RANGES.filter((item) => (item.value === '1D' ? hasIntraday || !intraday : item.value === 'ALL' || cutoff(item.value, last) > first - 3 * DAY));
   const range = ranges.some((item) => item.value === picked) ? picked : 'ALL';
-  const [mode, setMode] = useState<Mode>('value');
+  const [mode, setMode] = useState<Mode>('return');
   const [compare, setCompare] = useState<Compare>('both');
   const [pickedBasis, setBasis] = useState<Basis>('twr');
   const [fullscreen, setFullscreen] = useState(false);
