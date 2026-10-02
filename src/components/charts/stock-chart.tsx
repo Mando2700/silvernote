@@ -214,7 +214,7 @@ export function StockChart({
 }) {
   const [range, setRange] = useState<ChartRange>('1y');
   const [mode, setMode] = useState<'area' | 'candles'>('area');
-  const { data } = useSWR<{ candles: Candle[]; range: string }>(`/api/company/${symbol}/candles?range=${range}`);
+  const { data } = useSWR<{ candles: Candle[]; range: string; previousClose?: number | null }>(`/api/company/${symbol}/candles?range=${range}`);
   const studies = useChartStudies(symbol, data?.candles ?? [], range);
   const boxRef = useRef<HTMLDivElement>(null);
   const [boxHeight, setBoxHeight] = useState<number | null>(null);
@@ -239,6 +239,7 @@ export function StockChart({
         {data?.candles.length ? (
           <PriceChart
             candles={data.candles}
+            baseline={data.range === '1d' ? data.previousClose : null}
             mode={mode}
             height={chartHeight}
             animationKey={symbol}

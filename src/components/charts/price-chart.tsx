@@ -119,8 +119,8 @@ function prefersReducedMotion() {
   return window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
 }
 
-function trendColor(candles: Candle[], market: MarketPalette) {
-  const first = candles[0]?.c;
+function trendColor(candles: Candle[], market: MarketPalette, baseline?: number | null) {
+  const first = baseline ?? candles[0]?.c;
   const last = candles[candles.length - 1]?.c;
   if (first === undefined || last === undefined || last === first) return SILVER.base;
   return last > first ? market.gainFill : market.lossFill;
@@ -141,6 +141,7 @@ export function PriceChart({
   percentMode = false,
   drawings = [],
   onPick,
+  baseline,
 }: {
   candles: Candle[];
   mode?: Mode;
@@ -162,6 +163,8 @@ export function PriceChart({
   drawings?: ChartDrawing[];
   /** Click on the plot: the bar time and price under the cursor (for drawing tools). */
   onPick?: (point: { t: number; price: number }) => void;
+  /** Reference price for the trend colour and range return (the prior close on 1D). */
+  baseline?: number | null;
 }) {
   const hostRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
@@ -409,7 +412,7 @@ export function PriceChart({
 
   useEffect(() => {
     if (!series || !sorted.length) return;
-    const line = trendColor(sorted, market);
+    const line = trendColor(sorted, market, baseline);
     if (mode === 'area') {
       (series as ISeriesApi<'Area'>).applyOptions({
         lineColor: line,
@@ -632,7 +635,7 @@ export function PriceChart({
         }
       : null;
   const shown = mode === 'candles' && hover ? hover : rangeShown;
-  const rangeReturn = firstCandle && lastVisible ? lastVisible.c / firstCandle.c - 1 : null;
+  const rangeReturn = firstCandle && lastVisible ? lastVisible.c / (baseline ?? firstCandle.c) - 1 : null;
 
   return (
     <div className={cn('relative', className)}>

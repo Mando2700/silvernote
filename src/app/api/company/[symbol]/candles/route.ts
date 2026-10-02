@@ -1,7 +1,7 @@
 import { route, searchParam, symbolSchema } from '@/lib/api';
 import { aggregateCandles, INTRADAY_SOURCE, resolutionForRange } from '@/lib/candles';
 import { memo } from '@/lib/data/http';
-import { fetchIntradayCandles } from '@/lib/data/providers/yahoo';
+import { fetchIntradayCandles, fetchYahooDay } from '@/lib/data/providers/yahoo';
 import { getCandles } from '@/lib/services/prices';
 
 export const dynamic = 'force-dynamic';
@@ -25,7 +25,10 @@ export const GET = route<{ symbol: string }>(async ({ request, params }) => {
       const lastDay = new Date(candles[candles.length - 1].t * 1000 - 5 * 3_600_000).toISOString().slice(0, 10);
       candles = candles.filter((candle) => new Date(candle.t * 1000 - 5 * 3_600_000).toISOString().slice(0, 10) === lastDay);
     }
-    return { symbol, range, resolution, candles: aggregateCandles(candles, resolution) };
+    // The 1D trend is measured against the prior close, not the first bar of the session.
+    const previousClose =
+      range !== '1d' ? null : await memo(`prevclose:${symbol}`, 60_000, () => fetchYahooDay(symbol).then((day) => day?.previousClose ?? null)).catch(() => null);
+    return { symbol, range, resolution, previousClose, candles: aggregateCandles(candles, resolution) };
   }
 
   const years = YEARS[range] ?? 1.02;
