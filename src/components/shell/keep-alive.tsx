@@ -144,9 +144,12 @@ export function KeepAliveProvider({ children }: { children: ReactNode }) {
 /** The kept-alive pages; render it where the routed page goes. */
 export function KeepAliveViews() {
   const { entries, activeKey } = useKeepAlive();
+  // activeKey follows the route a layout effect late, so on the render where the URL changes the page being left
+  // would still count as active while reading the new page's params, and could navigate back to itself.
+  const current = keyOf(usePathname());
   return entries.map(({ key, node }) => (
     <Activity key={key} mode={key === activeKey ? 'visible' : 'hidden'}>
-      <Slot active={key === activeKey}>{node}</Slot>
+      <Slot active={key === activeKey && key === current}>{node}</Slot>
     </Activity>
   ));
 }
