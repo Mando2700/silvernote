@@ -4,7 +4,7 @@ import { ArrowDown, ArrowUp, Briefcase, ImagePlus, MoreHorizontal, Pencil, Plus,
 import { motion } from 'motion/react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { useEffect, useMemo, useState, ViewTransition } from 'react';
+import { useEffect, useMemo, useRef, useState, ViewTransition } from 'react';
 import { toast } from 'sonner';
 import useSWR from 'swr';
 
@@ -413,7 +413,19 @@ export function PortfolioView() {
   const base = useBaseCurrency();
   const { data: portfolios, mutate: refreshList, isLoading } = useSWR<PortfolioListItem[]>('/api/portfolios');
   const selectedId = params.get('id') ?? portfolios?.[0]?.id ?? null;
-  const { data: savedDetail, mutate: refreshDetail } = useSWR<Detail>(selectedId ? `/api/portfolios/${selectedId}` : null, { refreshInterval: 60_000 });
+  // Extended-hours quotes load a few at a time on a cold cache: re-poll quickly while holdings still lack one, a few times only (funds without extended trading never get one).
+  const extendedRetries = useRef(0);
+  const { data: savedDetail, mutate: refreshDetail } = useSWR<Detail>(selectedId ? `/api/portfolios/${selectedId}` : null, {
+    refreshInterval: (latest) => {
+      const filling = latest?.summary.extended != null && latest.holdings.some((holding) => holding.priced !== false && holding.extendedPrice == null);
+      if (!filling) extendedRetries.current = 0;
+      else if (extendedRetries.current < 6) {
+        extendedRetries.current += 1;
+        return 5_000;
+      }
+      return 60_000;
+    },
+  });
   const live = useLivePrices(useMemo(() => (savedDetail?.holdings ?? []).map((holding) => holding.symbol), [savedDetail]));
   const detail = useMemo(() => (savedDetail ? withLivePrices(savedDetail, live) : undefined), [savedDetail, live]);
   /** Outside regular hours: whether day changes show extended trading or the last regular session. */
