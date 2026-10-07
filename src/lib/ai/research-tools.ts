@@ -1,6 +1,7 @@
 import 'server-only';
 
 import { money } from '@/lib/ai/context';
+import { resolvePortfolio } from '@/lib/ai/platform-tools';
 import { fetchFilingText } from '@/lib/data/providers/sec';
 import { todayInNewYork } from '@/lib/dates';
 import { pct } from '@/lib/format';
@@ -9,6 +10,8 @@ import { listDecisions } from '@/lib/services/journal';
 import { buildComps, runEventStudy } from '@/lib/services/lab';
 import { getMacroDashboard, getMacroTape } from '@/lib/services/macro';
 import { getCompanyNews, getFilings, getMarketNews } from '@/lib/services/market';
+import { getHoldings } from '@/lib/services/portfolio';
+import { getUserSymbols } from '@/lib/services/news';
 import { getInsiderTrades, getRiskFactorChanges, summarizeInsiders } from '@/lib/services/sec-insights';
 
 import type { ToolContext, ToolDefinition } from '@/lib/ai/tools';
@@ -20,6 +23,21 @@ export const RESEARCH_TOOLS: ToolDefinition[] = [
     name: 'get_news',
     description: 'Recent headlines for one ticker (with dates and sources), or market-wide headlines when symbol is omitted.',
     parameters: { type: 'object', properties: { symbol: { type: 'string' }, limit: { type: 'integer', description: 'Default 20, up to 50.' } } },
+  },
+  {
+    type: 'function',
+    name: 'get_my_news',
+    description:
+      "News on the investor's own holdings, grouped by ticker, largest position first. Use it for \"news on my portfolio / holdings / positions\" — get_portfolio only has weights and risk, not headlines. Omit portfolio_id for the portfolio in view (or all held names when none is in view); scope \"watchlist\" adds watchlist names.",
+    parameters: {
+      type: 'object',
+      properties: {
+        portfolio_id: { type: 'string', description: 'Omit for the portfolio in view; otherwise every name they hold.' },
+        scope: { type: 'string', enum: ['held', 'watchlist'], description: 'held (default) or watchlist (held + watched names).' },
+        days: { type: 'integer', description: 'Only headlines from the last N days, default 3, up to 14.' },
+        per_symbol: { type: 'integer', description: 'Headlines per ticker, default 4, up to 8.' },
+      },
+    },
   },
   {
     type: 'function',
@@ -117,6 +135,40 @@ function sectionOf(text: string, section: string) {
   return best || text;
 }
 
+/** Headlines for the investor's holdings, grouped by ticker. Weight order keeps the biggest positions first when capped. */
+async function myNews(args: Record<string, unknown>, ctx: ToolContext) {
+  const days = Math.min(14, Math.max(1, Math.round(Number(args.days ?? 3)) || 3));
+  const perSymbol = Math.min(8, Math.max(1, Math.round(Number(args.per_symbol ?? 4)) || 4));
+  const hasPortfolioInView = typeof args.portfolio_id === 'string' || Boolean(ctx.portfolioId);
+  let symbols: { symbol: string; label: string }[];
+  if (args.scope !== 'watchlist' && hasPortfolioInView) {
+    const { portfolio } = await resolvePortfolio(ctx, args.portfolio_id);
+    if (!portfolio) return 'The investor has no portfolios yet.';
+    const { holdings } = await getHoldings(portfolio);
+    symbols = [...holdings].sort((a, b) => (b.weight ?? 0) - (a.weight ?? 0)).map((holding) => ({ symbol: holding.symbol, label: `${holding.symbol} (${holding.name})` }));
+  } else {
+    const followed = await getUserSymbols(ctx.userId, 30);
+    symbols = followed.filter((entry) => entry.held || args.scope === 'watchlist').map((entry) => ({ symbol: entry.symbol, label: `${entry.symbol}${entry.name ? ` (${entry.name})` : ''}${entry.held ? '' : ' [watchlist]'}` }));
+  }
+  if (!symbols.length) return 'The investor holds no positions, so there is no portfolio news.';
+  symbols = symbols.slice(0, 20);
+  const since = Date.now() - days * 86_400_000;
+  const sections: string[] = [];
+  const queue = [...symbols.entries()];
+  await Promise.all(
+    Array.from({ length: 3 }, async () => {
+      for (let next = queue.shift(); next; next = queue.shift()) {
+        const [index, { symbol, label }] = next;
+        const items = (await getCompanyNews(symbol).catch(() => [])).filter((item) => Date.parse(item.publishedAt) >= since).slice(0, perSymbol);
+        sections[index] = items.length
+          ? [`${label}:`, ...items.map((item) => `- ${item.publishedAt.slice(0, 16).replace('T', ' ')} · ${item.source}: ${item.title}${item.summary ? ` — ${item.summary.slice(0, 160)}` : ''} (${item.url})`)].join('\n')
+          : `${label}: no headlines in the last ${days} days.`;
+      }
+    }),
+  );
+  return [`HOLDINGS NEWS (last ${days} days, largest positions first):`, ...sections].join('\n');
+}
+
 export async function runResearchTool(name: string, args: Record<string, unknown>, ctx: ToolContext): Promise<string | null> {
   const symbol = typeof args.symbol === 'string' ? args.symbol.toUpperCase() : '';
   const limit = (fallback: number, max: number) => Math.min(max, Math.max(1, Number(args.limit ?? fallback) || fallback));
@@ -125,6 +177,8 @@ export async function runResearchTool(name: string, args: Record<string, unknown
       const items = symbol ? await getCompanyNews(symbol) : await getMarketNews();
       return items.slice(0, limit(20, 50)).map((item) => `- ${item.publishedAt.slice(0, 16).replace('T', ' ')} · ${item.source}: ${item.title}${item.summary ? ` — ${item.summary.slice(0, 200)}` : ''} (${item.url})`).join('\n') || 'No headlines.';
     }
+    case 'get_my_news':
+      return myNews(args, ctx);
     case 'get_filings': {
       const forms = Array.isArray(args.forms) ? (args.forms as string[]).map((form) => form.toUpperCase()) : null;
       const filings = (await getFilings(symbol)).filter((filing) => (forms ? forms.includes(filing.form) : /^(10-K|10-Q|8-K|20-F|6-K|DEF 14A|S-1|SC 13)/.test(filing.form)));
