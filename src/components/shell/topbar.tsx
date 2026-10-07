@@ -6,7 +6,7 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { toast } from 'sonner';
-import useSWR from 'swr';
+import useSWR, { mutate } from 'swr';
 
 import { Delta } from '@/components/motion/delta';
 import { Sparkline } from '@/components/motion/sparkline';
@@ -142,19 +142,32 @@ function MarketStatus({ open }: { open: boolean | undefined }) {
 
 const JOB_LABEL: Record<string, string> = { universe: 'Market snapshot', fundamentals: 'SEC fundamentals', scores: 'Score sweep' };
 
+/** Light, price-bearing views to refresh mid-snapshot (a portfolio's own page, not its reports and charts). */
+const LIVE_PRICE_KEYS = [/^\/api\/(universe|dashboard|watchlists)\b/, /^\/api\/portfolios(\/[^/?]+)?(\?|$)/];
+
 function JobsIndicator({ status, refresh }: { status: StatusPayload | undefined; refresh: () => void }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   const running = status ? Object.values(status.jobs).filter((job): job is JobInfo => job?.status === 'running') : [];
   const active = running[0];
   const wasRunning = useRef(false);
+  const lastLiveSync = useRef(0);
 
   useEffect(() => {
     if (wasRunning.current && running.length === 0) {
-      void revalidate('/api/universe', '/api/indices', '/api/dashboard', '/api/quotes');
+      void revalidate('/api/universe', '/api/indices', '/api/dashboard', '/api/quotes', '/api/portfolios', '/api/watchlists');
     }
     wasRunning.current = running.length > 0;
   }, [running.length]);
+
+  // A market snapshot saves prices as they arrive (held and watched names first): while it runs, refresh the
+  // views that show prices every few seconds, so they go live without waiting for the whole sweep.
+  const snapshotDone = active?.kind === 'universe' ? active.done : null;
+  useEffect(() => {
+    if (snapshotDone === null || Date.now() - lastLiveSync.current < 10_000) return;
+    lastLiveSync.current = Date.now();
+    void mutate((key) => typeof key === 'string' && LIVE_PRICE_KEYS.some((pattern) => pattern.test(key)));
+  }, [snapshotDone]);
 
   useEffect(() => {
     if (!open) return;

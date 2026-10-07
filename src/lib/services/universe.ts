@@ -2,7 +2,7 @@ import 'server-only';
 
 import { q, q1 } from '@/lib/db';
 import { cached, memo } from '@/lib/data/http';
-import { fetchBatchQuotes, fetchStockUniverse } from '@/lib/data/providers/nasdaq';
+import { type BatchQuote, fetchBatchQuotes, fetchStockUniverse } from '@/lib/data/providers/nasdaq';
 import { fetchSubmissions, fetchTickerMap } from '@/lib/data/providers/sec';
 import { sectorFromSic } from '@/lib/data/sectors';
 import type { SecurityRow } from '@/lib/data/types';
@@ -22,28 +22,61 @@ export type UniverseRow = {
   exchange: string | null;
   ipo_year: number | null;
   is_common: boolean;
+  /** When `price` last came from a live quote; null while only the (session-old) screener has priced it. */
+  price_at: Date | null;
   updated_at: Date;
 };
 
-/** Pull the full US stock list (with prices and market caps) and attach SEC CIKs. */
-export async function refreshUniverse(onProgress?: (message: string) => void) {
-  onProgress?.('Downloading the US stock universe…');
+/**
+ * A quote younger than this outranks the screener's price. Every sweep re-quotes the whole market (off hours too), so only a
+ * symbol the quote API stopped answering for falls back to the screener.
+ */
+const QUOTED = "coalesce(securities.price_at > now() - interval '36 hours', false)";
+
+/** Write live quotes straight to their rows, rescaling market cap to the new price. */
+async function saveQuotes(quotes: Map<string, BatchQuote>) {
+  if (!quotes.size) return;
+  const payload = [...quotes].map(([symbol, quote]) => ({ symbol, price: quote.price, change: quote.change, change_pct: quote.changePct, volume: quote.volume }));
+  await q(
+    `update public.securities s set
+       market_cap = case when s.price > 0 then s.market_cap * t.price / s.price else s.market_cap end,
+       price = t.price, change = t.change, change_pct = t.change_pct, volume = coalesce(t.volume, s.volume),
+       price_at = now(), updated_at = now()
+     from json_to_recordset($1::json) as t(symbol text, price double precision, change double precision, change_pct double precision, volume double precision)
+     where s.symbol = t.symbol`,
+    [payload],
+  );
+}
+
+/** Stocks someone holds or watches: quoted first, so the pages people look at are fresh within seconds of a refresh starting. */
+async function followedStocks() {
+  const rows = await q<{ symbol: string }>(
+    `with followed as (
+       select symbol from public.transactions group by user_id, symbol
+       having sum(case when side = 'buy' then quantity else -quantity end) > 0.000001
+       union
+       select symbol from public.watchlist_items
+     )
+     select s.symbol from followed f join public.securities s on s.symbol = f.symbol
+     where s.listed order by s.market_cap desc nulls last`,
+  );
+  return rows.map((row) => row.symbol);
+}
+
+/**
+ * Refresh the US stock universe: listings, sectors and market caps from Nasdaq's screener, SEC CIKs, and a live quote for every
+ * common stock. Quotes are saved batch by batch (followed names first), so prices go live progressively and an interrupted run
+ * keeps what it got. `onProgress` gets a status line and how far through the whole refresh it is (0–1).
+ */
+export async function refreshUniverse(onProgress?: (message: string, fraction: number) => void) {
+  const followed = await followedStocks();
+  onProgress?.(`Quoting ${followed.length} held and watched stocks…`, 0.01);
+  const first = await fetchBatchQuotes(followed, saveQuotes);
+
+  onProgress?.('Downloading the US stock universe…', 0.04);
   const rows = await fetchStockUniverse();
   if (rows.length < 1000) throw new Error(`Universe download looked incomplete (${rows.length} rows).`);
-  // The screener trails the quote API by a session: refresh every common stock from current quotes.
-  onProgress?.('Refreshing prices…');
-  const common = rows.filter((row) => row.isCommon).sort((a, b) => (b.marketCap ?? 0) - (a.marketCap ?? 0));
-  const fresh = await fetchBatchQuotes(common.map((row) => row.symbol)).catch(() => new Map());
-  for (const row of rows) {
-    const quote = fresh.get(row.symbol);
-    if (!quote) continue;
-    if (row.price && row.marketCap) row.marketCap = (row.marketCap * quote.price) / row.price;
-    row.price = quote.price;
-    row.change = quote.change;
-    row.changePct = quote.changePct;
-    row.volume = quote.volume ?? row.volume;
-  }
-  onProgress?.('Matching companies to SEC filers…');
+  onProgress?.('Matching companies to SEC filers…', 0.06);
   const tickerMap = await fetchTickerMap().catch(() => new Map<string, { cik: string; name: string; exchange: string }>());
   const enriched: SecurityRow[] = rows.map((row) => {
     const sec = tickerMap.get(row.symbol);
@@ -51,12 +84,12 @@ export async function refreshUniverse(onProgress?: (message: string) => void) {
   });
   // Nasdaq leaves some listings (e.g. share classes) unclassified: fall back to the SEC's SIC code.
   const unclassified = enriched.filter((row) => !row.sector && row.cik && row.isCommon).slice(0, 200);
-  if (unclassified.length) onProgress?.(`Classifying ${unclassified.length} companies from SEC SIC codes…`);
+  if (unclassified.length) onProgress?.(`Classifying ${unclassified.length} companies from SEC SIC codes…`, 0.07);
   for (const row of unclassified) {
     const sic = await cached(`sic:${row.cik}`, 90 * 86_400, async () => (await fetchSubmissions(row.cik as string)).sic).catch(() => null);
     row.sector = sectorFromSic(sic);
   }
-  onProgress?.(`Saving ${enriched.length.toLocaleString()} securities…`);
+  onProgress?.(`Saving ${enriched.length.toLocaleString()} listings…`, 0.09);
   const payload = enriched.map((row) => ({
     symbol: row.symbol,
     name: row.name,
@@ -73,7 +106,8 @@ export async function refreshUniverse(onProgress?: (message: string) => void) {
     market_cap: row.marketCap,
     is_common: row.isCommon,
   }));
-  // Upsert in chunks so a single statement never gets too large.
+  // Upsert in chunks so a single statement never gets too large. The screener's (session-old) price only fills rows without a
+  // recent live quote; where one is kept, the screener's market cap is rescaled to it.
   for (let index = 0; index < payload.length; index += 1500) {
     const chunk = payload.slice(index, index + 1500);
     await q(
@@ -85,15 +119,29 @@ export async function refreshUniverse(onProgress?: (message: string) => void) {
        on conflict (symbol) do update set
          name = excluded.name, exchange = coalesce(excluded.exchange, securities.exchange), cik = coalesce(excluded.cik, securities.cik),
          sector = coalesce(excluded.sector, securities.sector), industry = coalesce(excluded.industry, securities.industry),
-         country = excluded.country, ipo_year = excluded.ipo_year, price = excluded.price, change = excluded.change,
-         change_pct = excluded.change_pct, volume = excluded.volume, market_cap = excluded.market_cap,
-         is_common = excluded.is_common, listed = true, updated_at = now()`,
+         country = excluded.country, ipo_year = excluded.ipo_year, is_common = excluded.is_common, listed = true, updated_at = now(),
+         price = case when ${QUOTED} then securities.price else excluded.price end,
+         change = case when ${QUOTED} then securities.change else excluded.change end,
+         change_pct = case when ${QUOTED} then securities.change_pct else excluded.change_pct end,
+         volume = case when ${QUOTED} then securities.volume else excluded.volume end,
+         market_cap = case when ${QUOTED} and excluded.price > 0 then excluded.market_cap * securities.price / excluded.price else excluded.market_cap end`,
       [chunk],
     );
   }
+
+  // Every other common stock by size, saved as each batch lands.
+  const rest = enriched.filter((row) => row.isCommon && !first.has(row.symbol)).sort((a, b) => (b.marketCap ?? 0) - (a.marketCap ?? 0));
+  onProgress?.('Refreshing prices…', 0.1);
+  const quotes = await fetchBatchQuotes(
+    rest.map((row) => row.symbol),
+    async (batch, finished, total) => {
+      await saveQuotes(batch);
+      onProgress?.(`Refreshing prices · ${Math.min(finished * 20, rest.length).toLocaleString()} of ${rest.length.toLocaleString()} stocks`, 0.1 + 0.88 * (finished / total));
+    },
+  );
   // Anything not in today's list has been delisted or renamed.
   await q(`update public.securities set listed = false where updated_at < now() - interval '3 days'`);
-  return { count: enriched.length, withCik: enriched.filter((row) => row.cik).length };
+  return { count: enriched.length, quoted: first.size + quotes.size, withCik: enriched.filter((row) => row.cik).length };
 }
 
 export async function universeStatus() {

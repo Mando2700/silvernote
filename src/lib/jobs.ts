@@ -52,12 +52,12 @@ function reporter(id: string): Reporter {
 }
 
 async function runUniverse(report: Reporter) {
-  report(0, 1, 'Downloading market snapshot…');
-  const result = await refreshUniverse((message) => report(0, 1, message));
+  report(0, 100, 'Downloading market snapshot…');
+  const result = await refreshUniverse((message, fraction) => report(Math.min(99, Math.round(fraction * 100)), 100, message));
   forget('universe:');
   forget('group:');
   await evaluatePriceAlerts().catch(() => 0);
-  report(1, 1, `${result.count.toLocaleString()} securities updated`);
+  report(100, 100, `${result.count.toLocaleString()} securities updated · ${result.quoted.toLocaleString()} quoted live`);
 }
 
 async function runFundamentals(report: Reporter) {

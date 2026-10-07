@@ -5,6 +5,7 @@ import { XMLParser } from 'fast-xml-parser';
 import { cleanSecurityName, isCommonStock, normalizeSymbol } from '@/lib/data/eligibility';
 import { htmlToText } from '@/lib/data/entities';
 import { mapSector } from '@/lib/data/sectors';
+import { marketSession } from '@/lib/session';
 import { BROWSER_UA, fetchJson, fetchText, limiters, parseLooseNumber } from '@/lib/data/http';
 import type { Candle, ExtendedQuote, NewsItem, Quote, SecurityRow } from '@/lib/data/types';
 
@@ -84,28 +85,31 @@ export async function fetchStockUniverse(): Promise<SecurityRow[]> {
 
 type WatchlistRow = { symbol: string; lastSalePrice?: string; netChange?: string; percentageChange?: string; volume?: string };
 
+export type BatchQuote = { price: number; change: number | null; changePct: number | null; volume: number | null };
+
 /**
  * Latest quotes, 20 stocks per call (the endpoint silently drops the rest). The screener lags a session behind the quote API, so
- * the universe refresh overlays these on the largest companies.
+ * the universe refresh overlays these on it. `onBatch` gets each batch's quotes as they arrive (and is awaited, so a slow consumer
+ * paces the sweep); the full map is returned at the end.
  */
-export async function fetchBatchQuotes(symbols: string[]) {
-  const quotes = new Map<string, { price: number; change: number | null; changePct: number | null; volume: number | null }>();
+export async function fetchBatchQuotes(symbols: string[], onBatch?: (quotes: Map<string, BatchQuote>, done: number, total: number) => Promise<void> | void) {
+  const quotes = new Map<string, BatchQuote>();
   // One unknown ticker fails the whole request, so failed batches are split and retried.
-  const load = async (batch: string[]): Promise<void> => {
+  const load = async (batch: string[], into: Map<string, BatchQuote>): Promise<void> => {
     const query = batch.map((symbol) => `symbol=${apiSymbol(symbol).toLowerCase()}%7cstocks`).join('&');
     const rows = await get<WatchlistRow[]>(`/quote/watchlist?${query}`).catch(() => null);
     if (!rows) {
       if (batch.length > 1) {
         const middle = Math.ceil(batch.length / 2);
-        await load(batch.slice(0, middle));
-        await load(batch.slice(middle));
+        await load(batch.slice(0, middle), into);
+        await load(batch.slice(middle), into);
       }
       return;
     }
     for (const row of rows) {
       const price = parseLooseNumber(row.lastSalePrice);
       if (!row.symbol || price === null || price <= 0) continue;
-      quotes.set(normalizeSymbol(row.symbol), {
+      into.set(normalizeSymbol(row.symbol), {
         price,
         change: parseLooseNumber(row.netChange),
         changePct: parseLooseNumber(row.percentageChange),
@@ -113,7 +117,21 @@ export async function fetchBatchQuotes(symbols: string[]) {
       });
     }
   };
-  for (let index = 0; index < symbols.length; index += 20) await load(symbols.slice(index, index + 20));
+  // Each call takes a second or two, so run a few at once (the provider's limiter still caps and spaces them).
+  const batches: string[][] = [];
+  for (let index = 0; index < symbols.length; index += 20) batches.push(symbols.slice(index, index + 20));
+  let next = 0;
+  let finished = 0;
+  await Promise.all(
+    Array.from({ length: Math.min(3, batches.length) }, async () => {
+      while (next < batches.length) {
+        const batch = new Map<string, BatchQuote>();
+        await load(batches[next++], batch);
+        for (const [symbol, quote] of batch) quotes.set(symbol, quote);
+        await onBatch?.(batch, ++finished, batches.length);
+      }
+    }),
+  );
   return quotes;
 }
 
@@ -180,7 +198,9 @@ function parseEasternTime(stamp: string | undefined) {
 /** Pre-market or after-hours prints, when Nasdaq reports the regular close alongside them. */
 function extendedSession(data: InfoPayload, price: number, timestamp: number): ExtendedQuote | null {
   const status = (data.marketStatus ?? '').toLowerCase();
-  const session = status.startsWith('pre') ? 'pre' : status.startsWith('after') || status === 'closed' ? 'post' : null;
+  // Nasdaq reports "Closed" in the hours around the extended sessions too: take the clock's word for it, and call the overnight stretch after-hours.
+  const closed = status === 'closed' && marketSession() !== 'regular';
+  const session = status.startsWith('pre') ? 'pre' : status.startsWith('after') ? 'post' : closed ? (marketSession() === 'pre' ? 'pre' : 'post') : null;
   const close = parseLooseNumber(data.secondaryData?.lastSalePrice);
   if (!session || close === null || close <= 0) return null;
   const change = price - close;

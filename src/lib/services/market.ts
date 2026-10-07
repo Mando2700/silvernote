@@ -62,14 +62,15 @@ export async function getQuotes(symbols: string[]): Promise<Record<string, Quote
       changePct: row.change_pct,
       previousClose: row.price !== null && row.change !== null ? row.price - row.change : null,
       volume: row.volume,
-      timestamp: new Date(row.updated_at).getTime(),
+      timestamp: new Date(row.price_at ?? row.updated_at).getTime(),
       source: 'Nasdaq',
     };
   }
-  // Right after the open the snapshot still holds yesterday's close and move until the next refresh lands:
-  // re-quote those rows live (a portfolio's worth; bigger lists keep the snapshot).
+  // Right after the open the snapshot still holds yesterday's close and move until the next refresh lands, and rows the
+  // quote sweep hasn't reached carry the screener's session-old price: re-quote those live (a portfolio's worth; bigger lists keep the snapshot).
   const sessionOpen = regularSession(Date.now() / 1000).open * 1000;
-  const stale = isMarketOpen() ? upper.filter((symbol) => (result[symbol]?.timestamp ?? Infinity) < sessionOpen).slice(0, STALE_REQUOTE_LIMIT) : [];
+  const quotedAt = new Map(rows.map((row) => [row.symbol, row.price_at ? new Date(row.price_at).getTime() : 0]));
+  const stale = isMarketOpen() ? upper.filter((symbol) => result[symbol] && (quotedAt.get(symbol) ?? 0) < sessionOpen).slice(0, STALE_REQUOTE_LIMIT) : [];
   // Funds and anything else outside the stock universe: live quotes, a few at a time (every symbol, no cap).
   const missing = upper.filter((symbol) => !result[symbol]);
   const queue = [...missing, ...stale];
