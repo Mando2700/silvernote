@@ -369,7 +369,9 @@ export function PriceChart({
     marketRef.current = market;
     const autoscaleInfoProvider: AutoscaleInfoProvider = (base) => {
       const range = animationRef.current.range;
-      return range ? { priceRange: { minValue: range.min, maxValue: range.max } } : base();
+      if (!range) return base();
+      // Keep the margins primitives (markers) add, or the scale jumps when they return after the morph.
+      return { ...base(), priceRange: { minValue: range.min, maxValue: range.max } };
     };
     const priceSeries: PriceSeries =
       mode === 'area'
