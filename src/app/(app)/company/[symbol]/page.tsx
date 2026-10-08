@@ -4,6 +4,7 @@ import { notFound } from 'next/navigation';
 import { CompanyView } from '@/components/company/company-view';
 import { Page } from '@/components/shell/page';
 import { KeepAlive } from '@/components/shell/keep-alive';
+import { ASSET_KIND_LABEL, getAsset } from '@/lib/data/assets';
 import { q1 } from '@/lib/db';
 import { getSecurity } from '@/lib/services/universe';
 
@@ -14,7 +15,7 @@ function parseSymbol(raw: string) {
 
 export async function generateMetadata({ params }: PageProps<'/company/[symbol]'>): Promise<Metadata> {
   const symbol = parseSymbol((await params).symbol);
-  return { title: symbol ?? 'Company' };
+  return { title: (symbol && getAsset(symbol)?.name) ?? symbol ?? 'Company' };
 }
 
 export default async function CompanyPage({ params }: PageProps<'/company/[symbol]'>) {
@@ -25,6 +26,7 @@ export default async function CompanyPage({ params }: PageProps<'/company/[symbo
     getSecurity(symbol),
     q1<{ overall: number; label: string }>('select overall, label from public.scores where symbol = $1', [symbol]),
   ]);
+  const asset = getAsset(symbol);
   // The app shell keeps this view mounted (state and scroll intact) after you navigate away.
   return (
     <KeepAlive>
@@ -32,8 +34,8 @@ export default async function CompanyPage({ params }: PageProps<'/company/[symbo
         <CompanyView
           initial={{
             symbol,
-            name: security?.name ?? symbol,
-            sector: security?.sector ?? null,
+            name: asset?.name ?? security?.name ?? symbol,
+            sector: asset ? ASSET_KIND_LABEL[asset.kind] : (security?.sector ?? null),
             industry: security?.industry ?? null,
             price: security?.price ?? null,
             changePct: security?.change_pct ?? null,

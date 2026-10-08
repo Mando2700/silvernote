@@ -1,11 +1,13 @@
 import { route, symbolSchema } from '@/lib/api';
+import { getAsset } from '@/lib/data/assets';
 import { getLogo } from '@/lib/services/logos';
 
 export const dynamic = 'force-dynamic';
 
 export const GET = route<{ symbol: string }>(async ({ params }) => {
   const symbol = symbolSchema.parse(params.symbol);
-  const logo = await getLogo(symbol);
+  // Commodities and crypto have no company logo; a lookup by their symbol could find an unrelated one.
+  const logo = getAsset(symbol) ? null : await getLogo(symbol);
   if (!logo) {
     return new Response(null, { status: 404, headers: { 'Cache-Control': 'private, max-age=86400' } });
   }

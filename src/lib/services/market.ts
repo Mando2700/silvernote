@@ -1,11 +1,13 @@
 import 'server-only';
 
 import { q } from '@/lib/db';
+import { ASSET_KIND_LABEL, getAsset } from '@/lib/data/assets';
 import { cached, runUrgent, within } from '@/lib/data/http';
 import * as finnhub from '@/lib/data/providers/finnhub';
 import * as fmp from '@/lib/data/providers/fmp';
 import * as nasdaq from '@/lib/data/providers/nasdaq';
 import { fetchSubmissions } from '@/lib/data/providers/sec';
+import { fetchYahooDaily, fetchYahooDay } from '@/lib/data/providers/yahoo';
 import type { CompanyProfile, ExtendedQuote, Filing, NewsItem, Quote } from '@/lib/data/types';
 import { isMarketOpen } from '@/lib/services/prices';
 import { regularSession } from '@/lib/session';
@@ -28,6 +30,7 @@ const knownFunds = new Set<string>(INDEX_PROXIES.map((item) => item.symbol));
 export async function getLiveQuote(symbol: string): Promise<Quote | null> {
   const upper = symbol.toUpperCase();
   return cached(`quote:${upper}`, 20, async () => {
+    if (getAsset(upper)) return assetQuote(upper);
     if (finnhub.finnhubEnabled()) {
       const quote = await finnhub.fetchQuote(upper).catch(() => null);
       if (quote?.price) return quote;
@@ -42,6 +45,21 @@ export async function getLiveQuote(symbol: string): Promise<Quote | null> {
     }
     return null;
   });
+}
+
+/** Commodities and crypto: Yahoo's last price against the prior close. */
+async function assetQuote(symbol: string): Promise<Quote | null> {
+  const day = await fetchYahooDay(symbol).catch(() => null);
+  if (!day) return null;
+  return {
+    symbol,
+    price: day.price,
+    change: day.change,
+    changePct: day.changePct,
+    previousClose: day.previousClose,
+    timestamp: day.time,
+    source: 'Yahoo',
+  };
 }
 
 const STALE_REQUOTE_LIMIT = 60;
@@ -98,7 +116,7 @@ const EXTENDED_QUOTES_BUDGET_MS = 2_500;
 export async function getExtendedQuotes(symbols: string[]): Promise<Record<string, ExtendedQuote>> {
   const result: Record<string, ExtendedQuote> = {};
   if (isMarketOpen()) return result;
-  const queue = [...new Set(symbols.map((symbol) => symbol.toUpperCase()))];
+  const queue = [...new Set(symbols.map((symbol) => symbol.toUpperCase()))].filter((symbol) => !getAsset(symbol));
   const loading = Promise.all(
     Array.from({ length: Math.min(4, queue.length) }, async () => {
       for (;;) {
@@ -144,6 +162,8 @@ export async function getIndexQuotes() {
  */
 export async function getCompanyProfile(symbol: string, options: { fast?: boolean; lite?: boolean } = {}): Promise<CompanyProfile> {
   const upper = symbol.toUpperCase();
+  const asset = getAsset(upper);
+  if (asset) return assetProfile(asset);
   const security = await getSecurity(upper);
   // Nasdaq's summary is the slowest call here and does not depend on the base profile: start it alongside.
   const summaryRequest = options.fast ? Promise.resolve(null) : cached(`summary:${upper}`, 6 * 3600, () => nasdaq.fetchSummary(upper)).catch(() => null);
@@ -230,6 +250,38 @@ export async function getCompanyProfile(symbol: string, options: { fast?: boolea
     averageVolume: summary?.averageVolume ?? null,
     high52: summary?.high52 ?? null,
     low52: summary?.low52 ?? null,
+  };
+}
+
+/** A commodity or crypto profile: the description from the registry and the 52-week range from Yahoo. */
+async function assetProfile(asset: NonNullable<ReturnType<typeof getAsset>>): Promise<CompanyProfile> {
+  const year = await cached(`asset-52w:${asset.symbol}`, 6 * 3600, () => fetchYahooDaily(asset.yahoo, '1y')).catch(() => []);
+  const closes = year.map((point) => point.c);
+  return {
+    symbol: asset.symbol,
+    name: asset.name,
+    description: asset.description,
+    sector: ASSET_KIND_LABEL[asset.kind],
+    industry: null,
+    exchange: null,
+    country: null,
+    website: null,
+    ceo: null,
+    employees: null,
+    ipoDate: null,
+    logo: null,
+    cik: null,
+    sic: null,
+    sicDescription: null,
+    fiscalYearEnd: null,
+    oneYearTarget: null,
+    forwardPE: null,
+    dividendYield: null,
+    annualDividend: null,
+    exDividendDate: null,
+    averageVolume: null,
+    high52: closes.length ? Math.max(...closes) : null,
+    low52: closes.length ? Math.min(...closes) : null,
   };
 }
 

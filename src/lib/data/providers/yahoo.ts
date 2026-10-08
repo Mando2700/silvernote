@@ -1,5 +1,6 @@
 import 'server-only';
 
+import { getAsset } from '@/lib/data/assets';
 import { fetchJson, limiters } from '@/lib/data/http';
 import type { Candle } from '@/lib/data/types';
 import type { Split } from '@/lib/finance/ledger';
@@ -47,11 +48,25 @@ type IntradayPayload = {
   };
 };
 
+/** Yahoo's symbol for an app ticker: commodities and crypto map to their own, share classes use a dash. */
+export function yahooTicker(symbol: string) {
+  return getAsset(symbol)?.yahoo ?? symbol.toUpperCase().replace('.', '-');
+}
+
 /** Regular-session intraday OHLC bars (`interval` like 5m / 15m / 60m) for roughly the last `days` calendar days. */
 export async function fetchIntradayCandles(symbol: string, interval: string, days: number): Promise<Candle[]> {
-  const ticker = encodeURIComponent(symbol.toUpperCase().replace('.', '-'));
   const period2 = Math.floor(Date.now() / 1000);
   const period1 = period2 - Math.ceil(days * 86_400);
+  return fetchCandles(symbol, interval, period1, period2);
+}
+
+/** Daily OHLC bars from `from` (YYYY-MM-DD) to now: the history for commodities and crypto, which Nasdaq doesn't serve. */
+export async function fetchDailyCandles(symbol: string, from: string): Promise<Candle[]> {
+  return fetchCandles(symbol, '1d', Math.floor(Date.parse(`${from}T00:00:00Z`) / 1000), Math.floor(Date.now() / 1000));
+}
+
+async function fetchCandles(symbol: string, interval: string, period1: number, period2: number): Promise<Candle[]> {
+  const ticker = encodeURIComponent(yahooTicker(symbol));
   const payload = await fetchJson<IntradayPayload>(
     `https://query2.finance.yahoo.com/v8/finance/chart/${ticker}?period1=${period1}&period2=${period2}&interval=${interval}&includePrePost=false`,
     { provider: 'yahoo', limiter: limiters.yahoo, headers: { 'User-Agent': 'Mozilla/5.0' } },
@@ -89,7 +104,7 @@ export type YahooDay = { symbol: string; price: number; previousClose: number | 
  * sources quote.
  */
 export async function fetchYahooDay(symbol: string): Promise<YahooDay | null> {
-  const payload = await fetchJson<DayPayload>(`https://query2.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?range=1d&interval=5m`, {
+  const payload = await fetchJson<DayPayload>(`https://query2.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(getAsset(symbol)?.yahoo ?? symbol)}?range=1d&interval=5m`, {
     provider: 'yahoo',
     limiter: limiters.yahoo,
     headers: { 'User-Agent': 'Mozilla/5.0' },

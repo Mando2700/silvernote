@@ -1,10 +1,12 @@
 import 'server-only';
 
 import { q, q1 } from '@/lib/db';
+import { getAsset } from '@/lib/data/assets';
 import { cached, forget, inBackground, keepAlive, memo, runInBackground } from '@/lib/data/http';
 import { fetchDailyHistory as fmpHistory, fmpEnabled } from '@/lib/data/providers/fmp';
 import { fetchFredSeries } from '@/lib/data/providers/fred';
 import { fetchDailyHistory } from '@/lib/data/providers/nasdaq';
+import { fetchDailyCandles } from '@/lib/data/providers/yahoo';
 import type { Candle } from '@/lib/data/types';
 
 /** Funds and indexes the app references that live in Nasdaq's "etf" asset class. */
@@ -54,6 +56,10 @@ function merge(existing: Candle[], incoming: Candle[]) {
 }
 
 async function download(symbol: string, from: string, to: string): Promise<{ candles: Candle[]; source: string }> {
+  if (getAsset(symbol)) {
+    const candles = await fetchDailyCandles(symbol, from).catch(() => []);
+    return { candles, source: candles.length ? 'yahoo' : 'none' };
+  }
   const assetClass = ETF_SYMBOLS.has(symbol) ? 'etf' : 'stocks';
   try {
     let candles = await fetchDailyHistory(symbol, { from, to, assetClass });
