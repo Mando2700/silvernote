@@ -242,3 +242,45 @@ describe('carryforward and lot-method-aware harvesting', () => {
     expect(hifo.shares).toBe(10);
   });
 });
+
+describe('country rules', () => {
+  it('counts a custom holding period in months, clamping month ends', () => {
+    expect(longTermDate('2024-03-15', 36)).toBe('2027-03-16');
+    expect(longTermDate('2024-08-31', 6)).toBe('2025-03-01');
+    expect(termFor('2024-01-02', '2030-01-02', null)).toBe('short');
+  });
+
+  it('skips wash sales without a deferral rule and uses a custom window when given', () => {
+    const ledger = [tx('buy', '2024-01-02', 100, 50), tx('sell', '2024-03-01', 100, 40), tx('buy', '2024-04-20', 100, 42)];
+    expect(processLedger(ledger, 'fifo', { longTermMonths: null, lossDeferralDays: null }).washSales).toHaveLength(0);
+    expect(processLedger(ledger, 'fifo', { longTermMonths: null, lossDeferralDays: 30 }).washSales).toHaveLength(0);
+    // Spain's two-month rule reaches the April rebuy.
+    const { disposals } = processLedger(ledger, 'fifo', { longTermMonths: null, lossDeferralDays: 60 });
+    expect(disposals[0].washDisallowed).toBeCloseTo(1000);
+  });
+
+  it('relieves pooled average cost', () => {
+    const { disposals, openLots } = processLedger([tx('buy', '2024-01-02', 10, 100), tx('buy', '2024-02-01', 10, 200), tx('sell', '2024-03-01', 10, 180)], 'average', {
+      longTermMonths: null,
+      lossDeferralDays: null,
+    });
+    expect(disposals[0].cost).toBeCloseTo(1500);
+    expect(disposals[0].gain).toBeCloseTo(300);
+    expect(openLots[0].costPerShare).toBeCloseTo(150);
+  });
+
+  it('carries the whole net loss forward without an ordinary-income offset', () => {
+    const [year] = estimateTaxByYear([{ year: 2024, netShort: -5000, netLong: 0 }], { shortTerm: 0.26, longTerm: 0.26 }, 0);
+    expect(year.tax).toBe(0);
+    expect(year.carryforward).toBeCloseTo(-5000);
+  });
+
+  it('has no rebuy date or wait ideas without a deferral rule or long-term threshold', () => {
+    const { openLots } = processLedger([tx('buy', '2025-01-02', 100, 50), tx('buy', '2025-09-20', 10, 30)]);
+    const lots = valueLots(openLots, { ABC: 35 }, '2025-09-27', null);
+    const [idea] = harvestIdeas(lots, { shortTerm: 0.3, longTerm: 0.3 }, '2025-09-27', 100, 'fifo', null);
+    expect(idea.rebuyAfter).toBeNull();
+    expect(idea.washRiskShares).toBe(0);
+    expect(waitForLongTerm(lots, { shortTerm: 0.3, longTerm: 0.3 })).toHaveLength(0);
+  });
+});

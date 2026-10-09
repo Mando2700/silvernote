@@ -7,27 +7,34 @@ import {
   harvestIdeas,
   processLedger,
   summarizeRealized,
+  type LotMethod,
   type TaxRates,
   valueLots,
   waitForLongTerm,
 } from '@/lib/finance/tax-lots';
+import { taxRulesFor, type TaxRules } from '@/lib/finance/tax-rules';
 import { getQuotes } from '@/lib/services/market';
 import { getTransactions, type PortfolioRow } from '@/lib/services/portfolio';
 import { getSecuritiesBySymbols } from '@/lib/services/universe';
 
-export const DEFAULT_TAX_RATES: TaxRates = { shortTerm: 0.32, longTerm: 0.15 };
-
-export async function getTaxRates(userId: string): Promise<TaxRates> {
-  const row = await q1<{ data: { taxShortRate?: number | null; taxLongRate?: number | null } }>('select data from public.user_settings where user_id = $1', [userId]);
-  return {
-    shortTerm: row?.data?.taxShortRate ?? DEFAULT_TAX_RATES.shortTerm,
-    longTerm: row?.data?.taxLongRate ?? DEFAULT_TAX_RATES.longTerm,
-  };
+/** The user's country rules and rates; rates they haven't set come from the country's defaults. */
+export async function getTaxSettings(userId: string): Promise<{ rules: TaxRules; rates: TaxRates }> {
+  const row = await q1<{ data: { taxShortRate?: number | null; taxLongRate?: number | null; taxJurisdiction?: string | null } }>('select data from public.user_settings where user_id = $1', [userId]);
+  const rules = taxRulesFor(row?.data?.taxJurisdiction);
+  const shortTerm = row?.data?.taxShortRate ?? rules.shortTerm;
+  // Without a long-term threshold one rate applies to everything.
+  const longTerm = rules.longTermMonths === null ? shortTerm : (row?.data?.taxLongRate ?? rules.longTerm);
+  return { rules, rates: { shortTerm, longTerm } };
 }
 
-export async function getLedger(portfolio: PortfolioRow) {
+/** The relief method in force: the portfolio's choice where the law allows one, else the country's. */
+export function lotMethodFor(portfolio: PortfolioRow, rules: TaxRules): LotMethod {
+  return rules.costBasis === 'choice' ? (portfolio.lot_method ?? 'fifo') : rules.costBasis;
+}
+
+export async function getLedger(portfolio: PortfolioRow, rules: TaxRules) {
   const transactions = await getTransactions(portfolio.id);
-  return processLedger(transactions, portfolio.lot_method ?? 'fifo');
+  return processLedger(transactions, lotMethodFor(portfolio, rules), rules);
 }
 
 /**
@@ -54,15 +61,16 @@ async function replacementIdeas(symbols: string[], exclude: Set<string>) {
 
 export async function getTaxReport(portfolio: PortfolioRow, userId: string) {
   const today = todayInNewYork();
-  const [ledger, rates] = await Promise.all([getLedger(portfolio), getTaxRates(userId)]);
+  const { rules, rates } = await getTaxSettings(userId);
+  const ledger = await getLedger(portfolio, rules);
   const symbols = [...new Set(ledger.openLots.map((lot) => lot.symbol))];
   const quotes = await getQuotes(symbols);
   const prices = Object.fromEntries(symbols.map((symbol) => [symbol, quotes[symbol]?.price ?? null]));
-  const lots = valueLots(ledger.openLots, prices, today);
+  const lots = valueLots(ledger.openLots, prices, today, rules.longTermMonths);
 
-  const years = estimateTaxByYear(summarizeRealized(ledger.disposals), rates);
-  const method = portfolio.lot_method ?? 'fifo';
-  const harvest = harvestIdeas(lots, rates, today, 100, method);
+  const years = estimateTaxByYear(summarizeRealized(ledger.disposals), rates, rules.ordinaryOffset);
+  const method = lotMethodFor(portfolio, rules);
+  const harvest = harvestIdeas(lots, rates, today, 100, method, rules.lossDeferralDays);
   const replacements = harvest.length ? await replacementIdeas(harvest.map((idea) => idea.symbol), new Set(symbols)) : {};
 
   const unrealized = { shortGains: 0, shortLosses: 0, longGains: 0, longLosses: 0 };
@@ -79,6 +87,7 @@ export async function getTaxReport(portfolio: PortfolioRow, userId: string) {
   const thisYear = years.find((year) => year.year === currentYear) ?? null;
   return {
     today,
+    jurisdiction: rules.code,
     method,
     accountType: portfolio.account_type ?? 'taxable',
     rates,

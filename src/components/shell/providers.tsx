@@ -19,8 +19,11 @@ export type Preferences = {
   density: 'comfortable' | 'compact';
   /** Currency portfolio totals are also shown in (holdings stay in their trading currency). */
   baseCurrency: string;
-  /** Which tax rules the Tax tab applies. */
-  taxJurisdiction: 'US' | 'PL';
+  /** Which country's tax rules the Tax tab applies (a code from `TAX_COUNTRIES`). */
+  taxJurisdiction: string;
+  /** Capital-gains rates; null uses the tax country's defaults. */
+  taxShortRate?: number | null;
+  taxLongRate?: number | null;
   notify?: { push?: boolean; telegram?: boolean; morningBrief?: boolean; weeklyRedTeam?: boolean; earningsWatch?: boolean; macro?: boolean };
   /** Yahoo symbols on the dashboard's macro tape (empty = default). */
   macroTape?: string[];

@@ -13,6 +13,7 @@ import { Button } from '@/components/ui/button';
 import { NotificationsPanel } from '@/components/settings/notifications';
 import { Badge, Input, Panel, PanelHeader, Segmented, Select, Skeleton } from '@/components/ui/primitives';
 import { api, revalidate } from '@/lib/client';
+import { TAX_COUNTRIES, taxRulesFor, type TaxRegion } from '@/lib/finance/tax-rules';
 import { relativeTime } from '@/lib/format';
 import { MARKET_PALETTES } from '@/lib/theme';
 import { cn } from '@/lib/utils';
@@ -153,15 +154,23 @@ export function Settings() {
                   ))}
                 </Select>
               </Row>
-              <Row label="Tax rules" hint="Which country's capital-gains rules the Tax tab applies.">
-                <Segmented
+              <Row label="Tax country" hint={`Capital-gains rules the Tax tab applies. ${taxRulesFor(prefs.taxJurisdiction).note}`}>
+                <Select
                   value={prefs.taxJurisdiction}
-                  onChange={(taxJurisdiction) => void save({ taxJurisdiction }, 'Tax rules updated')}
-                  options={[
-                    { value: 'US', label: 'United States (8949)' },
-                    { value: 'PL', label: 'Poland (PIT-38)' },
-                  ]}
-                />
+                  // A new country starts from its own default rates.
+                  onChange={(event) => void save({ taxJurisdiction: event.target.value, taxShortRate: null, taxLongRate: null }, 'Tax country updated')}
+                  className="w-60"
+                >
+                  {(['North America', 'European Union'] satisfies TaxRegion[]).map((region) => (
+                    <optgroup key={region} label={region}>
+                      {TAX_COUNTRIES.filter((country) => country.region === region).map((country) => (
+                        <option key={country.code} value={country.code}>
+                          {country.name} ({country.form})
+                        </option>
+                      ))}
+                    </optgroup>
+                  ))}
+                </Select>
               </Row>
             </div>
           </Panel>
