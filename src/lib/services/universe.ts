@@ -66,9 +66,10 @@ async function followedStocks() {
 /**
  * Refresh the US stock universe: listings, sectors and market caps from Nasdaq's screener, SEC CIKs, and a live quote for every
  * common stock. Quotes are saved batch by batch (followed names first), so prices go live progressively and an interrupted run
- * keeps what it got. `onProgress` gets a status line and how far through the whole refresh it is (0–1).
+ * keeps what it got. `onProgress` gets a status line and how far through the whole refresh it is (0–1). Past `deadline` (epoch ms)
+ * the sweep stops starting batches; `left` counts the stocks it didn't reach, and the next run quotes those first.
  */
-export async function refreshUniverse(onProgress?: (message: string, fraction: number) => void) {
+export async function refreshUniverse(onProgress?: (message: string, fraction: number) => void, deadline?: number) {
   const followed = await followedStocks();
   onProgress?.(`Quoting ${followed.length} held and watched stocks…`, 0.01);
   const first = await fetchBatchQuotes(followed, saveQuotes);
@@ -129,19 +130,26 @@ export async function refreshUniverse(onProgress?: (message: string, fraction: n
     );
   }
 
-  // Every other common stock by size, saved as each batch lands.
-  const rest = enriched.filter((row) => row.isCommon && !first.has(row.symbol)).sort((a, b) => (b.marketCap ?? 0) - (a.marketCap ?? 0));
+  // Every other common stock, saved as each batch lands: the stalest live quote first (what a time-limited run didn't reach), then by size.
+  const commons = enriched.filter((row) => row.isCommon && !first.has(row.symbol));
+  const quotedAt = new Map(
+    (await q<{ symbol: string; price_at: Date }>('select symbol, price_at from public.securities where price_at is not null')).map((row) => [row.symbol, new Date(row.price_at).getTime()]),
+  );
+  const rest = commons.sort((a, b) => (quotedAt.get(a.symbol) ?? 0) - (quotedAt.get(b.symbol) ?? 0) || (b.marketCap ?? 0) - (a.marketCap ?? 0));
   onProgress?.('Refreshing prices…', 0.1);
+  let reached = 0;
   const quotes = await fetchBatchQuotes(
     rest.map((row) => row.symbol),
     async (batch, finished, total) => {
       await saveQuotes(batch);
-      onProgress?.(`Refreshing prices · ${Math.min(finished * 20, rest.length).toLocaleString()} of ${rest.length.toLocaleString()} stocks`, 0.1 + 0.88 * (finished / total));
+      reached = Math.min(finished * 20, rest.length);
+      onProgress?.(`Refreshing prices · ${reached.toLocaleString()} of ${rest.length.toLocaleString()} stocks`, 0.1 + 0.88 * (finished / total));
     },
+    deadline,
   );
   // Anything not in today's list has been delisted or renamed.
   await q(`update public.securities set listed = false where updated_at < now() - interval '3 days'`);
-  return { count: enriched.length, quoted: first.size + quotes.size, withCik: enriched.filter((row) => row.cik).length };
+  return { count: enriched.length, quoted: first.size + quotes.size, left: rest.length - reached, withCik: enriched.filter((row) => row.cik).length };
 }
 
 export async function universeStatus() {

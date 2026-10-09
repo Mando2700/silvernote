@@ -53,11 +53,14 @@ function reporter(id: string): Reporter {
 
 async function runUniverse(report: Reporter) {
   report(0, 100, 'Downloading market snapshot…');
-  const result = await refreshUniverse((message, fraction) => report(Math.min(99, Math.round(fraction * 100)), 100, message));
+  // Serverless: the function is killed at 300 s (off hours the quote sweep runs slower than that), so stop in time to finish cleanly.
+  const deadline = serverless ? Date.now() + 230_000 : undefined;
+  const result = await refreshUniverse((message, fraction) => report(Math.min(99, Math.round(fraction * 100)), 100, message), deadline);
   forget('universe:');
   forget('group:');
   await evaluatePriceAlerts().catch(() => 0);
-  report(100, 100, `${result.count.toLocaleString()} securities updated · ${result.quoted.toLocaleString()} quoted live`);
+  const left = result.left ? ` · ${result.left.toLocaleString()} left for the next run` : '';
+  report(100, 100, `${result.count.toLocaleString()} securities updated · ${result.quoted.toLocaleString()} quoted live${left}`);
 }
 
 async function runFundamentals(report: Reporter) {

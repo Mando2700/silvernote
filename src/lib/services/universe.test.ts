@@ -98,6 +98,19 @@ describe('refreshUniverse', () => {
     expect(fresh.price_at).toBeNull();
   });
 
+  it('sweeps the stalest live quotes first, so a time-limited run picks up where the last one stopped', async () => {
+    await pg.exec(`insert into public.securities (symbol, name, price, market_cap, price_at) values
+      ('BIG', 'Big', 1, 9e12, now() - interval '1 minute'), ('TINY', 'Tiny', 1, 1e6, now() - interval '6 hours')`);
+    screener.push(listing('BIG', 1, 9e12), listing('TINY', 1, 1e6));
+
+    await refreshUniverse();
+
+    // Never-quoted fillers first, then the six-hour-old quote, and the one quoted a minute ago last despite its size.
+    const swept = calls[2].replace('quotes:', '').split(',');
+    expect(swept.indexOf('TINY')).toBe(swept.length - 2);
+    expect(swept.at(-1)).toBe('BIG');
+  });
+
   it('stamps rows priced by a live quote', async () => {
     screener.push(listing('NVDA', 238.9, 5.8e12));
     live = { NVDA: { price: 239.24, change: 0.34, changePct: 0.14, volume: 1 } };

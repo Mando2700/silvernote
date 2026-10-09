@@ -90,9 +90,14 @@ export type BatchQuote = { price: number; change: number | null; changePct: numb
 /**
  * Latest quotes, 20 stocks per call (the endpoint silently drops the rest). The screener lags a session behind the quote API, so
  * the universe refresh overlays these on it. `onBatch` gets each batch's quotes as they arrive (and is awaited, so a slow consumer
- * paces the sweep); the full map is returned at the end.
+ * paces the sweep); the full map is returned at the end. Past `deadline` (epoch ms) no new batch starts, so a caller with a time
+ * limit gets what was reached instead of being cut off mid-sweep.
  */
-export async function fetchBatchQuotes(symbols: string[], onBatch?: (quotes: Map<string, BatchQuote>, done: number, total: number) => Promise<void> | void) {
+export async function fetchBatchQuotes(
+  symbols: string[],
+  onBatch?: (quotes: Map<string, BatchQuote>, done: number, total: number) => Promise<void> | void,
+  deadline?: number,
+) {
   const quotes = new Map<string, BatchQuote>();
   // One unknown ticker fails the whole request, so failed batches are split and retried.
   const load = async (batch: string[], into: Map<string, BatchQuote>): Promise<void> => {
@@ -124,7 +129,7 @@ export async function fetchBatchQuotes(symbols: string[], onBatch?: (quotes: Map
   let finished = 0;
   await Promise.all(
     Array.from({ length: Math.min(3, batches.length) }, async () => {
-      while (next < batches.length) {
+      while (next < batches.length && !(deadline && Date.now() > deadline)) {
         const batch = new Map<string, BatchQuote>();
         await load(batches[next++], batch);
         for (const [symbol, quote] of batch) quotes.set(symbol, quote);
