@@ -9,6 +9,7 @@ import { PriceChart, type ChartMarker } from '@/components/charts/price-chart';
 import { useChartStudies } from '@/components/charts/stock-chart';
 import { ColumnChart } from '@/components/charts/svg';
 import { AlertButton, TradeButton, WatchlistMenu } from '@/components/company/actions';
+import { AssetAboutPanel, AssetMarketPanel, AssetPerformancePanel, AssetSupplyPanel } from '@/components/company/asset-panels';
 import { DcfPanel } from '@/components/company/dcf-panel';
 import { InsidersPanel } from '@/components/company/insiders-panel';
 import { CompsTool } from '@/components/lab/lab';
@@ -107,45 +108,6 @@ function KeyStats({ data, profileLoading }: { data: CompanyPayload | null; profi
           <div key={stat.label}>
             <div className="text-[11px] text-muted">{stat.label}</div>
             {profileLoading && stat.value === '—' ? <Skeleton className="mt-1 h-3.5 w-12" /> : <div className="num mt-0.5 text-[14px] font-medium text-ink">{stat.value}</div>}
-          </div>
-        ))}
-      </div>
-      {position !== null ? (
-        <div className="border-t border-line px-4 py-3">
-          <div className="mb-1.5 flex justify-between text-[11px] text-muted">
-            <span>52-week range</span>
-            <span className="num">
-              ${price(low)} — ${price(high)}
-            </span>
-          </div>
-          <div className="relative h-1.5 rounded-full bg-gradient-to-r from-white/5 via-white/10 to-white/5">
-            <div className="absolute top-1/2 size-3 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-surface-2 bg-brand shadow-[0_0_10px_rgba(205,212,222,0.48)]" style={{ left: `${position * 100}%` }} />
-          </div>
-        </div>
-      ) : null}
-    </Panel>
-  );
-}
-
-/** Commodities and crypto: no fundamentals, just where the price sits in its year. */
-function AssetStats({ profile, price: priceNow, loading }: { profile: CompanyProfile | null; price: number | null; loading: boolean }) {
-  const high = profile?.high52 ?? null;
-  const low = profile?.low52 ?? null;
-  const position = high && low && priceNow && high > low ? Math.min(1, Math.max(0, (priceNow - low) / (high - low))) : null;
-  const stats = [
-    { label: '52-week high', value: high ? `$${price(high)}` : '—' },
-    { label: '52-week low', value: low ? `$${price(low)}` : '—' },
-    { label: 'Off the high', value: high && priceNow ? pct(priceNow / high - 1) : '—' },
-    { label: 'Above the low', value: low && priceNow ? pct(priceNow / low - 1) : '—' },
-  ];
-  return (
-    <Panel>
-      <PanelHeader kicker="Daily closes · last 12 months" title="Key statistics" />
-      <div className="grid grid-cols-2 gap-x-6 gap-y-3 px-4 pb-4 sm:grid-cols-4">
-        {stats.map((stat) => (
-          <div key={stat.label}>
-            <div className="text-[11px] text-muted">{stat.label}</div>
-            {loading && stat.value === '—' ? <Skeleton className="mt-1 h-3.5 w-12" /> : <div className="num mt-0.5 text-[14px] font-medium text-ink">{stat.value}</div>}
           </div>
         ))}
       </div>
@@ -272,7 +234,10 @@ function Overview({ symbol, data, profile, profileLoading, descriptionLoading, o
       <div className="flex flex-col gap-4">
         {fullscreen ? null : <Panel>{chartBody}</Panel>}
         {asset ? (
-          <AssetStats profile={profile} price={data?.quote?.price ?? null} loading={profileLoading} />
+          <>
+            <AssetMarketPanel symbol={symbol} livePrice={data?.quote?.price ?? null} />
+            <AssetPerformancePanel symbol={symbol} />
+          </>
         ) : (
           <KeyStats data={data ? { ...data, profile } : null} profileLoading={profileLoading} />
         )}
@@ -319,42 +284,50 @@ function Overview({ symbol, data, profile, profileLoading, descriptionLoading, o
             </div>
           </Panel>
         )}
-        <Panel>
-          <PanelHeader kicker={[profile?.sector, profile?.industry].filter(Boolean).join(' · ') || 'Company'} title="About" />
-          <div className="px-4 pb-4">
-            {descriptionLoading ? (
-              <div className="flex flex-col gap-2">
-                <Skeleton className="h-3 w-full" />
-                <Skeleton className="h-3 w-full" />
-                <Skeleton className="h-3 w-2/3" />
+        {asset ? (
+          <>
+            <AssetAboutPanel symbol={symbol} />
+            <AssetSupplyPanel symbol={symbol} livePrice={data?.quote?.price ?? null} />
+          </>
+        ) : null}
+        {asset ? null : (
+          <Panel>
+            <PanelHeader kicker={[profile?.sector, profile?.industry].filter(Boolean).join(' · ') || 'Company'} title="About" />
+            <div className="px-4 pb-4">
+              {descriptionLoading ? (
+                <div className="flex flex-col gap-2">
+                  <Skeleton className="h-3 w-full" />
+                  <Skeleton className="h-3 w-full" />
+                  <Skeleton className="h-3 w-2/3" />
+                </div>
+              ) : (
+                <p className="line-clamp-[10] text-[12.5px] leading-relaxed text-ink-2">{profile?.description ?? 'No description available.'}</p>
+              )}
+              <div className="mt-3 grid grid-cols-2 gap-x-4 gap-y-2 text-[12px]">
+                {[
+                  ['Exchange', profile?.exchange ?? data?.security?.exchange],
+                  ['Country', profile?.country ?? data?.security?.country],
+                  ['CEO', profile?.ceo],
+                  ['Employees', profile?.employees ? profile.employees.toLocaleString() : null],
+                  ['Fiscal year ends', profile?.fiscalYearEnd ? `${profile.fiscalYearEnd.slice(0, 2)}/${profile.fiscalYearEnd.slice(2)}` : null],
+                  ['SIC', profile?.sicDescription],
+                ]
+                  .filter(([, value]) => value)
+                  .map(([label, value]) => (
+                    <div key={label as string}>
+                      <div className="text-[10.5px] text-faint">{label}</div>
+                      <div className="truncate text-ink-2">{value}</div>
+                    </div>
+                  ))}
               </div>
-            ) : (
-              <p className="line-clamp-[10] text-[12.5px] leading-relaxed text-ink-2">{profile?.description ?? 'No description available.'}</p>
-            )}
-            <div className="mt-3 grid grid-cols-2 gap-x-4 gap-y-2 text-[12px]">
-              {[
-                ['Exchange', profile?.exchange ?? data?.security?.exchange],
-                ['Country', profile?.country ?? data?.security?.country],
-                ['CEO', profile?.ceo],
-                ['Employees', profile?.employees ? profile.employees.toLocaleString() : null],
-                ['Fiscal year ends', profile?.fiscalYearEnd ? `${profile.fiscalYearEnd.slice(0, 2)}/${profile.fiscalYearEnd.slice(2)}` : null],
-                ['SIC', profile?.sicDescription],
-              ]
-                .filter(([, value]) => value)
-                .map(([label, value]) => (
-                  <div key={label as string}>
-                    <div className="text-[10.5px] text-faint">{label}</div>
-                    <div className="truncate text-ink-2">{value}</div>
-                  </div>
-                ))}
+              {profile?.website ? (
+                <a href={profile.website.startsWith('http') ? profile.website : `https://${profile.website}`} target="_blank" rel="noreferrer" className="mt-3 inline-flex items-center gap-1 text-[12px] text-brand-soft hover:underline">
+                  {profile.website.replace(/^https?:\/\//, '')} <ExternalLink className="size-3" />
+                </a>
+              ) : null}
             </div>
-            {profile?.website ? (
-              <a href={profile.website.startsWith('http') ? profile.website : `https://${profile.website}`} target="_blank" rel="noreferrer" className="mt-3 inline-flex items-center gap-1 text-[12px] text-brand-soft hover:underline">
-                {profile.website.replace(/^https?:\/\//, '')} <ExternalLink className="size-3" />
-              </a>
-            ) : null}
-          </div>
-        </Panel>
+          </Panel>
+        )}
         {asset ? null : (
           <Panel>
             <PanelHeader

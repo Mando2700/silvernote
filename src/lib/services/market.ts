@@ -7,7 +7,7 @@ import * as finnhub from '@/lib/data/providers/finnhub';
 import * as fmp from '@/lib/data/providers/fmp';
 import * as nasdaq from '@/lib/data/providers/nasdaq';
 import { fetchSubmissions } from '@/lib/data/providers/sec';
-import { fetchYahooDaily, fetchYahooDay } from '@/lib/data/providers/yahoo';
+import { fetchYahooDay } from '@/lib/data/providers/yahoo';
 import type { CompanyProfile, ExtendedQuote, Filing, NewsItem, Quote } from '@/lib/data/types';
 import { isMarketOpen } from '@/lib/services/prices';
 import { regularSession } from '@/lib/session';
@@ -253,10 +253,8 @@ export async function getCompanyProfile(symbol: string, options: { fast?: boolea
   };
 }
 
-/** A commodity or crypto profile: the description from the registry and the 52-week range from Yahoo. */
-async function assetProfile(asset: NonNullable<ReturnType<typeof getAsset>>): Promise<CompanyProfile> {
-  const year = await cached(`asset-52w:${asset.symbol}`, 6 * 3600, () => fetchYahooDaily(asset.yahoo, '1y')).catch(() => []);
-  const closes = year.map((point) => point.c);
+/** A commodity or crypto profile: just the registry's name and description (market details come from /asset). */
+function assetProfile(asset: NonNullable<ReturnType<typeof getAsset>>): CompanyProfile {
   return {
     symbol: asset.symbol,
     name: asset.name,
@@ -280,8 +278,8 @@ async function assetProfile(asset: NonNullable<ReturnType<typeof getAsset>>): Pr
     annualDividend: null,
     exDividendDate: null,
     averageVolume: null,
-    high52: closes.length ? Math.max(...closes) : null,
-    low52: closes.length ? Math.min(...closes) : null,
+    high52: null,
+    low52: null,
   };
 }
 

@@ -84,6 +84,7 @@ export const limiters = {
   news: new RateLimiter(250, 3),
   yahoo: new RateLimiter(300, 2),
   wikimedia: new RateLimiter(100, 4),
+  coingecko: new RateLimiter(2100, 1), // keyless public API: roughly 30/min
 };
 
 export function sleep(ms: number) {

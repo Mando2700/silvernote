@@ -2,6 +2,8 @@
 
 import { useEffect, useRef, useState } from 'react';
 
+import { AssetIcon } from '@/components/ui/asset-icon';
+import { getAsset } from '@/lib/data/assets';
 import { cn } from '@/lib/utils';
 
 const SIZES = { xs: 16, sm: 20, md: 28, lg: 44, xl: 60 } as const;
@@ -14,6 +16,14 @@ type Size = keyof typeof SIZES | number;
  */
 export function CompanyLogo({ symbol, size = 'sm', className }: { symbol: string; size?: Size; className?: string }) {
   const px = typeof size === 'number' ? size : SIZES[size];
+  // Commodities and crypto have drawn icons instead of a fetched logo.
+  if (getAsset(symbol)) {
+    return (
+      <span className={cn('relative inline-block shrink-0 overflow-hidden border border-white/10', className)} style={{ width: px, height: px, borderRadius: Math.max(3, Math.round(px * 0.24)) }} aria-hidden>
+        <AssetIcon symbol={symbol.toUpperCase()} px={px} />
+      </span>
+    );
+  }
   // Remount per symbol so load state never leaks between rows that reuse a component.
   return <LogoTile key={symbol} symbol={symbol} px={px} className={className} />;
 }

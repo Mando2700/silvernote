@@ -139,3 +139,59 @@ export async function fetchYahooDaily(symbol: string, range = '1y'): Promise<Arr
     .map((t, index) => ({ t, c: closes[index] }))
     .filter((point): point is { t: number; c: number } => typeof point.c === 'number' && Number.isFinite(point.c));
 }
+
+type MetaPayload = {
+  chart?: {
+    result?: Array<{
+      meta?: {
+        fullExchangeName?: string;
+        shortName?: string;
+        currency?: string;
+        regularMarketDayHigh?: number;
+        regularMarketDayLow?: number;
+        regularMarketVolume?: number;
+        fiftyTwoWeekHigh?: number;
+        fiftyTwoWeekLow?: number;
+        firstTradeDate?: number;
+      };
+    }> | null;
+  };
+};
+
+export type YahooMeta = {
+  exchange: string | null;
+  /** The contract being quoted, e.g. "Gold Dec 26" for the front-month future. */
+  contract: string | null;
+  currency: string | null;
+  dayHigh: number | null;
+  dayLow: number | null;
+  volume: number | null;
+  high52: number | null;
+  low52: number | null;
+  /** Epoch seconds of the first day Yahoo has data for. */
+  firstTrade: number | null;
+};
+
+const num = (value: unknown) => (typeof value === 'number' && Number.isFinite(value) ? value : null);
+
+/** Today's range and volume, the 52-week range and the listing details Yahoo keeps on any chart. */
+export async function fetchYahooMeta(symbol: string): Promise<YahooMeta | null> {
+  const payload = await fetchJson<MetaPayload>(`https://query2.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(yahooTicker(symbol))}?range=1d&interval=1d`, {
+    provider: 'yahoo',
+    limiter: limiters.yahoo,
+    headers: { 'User-Agent': 'Mozilla/5.0' },
+  });
+  const meta = payload.chart?.result?.[0]?.meta;
+  if (!meta) return null;
+  return {
+    exchange: meta.fullExchangeName ?? null,
+    contract: meta.shortName ?? null,
+    currency: meta.currency ?? null,
+    dayHigh: num(meta.regularMarketDayHigh),
+    dayLow: num(meta.regularMarketDayLow),
+    volume: num(meta.regularMarketVolume),
+    high52: num(meta.fiftyTwoWeekHigh),
+    low52: num(meta.fiftyTwoWeekLow),
+    firstTrade: num(meta.firstTradeDate),
+  };
+}

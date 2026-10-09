@@ -57,7 +57,10 @@ function merge(existing: Candle[], incoming: Candle[]) {
 
 async function download(symbol: string, from: string, to: string): Promise<{ candles: Candle[]; source: string }> {
   if (getAsset(symbol)) {
-    const candles = await fetchDailyCandles(symbol, from).catch(() => []);
+    // Yahoo sends ten years in one response: take them on any full download, so the long-run stats have them too.
+    const tenYearsAgo = isoDate(new Date(Date.now() - 10 * 365.25 * 86_400_000));
+    const full = Date.parse(from) < Date.now() - 30 * 86_400_000;
+    const candles = await fetchDailyCandles(symbol, full && tenYearsAgo < from ? tenYearsAgo : from).catch(() => []);
     return { candles, source: candles.length ? 'yahoo' : 'none' };
   }
   const assetClass = ETF_SYMBOLS.has(symbol) ? 'etf' : 'stocks';
