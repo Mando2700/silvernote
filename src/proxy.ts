@@ -46,10 +46,10 @@ export async function proxy(request: NextRequest) {
 
   if (!allowed && !isPublic) {
     if (path.startsWith('/api/')) return copyCookies(response, NextResponse.json({ error: 'Sign in to continue.' }, { status: 401 }));
-    return copyCookies(response, redirectTo(path === '/' ? '/login' : `/login?next=${encodeURIComponent(`${path}${request.nextUrl.search}`)}`));
+    return copyCookies(response, redirectTo(path === '/' ? '/login' : `/login?next=${encodeURIComponent(`${path}${request.nextUrl.search}`)}`, 307, request));
   }
   if (allowed && path === '/login') {
-    return copyCookies(response, redirectTo('/'));
+    return copyCookies(response, redirectTo('/', 307, request));
   }
   return response;
 }
