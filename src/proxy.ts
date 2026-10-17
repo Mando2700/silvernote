@@ -1,6 +1,8 @@
 import { createServerClient } from '@supabase/ssr';
 import { NextResponse, type NextRequest } from 'next/server';
 
+import { redirectTo } from '@/lib/redirect';
+
 /**
  * Auth gate for Supabase mode: refreshes the session cookie on every request, sends signed-out
  * visitors to /login (401 JSON for API calls) and admits only the emails in OWNER_EMAIL. In local mode (no
@@ -44,16 +46,10 @@ export async function proxy(request: NextRequest) {
 
   if (!allowed && !isPublic) {
     if (path.startsWith('/api/')) return copyCookies(response, NextResponse.json({ error: 'Sign in to continue.' }, { status: 401 }));
-    const login = request.nextUrl.clone();
-    login.pathname = '/login';
-    login.search = path === '/' ? '' : `?next=${encodeURIComponent(`${path}${request.nextUrl.search}`)}`;
-    return copyCookies(response, NextResponse.redirect(login));
+    return copyCookies(response, redirectTo(path === '/' ? '/login' : `/login?next=${encodeURIComponent(`${path}${request.nextUrl.search}`)}`));
   }
   if (allowed && path === '/login') {
-    const home = request.nextUrl.clone();
-    home.pathname = '/';
-    home.search = '';
-    return copyCookies(response, NextResponse.redirect(home));
+    return copyCookies(response, redirectTo('/'));
   }
   return response;
 }
