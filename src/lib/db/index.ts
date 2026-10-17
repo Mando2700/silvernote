@@ -6,6 +6,7 @@ import path from 'node:path';
 import type { Pool } from 'pg';
 
 import { env } from '@/lib/env';
+import { serverless } from '@/lib/platform';
 
 type Row = Record<string, unknown>;
 
@@ -123,7 +124,6 @@ async function createPostgres(rawUrl: string): Promise<Driver> {
   // node-postgres sends each query as one Parse/Bind/Execute/Sync batch, which Supabase's pooler
   // handles in both modes (postgres.js's describe round trip stalled there).
   const { default: pg } = await import('pg');
-  const serverless = Boolean(process.env.VERCEL);
   const url = serverless ? serverlessDatabaseUrl(rawUrl) : rawUrl;
   const local = /@(localhost|127\.0\.0\.1)[:/]/.test(url);
   const types = {
@@ -146,7 +146,7 @@ async function createPostgres(rawUrl: string): Promise<Driver> {
   });
   // A socket that dies while idle in the pool must not crash the process.
   pool.on('error', () => {});
-  if (serverless) {
+  if (process.env.VERCEL) {
     // Keep the function alive until idle clients are released before Vercel freezes it.
     const { attachDatabasePool } = await import('@vercel/functions');
     attachDatabasePool(pool);

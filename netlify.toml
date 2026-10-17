@@ -1,0 +1,8 @@
+# Netlify hosting (free plan). The Next.js runtime is detected and added automatically.
+# Background work runs on GitHub Actions (.github/workflows/worker.yml), not here.
+[build]
+  command = "npm run build"
+  publish = ".next"
+
+[build.environment]
+  NODE_VERSION = "24"

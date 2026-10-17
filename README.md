@@ -72,7 +72,7 @@ Run locally (`npm run dev` or `npm start`), the server does its own background w
 
 1. Add repository secrets on GitHub: `DATABASE_URL` (the Supabase session pooler URI) and whichever of `OWNER_EMAIL`, `SEC_USER_AGENT`, `FINNHUB_API_KEY`, `FMP_API_KEY`, `XAI_API_KEY`, `XAI_MODEL`, `NEXT_PUBLIC_VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` and `APP_URL` you use.
 2. Runs may overlap: each job claims its row in the jobs table, and a long sweep stopped by the 3-hour limit resumes on the next run. Logs show only step names, since workflow logs in a public repository are public.
-3. To have Vercel do the work itself again (needs a paid plan for the 5-minute cadence), set `VERCEL_SCHEDULER=on` and call `/api/cron` with `Authorization: Bearer $CRON_SECRET`.
+3. To have Vercel do the work itself again (needs a paid plan for the 5-minute cadence), set `SERVERLESS_SCHEDULER=on` and call `/api/cron` with `Authorization: Bearer $CRON_SECRET`.
 4. Push notifications: generate keys once with `npx web-push generate-vapid-keys`, set `NEXT_PUBLIC_VAPID_PUBLIC_KEY` and `VAPID_PRIVATE_KEY`, then press **Enable** in Settings → Notifications on each device. On iPhone, first add SilverNote to the Home Screen and enable it from the installed app.
 4. Telegram (optional): create a bot with @BotFather, send it a message, set `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` (from `https://api.telegram.org/bot<token>/getUpdates`), and `APP_URL` for links back.
 

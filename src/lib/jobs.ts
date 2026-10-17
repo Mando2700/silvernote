@@ -1,6 +1,7 @@
 import 'server-only';
 
 import { q, q1 } from '@/lib/db';
+import { serverless } from '@/lib/platform';
 import { forget, keepAlive, purgeExpiredCache, runInBackground } from '@/lib/data/http';
 import { evaluatePriceAlerts } from '@/lib/services/alerts';
 import { dueIbkrConnections, syncDueIbkr } from '@/lib/services/ibkr';
@@ -117,13 +118,12 @@ async function runScores(report: Reporter, job: Running, params: { minMarketCap?
   report(total, total, `Scored ${scored.toLocaleString()} companies`);
 }
 
-const serverless = Boolean(process.env.VERCEL);
 /** The GitHub Actions worker (scripts/worker.ts): a one-off process that runs the scheduler and waits for its jobs. */
 const worker = process.env.SILVERNOTE_WORKER === '1';
-/** On Vercel the worker does the background work (Hobby function time runs out otherwise); VERCEL_SCHEDULER=on brings it back. */
-const vercelJobs = serverless && process.env.VERCEL_SCHEDULER === 'on';
+/** On a serverless host the worker does the background work (free-plan function time runs out otherwise); SERVERLESS_SCHEDULER=on brings it back. */
+const hostJobs = serverless && process.env.SERVERLESS_SCHEDULER === 'on';
 /** Several processes share the jobs table: how long a "running" row may belong to another one (0: this process is the only one). */
-const sharedRunMs = vercelJobs ? 10 * 60_000 : serverless || worker ? 6 * 3_600_000 : 0;
+const sharedRunMs = hostJobs ? 10 * 60_000 : serverless || worker ? 6 * 3_600_000 : 0;
 const pendingWork = new Set<Promise<unknown>>();
 
 export async function startJob(kind: JobKind, params: Record<string, unknown> = {}): Promise<string> {
@@ -281,7 +281,7 @@ export async function schedulerTick() {
 }
 
 export function startScheduler() {
-  if (worker || (serverless && !vercelJobs)) return;
+  if (worker || (serverless && !hostJobs)) return;
   if (serverless) {
     // Timers don't fire while a serverless instance is frozen: tick after a response instead, at most once a minute per instance.
     const now = Date.now();
