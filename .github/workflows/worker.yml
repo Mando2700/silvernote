@@ -1,0 +1,61 @@
+# SilverNote's background worker: refreshes prices, fundamentals and scores, checks alerts, sends
+# notifications and writes briefs, running scripts/worker.ts here against the database. The website
+# (Vercel) does no background work, so it stays inside the free Hobby limits; Actions minutes are
+# free for a public repository. Runs may overlap: each job claims its row in the jobs table first.
+# Repository secrets: DATABASE_URL (Supabase session pooler) plus the optional keys listed below.
+name: Worker
+
+on:
+  schedule:
+    # Every 10 minutes through the US session (pre-market to after-hours, UTC), weekdays.
+    - cron: '*/10 11-23 * * 1-5'
+    # Hourly otherwise (weekends: Sunday red team, catch-up jobs).
+    - cron: '7 0-10 * * *'
+    - cron: '7 11-23 * * 0,6'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: write # keep-alive below
+
+jobs:
+  run:
+    # Never on forks: they have no secrets and no business writing to this database.
+    if: github.repository == 'Mando2700/silvernote'
+    runs-on: ubuntu-latest
+    # The weekly fundamentals and scores sweeps are long; they resume where a stopped run left off.
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - name: Run the scheduler
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          OWNER_EMAIL: ${{ secrets.OWNER_EMAIL }}
+          SEC_USER_AGENT: ${{ secrets.SEC_USER_AGENT }}
+          FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
+          FMP_API_KEY: ${{ secrets.FMP_API_KEY }}
+          XAI_API_KEY: ${{ secrets.XAI_API_KEY }}
+          XAI_MODEL: ${{ secrets.XAI_MODEL }}
+          NEXT_PUBLIC_VAPID_PUBLIC_KEY: ${{ secrets.NEXT_PUBLIC_VAPID_PUBLIC_KEY }}
+          VAPID_PRIVATE_KEY: ${{ secrets.VAPID_PRIVATE_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          APP_URL: ${{ secrets.APP_URL }}
+        run: |
+          if [ -z "$DATABASE_URL" ]; then echo "DATABASE_URL secret missing"; exit 0; fi
+          npm run worker
+      # GitHub turns off scheduled workflows in a public repository after 60 days without commits;
+      # re-enabling it once a week resets that clock.
+      - name: Keep the schedule alive
+        if: always() && github.event_name == 'schedule'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Mondays, 00:xx UTC run only.
+          if [ "$(date -u +%u%H)" != "100" ]; then exit 0; fi
+          gh api -X PUT "repos/${{ github.repository }}/actions/workflows/worker.yml/enable"

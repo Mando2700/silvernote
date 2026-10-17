@@ -118,17 +118,24 @@ async function runScores(report: Reporter, job: Running, params: { minMarketCap?
 }
 
 const serverless = Boolean(process.env.VERCEL);
+/** The GitHub Actions worker (scripts/worker.ts): a one-off process that runs the scheduler and waits for its jobs. */
+const worker = process.env.SILVERNOTE_WORKER === '1';
+/** On Vercel the worker does the background work (Hobby function time runs out otherwise); VERCEL_SCHEDULER=on brings it back. */
+const vercelJobs = serverless && process.env.VERCEL_SCHEDULER === 'on';
+/** Several processes share the jobs table: how long a "running" row may belong to another one (0: this process is the only one). */
+const sharedRunMs = vercelJobs ? 10 * 60_000 : serverless || worker ? 6 * 3_600_000 : 0;
+const pendingWork = new Set<Promise<unknown>>();
 
 export async function startJob(kind: JobKind, params: Record<string, unknown> = {}): Promise<string> {
   if (kind === 'fundamentals') params = { version: FUNDAMENTALS_VERSION, ...params };
   const existing = running.get(kind);
   if (existing) return existing.id;
-  if (serverless) {
-    // Each serverless instance has its own `running` map; another one may already be on this job.
+  if (sharedRunMs) {
+    // Each serverless instance and worker run has its own `running` map; another one may already be on this job.
     const other = await q1<{ id: string }>(
-      `select id from public.jobs where kind = $1 and status = 'running' and started_at > now() - interval '10 minutes'
+      `select id from public.jobs where kind = $1 and status = 'running' and started_at > now() - make_interval(secs => $2)
        order by started_at desc limit 1`,
-      [kind],
+      [kind, sharedRunMs / 1000],
     );
     if (other) return other.id;
   }
@@ -155,7 +162,20 @@ export async function startJob(kind: JobKind, params: Record<string, unknown> = 
     }
   });
   keepAlive(work);
+  pendingWork.add(work);
+  void work.finally(() => pendingWork.delete(work)).catch(() => {});
   return id;
+}
+
+/** Wait until every job this process started has finished (the worker exits after this). */
+export async function settleJobs() {
+  while (pendingWork.size) await Promise.allSettled([...pendingWork]);
+}
+
+/** Mark this process's running jobs failed, for a worker that is being stopped mid-run. */
+export async function abandonJobs(reason: string) {
+  const ids = [...running.values()].map((job) => job.id);
+  if (ids.length) await q(`update public.jobs set status = 'failed', error = $2, finished_at = now() where id = any($1) and status = 'running'`, [ids, reason]).catch(() => {});
 }
 
 export function cancelJob(kind: JobKind) {
@@ -172,8 +192,8 @@ export async function latestJobs() {
   const byKind = Object.fromEntries(rows.map((row) => [row.kind, row])) as Partial<Record<JobKind, JobRow>>;
   // A job row left "running" by a previous server process is stale.
   for (const row of rows) {
-    // Serverless: another instance may own it; only call it stale once it outlived a function's max duration.
-    const owned = serverless && row.started_at && Date.now() - new Date(row.started_at).getTime() < 10 * 60_000;
+    // Another process (serverless instance, worker run) may own it; only call it stale once it outlived that process's run.
+    const owned = sharedRunMs && row.started_at && Date.now() - new Date(row.started_at).getTime() < sharedRunMs;
     if (row.status === 'running' && !running.has(row.kind) && !owned) {
       row.status = 'failed';
       row.error = row.error ?? 'Interrupted by a server restart';
@@ -261,6 +281,7 @@ export async function schedulerTick() {
 }
 
 export function startScheduler() {
+  if (worker || (serverless && !vercelJobs)) return;
   if (serverless) {
     // Timers don't fire while a serverless instance is frozen: tick after a response instead, at most once a minute per instance.
     const now = Date.now();

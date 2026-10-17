@@ -1,12 +1,19 @@
 # SilverNote
 
+**Designed and built by [Michal Mucha](https://github.com/Mando2700).**
+
+> [!NOTE]
+> SilverNote is my personal investment research tool. The code is public so you can read it, but it is
+> **not open source**: it is not licensed for anyone else to use, copy, deploy or redistribute (see
+> [LICENSE](LICENSE)). The hosted instance only admits my own account. Nothing here is investment advice.
+
 A private, single-user investment research workstation: every US-listed stock with SEC fundamentals and a 0–100 **SilverNote Score**, watchlists and alerts, portfolio analytics, simulations, per-company research notes with version history, a pitch builder that exports to PDF and slides, headlines and filings, and a Grok assistant that sees what you are looking at.
 
 It runs on your machine with no accounts and no paid data. Supabase (hosted Postgres plus sign-in) is optional and takes a few minutes to switch on.
 
-## Quick start
+## Running it
 
-Requires Node.js 20.9 or newer.
+These are my own setup notes. Requires Node.js 20.9 or newer.
 
 ```bash
 npm install
@@ -59,13 +66,14 @@ Restart `npm run dev` after editing `.env.local`. Keys are read only on the serv
 - **Settings** — green/red or colorblind-friendly blue/orange market colors, compact density, motion, benchmark, risk-free rate, base currency, tax rules (US or Poland), notifications (push, Telegram, morning brief, weekly red team), macro tape, Grok model, data-source status, background jobs.
 - **Phone** — installable as an app (home-screen icon, push notifications) with a bottom tab bar and drawer navigation.
 
-## Notifications and the scheduler
+## Notifications and the background worker
 
-On a server that sleeps between requests (Vercel), background work runs when `/api/cron` is called:
+Run locally (`npm run dev` or `npm start`), the server does its own background work every minute. On Vercel it does none, so the site stays within the free Hobby limits; the **Worker** workflow (`.github/workflows/worker.yml`) does it instead on GitHub Actions, every 10 minutes through the US trading day and hourly otherwise. Each run executes `scripts/worker.ts` (also `npm run worker`) straight against the database: price sweep, fundamentals and scores when due, alerts, notifications and briefs.
 
-1. Set `CRON_SECRET` (any long random string) in the server environment.
-2. Vercel Cron calls it once a day (`vercel.json`; the Hobby plan allows no more). For the 15-minute cadence, add two repository secrets on GitHub — `APP_URL` (your deployment's https URL) and `CRON_SECRET` — and the **Scheduler** workflow in `.github/workflows/scheduler.yml` calls it through the trading day.
-3. Push notifications: generate keys once with `npx web-push generate-vapid-keys`, set `NEXT_PUBLIC_VAPID_PUBLIC_KEY` and `VAPID_PRIVATE_KEY`, then press **Enable** in Settings → Notifications on each device. On iPhone, first add SilverNote to the Home Screen and enable it from the installed app.
+1. Add repository secrets on GitHub: `DATABASE_URL` (the Supabase session pooler URI) and whichever of `OWNER_EMAIL`, `SEC_USER_AGENT`, `FINNHUB_API_KEY`, `FMP_API_KEY`, `XAI_API_KEY`, `XAI_MODEL`, `NEXT_PUBLIC_VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` and `APP_URL` you use.
+2. Runs may overlap: each job claims its row in the jobs table, and a long sweep stopped by the 3-hour limit resumes on the next run. Logs show only step names, since workflow logs in a public repository are public.
+3. To have Vercel do the work itself again (needs a paid plan for the 5-minute cadence), set `VERCEL_SCHEDULER=on` and call `/api/cron` with `Authorization: Bearer $CRON_SECRET`.
+4. Push notifications: generate keys once with `npx web-push generate-vapid-keys`, set `NEXT_PUBLIC_VAPID_PUBLIC_KEY` and `VAPID_PRIVATE_KEY`, then press **Enable** in Settings → Notifications on each device. On iPhone, first add SilverNote to the Home Screen and enable it from the installed app.
 4. Telegram (optional): create a bot with @BotFather, send it a message, set `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` (from `https://api.telegram.org/bot<token>/getUpdates`), and `APP_URL` for links back.
 
 ## Switching to Supabase
@@ -108,10 +116,8 @@ Everything fetched is cached in Postgres, so each source is called only as often
 - **Next.js 16** (App Router, Turbopack, React 19.2 view transitions for the row → company-page morph), TypeScript, Tailwind CSS v4.
 - **Motion** for UI animation and scroll-linked charts, **D3** for the treemap and SVG charts, **Lightweight Charts** for price charts, **three.js** for the sign-in page's point field, **ExcelJS** for exports, **web-push** for notifications.
 - **Database**: one SQL migration set in `supabase/migrations/` runs on either the built-in PGlite (Postgres compiled to WebAssembly, stored in `./.silvernote/db`) or Supabase Postgres. Personal tables have owner-only row-level security; market cache tables are server-only.
-- **Server**: route handlers under `src/app/api` are the only way the browser reaches data or Grok. The scheduler refreshes prices every 5 minutes during market hours (plus a real-time Finnhub stream for the stocks on screen when a key is set), fundamentals and scores weekly (failed runs retry with backoff), evaluates alerts, delivers notifications and writes scheduled briefs. Locally it runs inside the server process; on Vercel it is driven by `/api/cron` (see Scheduler below).
+- **Server**: route handlers under `src/app/api` are the only way the browser reaches data or Grok. The scheduler refreshes prices every 5 minutes during market hours (plus a real-time Finnhub stream for the stocks on screen when a key is set), fundamentals and scores weekly (failed runs retry with backoff), evaluates alerts, delivers notifications and writes scheduled briefs. Locally it runs inside the server process; for the Vercel deployment it runs on GitHub Actions (see the background worker above).
 - **Auth**: in Supabase mode `src/proxy.ts` refreshes the session on each request and admits only the emails in `OWNER_EMAIL`; in local mode there is no sign-in and the server binds to 127.0.0.1.
-
-A note on the brief: it suggested Supabase Edge Functions for the data and AI proxies. SilverNote uses Next.js route handlers instead, so the same code runs locally without Docker or the Supabase CLI and on any Node host. The data never leaves your server either way.
 
 ## SilverNote Score
 
@@ -127,9 +133,14 @@ A 0–100 rating from ten weighted components (growth, profitability, valuation,
 | `npm run test:e2e` | Smoke tests of every page on desktop and phone widths (Playwright; `npx playwright install chromium` once) |
 | `npm run lint` / `npm run typecheck` | ESLint / TypeScript |
 | `npm run db:migrate` | Apply migrations to the configured database |
+| `npm run worker` | One background-worker run against the configured database |
 
 Only one process can open the local PGlite database at a time, so stop the dev server before running `npm run db:migrate` against it.
 
 ## Disclaimer
 
 SilverNote is a research tool. Scores, simulations and AI output are not investment advice, and the free data sources can be delayed or incomplete.
+
+## License
+
+Copyright © 2026 Michal Mucha. All rights reserved. The source is visible for reading only; using, copying, deploying or redistributing it needs my written permission. See [LICENSE](LICENSE). Security issues: [SECURITY.md](SECURITY.md).

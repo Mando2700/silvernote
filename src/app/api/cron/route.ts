@@ -7,8 +7,8 @@ export const dynamic = 'force-dynamic';
 export const maxDuration = 300;
 
 /**
- * The background scheduler's entry point, called by Vercel Cron and the GitHub Actions workflow
- * (see .github/workflows/scheduler.yml) with `Authorization: Bearer $CRON_SECRET`.
+ * The background scheduler's entry point for hosts that call it over HTTP, with `Authorization: Bearer $CRON_SECRET`.
+ * The Vercel deployment leaves background work to the GitHub Actions worker (scripts/worker.ts) unless VERCEL_SCHEDULER=on.
  */
 export async function GET(request: Request) {
   if (!env.cronSecret) return NextResponse.json({ error: 'CRON_SECRET is not set.' }, { status: 503 });

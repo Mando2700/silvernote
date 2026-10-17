@@ -2,6 +2,9 @@
   "name": "silvernote",
   "version": "1.0.0",
   "private": true,
+  "description": "Personal investment research workstation",
+  "author": "Michal Mucha (https://github.com/Mando2700)",
+  "license": "SEE LICENSE IN LICENSE",
   "scripts": {
     "dev": "next dev -H 127.0.0.1 -p 3000",
     "build": "next build",
@@ -11,6 +14,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "db:migrate": "tsx --conditions=react-server scripts/migrate.ts",
+    "worker": "tsx --conditions=react-server scripts/worker.ts",
     "test:e2e": "playwright test"
   },
   "dependencies": {
