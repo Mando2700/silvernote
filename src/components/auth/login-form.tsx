@@ -11,7 +11,7 @@ import { Button } from '@/components/ui/button';
 import { Field, Input } from '@/components/ui/primitives';
 
 export function LoginForm({ next, initialError, ownerConfigured }: { next: string; initialError: string | null; ownerConfigured: boolean }) {
-  const [mode, setMode] = useState<'signin' | 'signup'>('signin');
+  const [mode, setMode] = useState<'signin' | 'signup' | 'reset'>('signin');
   // Controlled so a failed attempt keeps the address (React resets uncontrolled fields after an action).
   const [email, setEmail] = useState('');
   const [state, action, pending] = useActionState<LoginState, FormData>(authenticate, initialError ? { error: initialError } : {});
@@ -43,9 +43,11 @@ export function LoginForm({ next, initialError, ownerConfigured }: { next: strin
             <Field label="Email">
               <Input name="email" type="email" autoComplete="email" required autoFocus value={email} onChange={(event) => setEmail(event.target.value)} className="h-9" />
             </Field>
-            <Field label="Password" hint={mode === 'signup' ? 'At least 8 characters.' : undefined}>
-              <Input name="password" type="password" autoComplete={mode === 'signup' ? 'new-password' : 'current-password'} required minLength={8} className="h-9" />
-            </Field>
+            {mode === 'reset' ? null : (
+              <Field label="Password" hint={mode === 'signup' ? 'At least 8 characters.' : undefined}>
+                <Input name="password" type="password" autoComplete={mode === 'signup' ? 'new-password' : 'current-password'} required minLength={8} className="h-9" />
+              </Field>
+            )}
             <AnimatePresence initial={false} mode="wait">
               {state.error || state.message ? (
                 <motion.div
@@ -61,9 +63,14 @@ export function LoginForm({ next, initialError, ownerConfigured }: { next: strin
               ) : null}
             </AnimatePresence>
             <Button type="submit" variant="primary" size="md" loading={pending} icon={pending ? undefined : mode === 'signin' ? <Lock className="size-3.5" /> : <ArrowRight className="size-3.5" />} className="mt-1 w-full">
-              {mode === 'signin' ? 'Sign in' : 'Create account'}
+              {mode === 'signin' ? 'Sign in' : mode === 'signup' ? 'Create account' : 'Email me a reset link'}
             </Button>
           </form>
+          {mode === 'signin' ? (
+            <button type="button" onClick={() => setMode('reset')} className="mx-auto mt-3 block text-[12px] text-muted hover:text-ink-2">
+              Forgot password?
+            </button>
+          ) : null}
         </div>
 
         <button
@@ -71,7 +78,7 @@ export function LoginForm({ next, initialError, ownerConfigured }: { next: strin
           onClick={() => setMode((value) => (value === 'signin' ? 'signup' : 'signin'))}
           className="mx-auto mt-4 block text-[12px] text-muted hover:text-ink-2"
         >
-          {mode === 'signin' ? 'New here? Create an account' : 'Already set up? Sign in'}
+          {mode === 'signin' ? 'New here? Create an account' : mode === 'signup' ? 'Already set up? Sign in' : 'Back to sign in'}
         </button>
       </motion.div>
     </main>
