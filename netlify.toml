@@ -6,3 +6,7 @@
 
 [build.environment]
   NODE_VERSION = "24"
+
+# Declared explicitly: uploads that aren't built from a linked Git repo don't add it on their own.
+[[plugins]]
+  package = "@netlify/plugin-nextjs"
