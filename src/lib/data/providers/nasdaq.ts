@@ -459,6 +459,79 @@ export async function fetchDividendCalendar(date: string): Promise<DividendEvent
     }));
 }
 
+export type IpoEvent = {
+  symbol: string;
+  name: string;
+  /** The expected pricing day (upcoming) or the day it priced. */
+  date: string;
+  status: 'upcoming' | 'priced';
+  exchange: string | null;
+  /** A single price, or the low and high of the marketed range (equal for a fixed price). */
+  priceLow: number | null;
+  priceHigh: number | null;
+  shares: number | null;
+  /** Deal size in dollars. */
+  amount: number | null;
+};
+
+type IpoRow = { proposedTickerSymbol?: string | null; companyName?: string; proposedExchange?: string | null; proposedSharePrice?: string | null; sharesOffered?: string | null; expectedPriceDate?: string; pricedDate?: string; dollarValueOfSharesOffered?: string | null };
+
+type IpoPayload = { priced?: { rows?: IpoRow[] | null }; upcoming?: { upcomingTable?: { rows?: IpoRow[] | null } } };
+
+/** Upcoming and recently priced US IPOs for one month (`month` as YYYY-MM). Filings and withdrawals carry no date to place on a calendar. */
+export async function fetchIpoCalendar(month: string): Promise<IpoEvent[]> {
+  const data = await get<IpoPayload>(`/ipo/calendar?date=${month}`);
+  const convert = (rows: IpoRow[] | null | undefined, status: IpoEvent['status']): IpoEvent[] =>
+    (rows ?? []).flatMap((row) => {
+      const date = usDate(status === 'upcoming' ? row.expectedPriceDate : row.pricedDate);
+      if (!row.proposedTickerSymbol || !date) return [];
+      const [low, high] = String(row.proposedSharePrice ?? '').split('-').map((part) => parseLooseNumber(part));
+      return [{
+        symbol: normalizeSymbol(row.proposedTickerSymbol),
+        name: cleanSecurityName(row.companyName ?? ''),
+        date,
+        status,
+        exchange: row.proposedExchange?.trim() || null,
+        priceLow: low ?? null,
+        priceHigh: high ?? low ?? null,
+        shares: parseLooseNumber(row.sharesOffered ?? null),
+        amount: parseLooseNumber(row.dollarValueOfSharesOffered ?? null),
+      }];
+    });
+  return [...convert(data?.upcoming?.upcomingTable?.rows, 'upcoming'), ...convert(data?.priced?.rows, 'priced')];
+}
+
+export type NextEarnings = {
+  date: string;
+  time: 'pre' | 'post' | 'unknown';
+  /** "Oct 2026": the quarter the report covers. */
+  fiscalQuarter: string | null;
+  epsForecast: number | null;
+  estimates: number | null;
+  lastYearEps: number | null;
+};
+
+/**
+ * The next scheduled report for one company, or null when the provider has no date yet (it only knows
+ * dates a few weeks out, and nothing for some large names). The sentence it returns is parsed, since
+ * there is no structured form.
+ */
+export async function fetchNextEarnings(symbol: string): Promise<NextEarnings | null> {
+  const data = await get<{ reportText?: string; announcement?: string }>(`/analyst/${apiSymbol(symbol)}/earnings-date`);
+  const text = data?.reportText ?? '';
+  const date = usDate(/report earnings on\s+(\d{1,2}\/\d{1,2}\/\d{4})/i.exec(text)?.[1]);
+  if (!date) return null;
+  const number = (pattern: RegExp) => parseLooseNumber(pattern.exec(text)?.[1] ?? null);
+  return {
+    date,
+    time: /before market open/i.test(text) ? 'pre' : /after market close/i.test(text) ? 'post' : 'unknown',
+    fiscalQuarter: /quarter ending\s+([A-Za-z]{3,9}\s+\d{4})/i.exec(text)?.[1] ?? null,
+    epsForecast: number(/EPS forecast for the quarter is\s+(-?\$?-?\d[\d,]*(?:\.\d+)?)/i),
+    estimates: number(/based on\s+(\d+)\s+analysts/i),
+    lastYearEps: number(/same quarter last year was\s+(-?\$?-?\d[\d,]*(?:\.\d+)?)/i),
+  };
+}
+
 export type EconomicEvent = { date: string; time: string | null; country: string; name: string; actual: string | null; consensus: string | null; previous: string | null };
 
 type EconomicRow = { gmt?: string; country?: string; eventName?: string; actual?: string; consensus?: string; previous?: string };

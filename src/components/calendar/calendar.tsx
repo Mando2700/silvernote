@@ -18,7 +18,8 @@ import { cn } from '@/lib/utils';
 type Earnings = { symbol: string; name: string; date: string; time: 'pre' | 'post' | 'unknown'; marketCap: number | null; fiscalQuarter: string | null; epsForecast: number | null; estimates: number | null; lastYearEps: number | null; mine: boolean };
 type Dividend = { symbol: string; name: string; exDate: string; payDate: string | null; amount: number | null; annual: number | null; mine: boolean };
 type Economic = { date: string; time: string | null; country: string; name: string; actual: string | null; consensus: string | null; previous: string | null; major: boolean };
-type Day = { date: string; earnings: Earnings[]; dividends: Dividend[]; economy: Economic[] };
+type Ipo = { symbol: string; name: string; date: string; status: 'upcoming' | 'priced'; exchange: string | null; priceLow: number | null; priceHigh: number | null; shares: number | null; amount: number | null };
+type Day = { date: string; earnings: Earnings[]; dividends: Dividend[]; economy: Economic[]; ipos: Ipo[] };
 
 function isoDay(date: Date) {
   return date.toISOString().slice(0, 10);
@@ -43,6 +44,11 @@ function localTime(date: string, gmt: string | null) {
   if (!gmt || !/^\d{1,2}:\d{2}$/.test(gmt)) return gmt ?? '';
   const at = new Date(`${date}T${gmt.padStart(5, '0')}:00Z`);
   return at.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
+}
+
+function ipoPrice(row: Ipo) {
+  if (row.priceLow === null) return null;
+  return row.priceHigh !== null && row.priceHigh !== row.priceLow ? `$${row.priceLow.toFixed(2)}–${row.priceHigh.toFixed(2)}` : `$${row.priceLow.toFixed(2)}`;
 }
 
 const TIME_LABEL = { pre: 'BMO', post: 'AMC', unknown: '—' } as const;
@@ -78,9 +84,9 @@ export function Calendar() {
   const days = data?.days ?? [];
   return (
     <Page
-      kicker="Earnings · dividends · economic releases"
+      kicker="Earnings · IPOs · dividends · economic releases"
       title="Calendar"
-      description="What moves your positions this week: earnings (with consensus), ex-dividend dates and US economic releases. Names you hold or watch are highlighted."
+      description="What moves your positions this week: earnings (with consensus), IPOs, ex-dividend dates and US economic releases. Names you hold or watch are highlighted."
       actions={
         <div className="flex flex-wrap items-center gap-2">
           <IconButton label="Previous week" variant="outline" onClick={() => setWeek((value) => value - 1)}>
@@ -127,6 +133,8 @@ export function Calendar() {
           {days.map((day) => {
             const earnings = day.earnings.filter((row) => !mineOnly || row.mine);
             const dividends = day.dividends.filter((row) => !mineOnly || row.mine);
+            // A company going public can't be one of your names yet, so "only my names" hides IPOs too.
+            const ipos = mineOnly ? [] : day.ipos ?? [];
             const economy = day.economy.filter((row) => showMinor || row.major);
             const label = new Date(`${day.date}T12:00:00Z`).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', timeZone: 'UTC' });
             return (
@@ -188,14 +196,30 @@ export function Calendar() {
                       <span className="num ml-auto text-muted">{row.amount !== null ? `$${row.amount.toFixed(row.amount < 1 ? 3 : 2)}` : ''}</span>
                     </Link>
                   ))}
-                  {!earnings.length && !dividends.length ? <div className="px-1.5 py-3 text-[11.5px] text-faint">No company events{mineOnly ? ' for your names' : ''}.</div> : null}
+                  {ipos.length ? <div className="kicker mt-2 mb-1 px-1.5 text-[9.5px]">IPOs</div> : null}
+                  {ipos.map((row) => (
+                    <div key={`i-${row.symbol}`} className="flex items-center gap-2 rounded-sm px-1.5 py-1.5 hover:bg-white/[0.03]" title={`${row.name}${row.exchange ? ` · ${row.exchange}` : ''}`}>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-1.5">
+                          <span className="font-mono text-[11.5px] font-semibold text-ink">{row.symbol}</span>
+                          <Badge tone={row.status === 'priced' ? 'neutral' : 'brand'}>{row.status === 'priced' ? 'Priced' : 'Expected'}</Badge>
+                        </div>
+                        <div className="truncate text-[10.5px] text-muted">{row.name}</div>
+                      </div>
+                      <div className="num shrink-0 text-right text-[10.5px] text-muted">
+                        <div>{ipoPrice(row) ?? '—'}</div>
+                        {row.amount ? <div>${compactNumber(row.amount)}</div> : null}
+                      </div>
+                    </div>
+                  ))}
+                  {!earnings.length && !dividends.length && !ipos.length ? <div className="px-1.5 py-3 text-[11.5px] text-faint">No company events{mineOnly ? ' for your names' : ''}.</div> : null}
                 </div>
               </Panel>
             );
           })}
         </div>
       )}
-      <p className="text-[11px] text-faint">Source: Nasdaq earnings, dividend and economic calendars. BMO = before market open, AMC = after market close. Economic release times shown in your time zone.</p>
+      <p className="text-[11px] text-faint">Source: Nasdaq earnings, IPO, dividend and economic calendars. IPO dates are expected pricing days and can slip. BMO = before market open, AMC = after market close. Economic release times shown in your time zone.</p>
       <BriefModal brief={brief} onClose={() => setBrief(null)} />
     </Page>
   );

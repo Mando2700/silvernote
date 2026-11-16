@@ -17,6 +17,8 @@ export type CalendarDay = {
   earnings: Array<nasdaq.EarningsEvent & { mine: boolean }>;
   dividends: Array<nasdaq.DividendEvent & { mine: boolean }>;
   economy: Array<nasdaq.EconomicEvent & { major: boolean }>;
+  /** IPOs expected to price, or that priced, on this day, biggest deals first. */
+  ipos: nasdaq.IpoEvent[];
 };
 
 function addDays(date: string, days: number) {
@@ -43,12 +45,18 @@ function dividendsOn(date: string) {
   return cached(`cal:dividends:${date}`, ttlFor(date), () => nasdaq.fetchDividendCalendar(date)).catch(() => [] as nasdaq.DividendEvent[]);
 }
 
+/** A month of IPOs (`month` as YYYY-MM). A finished month is final; the current and later ones keep changing. */
+function iposIn(month: string) {
+  const finished = month < todayInNewYork().slice(0, 7);
+  return cached(`cal:ipo:${month}`, finished ? 30 * 86_400 : 3 * 3600, () => nasdaq.fetchIpoCalendar(month)).catch(() => [] as nasdaq.IpoEvent[]);
+}
+
 export function economyOn(date: string) {
   return cached(`cal:economy-v2:${date}`, date < todayInNewYork() ? 30 * 86_400 : 3600, () => nasdaq.fetchEconomicCalendar(date)).catch(() => [] as nasdaq.EconomicEvent[]);
 }
 
 /**
- * Earnings, ex-dividend dates and US economic releases between `from` and `to` (inclusive, at most
+ * Earnings, ex-dividend dates, IPOs and US economic releases between `from` and `to` (inclusive, at most
  * 31 days). `mine` marks the companies the investor holds or watches; for everyone else only
  * companies above `minMarketCap` are kept so a day isn't hundreds of micro caps.
  */
@@ -56,6 +64,8 @@ export async function getCalendar(userId: string, from: string, to: string, minM
   const dates: string[] = [];
   for (let date = from; date <= to && dates.length < 31; date = addDays(date, 1)) if (!isWeekend(date)) dates.push(date);
   const mine = new Set((await getUserSymbols(userId, 200)).map((row) => row.symbol));
+  const months = [...new Set(dates.map((date) => date.slice(0, 7)))];
+  const ipos = (await Promise.all(months.map(iposIn))).flat();
   const days = await Promise.all(
     dates.map(async (date) => {
       const [earnings, dividends, economy] = await Promise.all([earningsOn(date), dividendsOn(date), economyOn(date)]);
@@ -80,6 +90,7 @@ export async function getCalendar(userId: string, from: string, to: string, minM
     economy: day.economy
       .filter((row) => row.country === 'United States')
       .map((row) => ({ ...row, major: isMajorRelease(row.name) })),
+    ipos: ipos.filter((row) => row.date === day.date).sort((a, b) => (b.amount ?? 0) - (a.amount ?? 0)),
   }));
 }
 
@@ -95,4 +106,29 @@ export async function upcomingEarnings(symbols: string[], days = 10) {
     for (const row of await earningsOn(date)) if (wanted.has(row.symbol) && !found.has(row.symbol)) found.set(row.symbol, row);
   }
   return found;
+}
+
+export type NextEarningsInfo = nasdaq.NextEarnings & {
+  /** True when the company hasn't announced a date and this is last year's report date carried forward. */
+  estimated: boolean;
+};
+
+/**
+ * When a company reports next. Nasdaq knows the date only a few weeks ahead (and nothing for some large
+ * names); beyond that the report date of the same quarter a year ago, moved forward 52 weeks to land on
+ * the same weekday, is a close guess, so it is returned marked `estimated`.
+ */
+export function getNextEarnings(symbol: string): Promise<NextEarningsInfo | null> {
+  const upper = symbol.toUpperCase();
+  return cached<NextEarningsInfo | null>(`next-earnings:${upper}`, 6 * 3600, async () => {
+    const today = todayInNewYork();
+    const announced = await nasdaq.fetchNextEarnings(upper).catch(() => null);
+    if (announced && announced.date >= today) return { ...announced, estimated: false };
+    const past = await nasdaq.fetchEarningsSurprises(upper).catch(() => []);
+    const projected = past
+      .map((row) => addDays(row.reportedOn, 364))
+      .filter((date) => date >= today)
+      .sort()[0];
+    return projected ? { date: projected, time: 'unknown', fiscalQuarter: null, epsForecast: null, estimates: null, lastYearEps: null, estimated: true } : null;
+  }).catch(() => null);
 }

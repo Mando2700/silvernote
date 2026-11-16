@@ -67,6 +67,47 @@ function n(value: unknown) {
   return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }
 
+type NextEarningsPayload = { earnings: { date: string; time: 'pre' | 'post' | 'unknown'; fiscalQuarter: string | null; epsForecast: number | null; estimates: number | null; lastYearEps: number | null; estimated: boolean } | null };
+
+/** Days from today (in the viewer's calendar) to a YYYY-MM-DD date. */
+function daysUntil(date: string) {
+  const now = new Date();
+  const today = Date.UTC(now.getFullYear(), now.getMonth(), now.getDate());
+  return Math.round((Date.parse(`${date}T00:00:00Z`) - today) / 86_400_000);
+}
+
+function NextEarnings({ symbol }: { symbol: string }) {
+  const { data, isLoading } = useSWR<NextEarningsPayload>(`/api/company/${symbol}/earnings`, { revalidateOnFocus: false });
+  const next = data?.earnings;
+  if (isLoading) return <Skeleton className="mx-4 mb-4 h-10" />;
+  const days = next ? daysUntil(next.date) : null;
+  const when = days === null ? null : days === 0 ? 'today' : days === 1 ? 'tomorrow' : `in ${days} days`;
+  const details = next
+    ? [
+        next.time === 'pre' ? 'Before open' : next.time === 'post' ? 'After close' : null,
+        next.fiscalQuarter ? `Qtr ending ${next.fiscalQuarter}` : null,
+        next.epsForecast !== null ? `EPS est $${next.epsForecast.toFixed(2)}${next.estimates ? ` (${next.estimates} analysts)` : ''}` : null,
+      ].filter(Boolean)
+    : [];
+  return (
+    <div className="border-t border-line px-4 py-3">
+      <div className="flex items-baseline justify-between gap-3">
+        <span className="text-[11px] text-muted">Next earnings{next?.estimated ? ' (estimated)' : ''}</span>
+        {next ? (
+          <span className="num text-[14px] font-medium text-ink">
+            {new Date(`${next.date}T12:00:00Z`).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' })}
+            <span className="ml-1.5 text-[11.5px] font-normal text-muted">{when}</span>
+          </span>
+        ) : (
+          <span className="text-[12.5px] text-faint">Not scheduled yet</span>
+        )}
+      </div>
+      {details.length ? <div className="mt-1 text-right text-[11px] text-muted">{details.join(' · ')}</div> : null}
+      {next?.estimated ? <div className="mt-1 text-right text-[10.5px] text-faint">The company hasn’t announced a date; this is last year’s report date carried forward.</div> : null}
+    </div>
+  );
+}
+
 function KeyStats({ data, profileLoading }: { data: CompanyPayload | null; profileLoading: boolean }) {
   if (!data) return <Skeleton className="h-[236px] w-full" />;
   const f = data.fundamentals ?? {};
@@ -111,6 +152,7 @@ function KeyStats({ data, profileLoading }: { data: CompanyPayload | null; profi
           </div>
         ))}
       </div>
+      <NextEarnings symbol={data.symbol} />
       {position !== null ? (
         <div className="border-t border-line px-4 py-3">
           <div className="mb-1.5 flex justify-between text-[11px] text-muted">
