@@ -14,7 +14,8 @@ import { Badge, EmptyState, Field, Input, Panel, PanelHeader, Select, Skeleton }
 import { StatTile } from '@/components/ui/stat-tile';
 import { localToday } from '@/lib/dates';
 import { api } from '@/lib/client';
-import { fixed, money, pct, price, shortDate } from '@/lib/format';
+import { fixed, pct, price, shortDate } from '@/lib/format';
+import { useMoney } from '@/lib/privacy';
 
 type Kind = 'treasury' | 'agency' | 'corporate' | 'municipal' | 'cd' | 'other';
 type Bond = {
@@ -223,6 +224,7 @@ export function BondsPanel({ portfolioId, onChanged }: { portfolioId: string; on
   const { data, isLoading, mutate } = useSWR<BondBook>(`/api/portfolios/${portfolioId}/bonds`);
   const [editing, setEditing] = useState<{ id: string | null; form: FormState } | null>(null);
   const [saving, setSaving] = useState(false);
+  const { money } = useMoney();
 
   const save = async () => {
     if (!editing) return;
@@ -296,7 +298,7 @@ export function BondsPanel({ portfolioId, onChanged }: { portfolioId: string; on
     <div className="flex flex-col gap-4">
       <div className="grid grid-cols-2 gap-2 md:grid-cols-6">
         <StatTile label="Market value" value={money(summary.marketValue, { digits: 0 })} sub={<span className="text-muted">Face {money(summary.face, { digits: 0 })} · accrued {money(summary.accrued, { digits: 0 })}</span>} />
-        <StatTile label="Unrealized" value={<Delta value={summary.unrealized} kind="money" digits={0} className="text-[17px]" />} sub={<span className="text-muted">Clean price vs. price paid</span>} />
+        <StatTile label="Unrealized" value={<Delta value={summary.unrealized} kind="money" sensitive digits={0} className="text-[17px]" />} sub={<span className="text-muted">Clean price vs. price paid</span>} />
         <StatTile label="Yield to maturity" value={pct(summary.ytm, 2)} sub={<span className="text-muted">Value-weighted</span>} hint="Return if held to maturity with coupons reinvested at the same yield" />
         <StatTile label="Modified duration" value={fixed(summary.modifiedDuration, 2)} sub={<span className="text-muted">Avg maturity {fixed(summary.yearsToMaturity, 1)}y</span>} hint="% price change for a 1-point change in yields" />
         <StatTile label="DV01" value={money(summary.dv01, { digits: 0 })} sub={<span className="text-muted">per 1 bp move</span>} hint="Dollar change in value when yields move one basis point" />
@@ -367,7 +369,7 @@ export function BondsPanel({ portfolioId, onChanged }: { portfolioId: string; on
                   <td className="num px-3 py-2 text-ink-2">{fixed(bond.modifiedDuration, 2)}</td>
                   <td className="num px-3 py-2 text-ink">{money(bond.marketValue, { digits: 0 })}</td>
                   <td className="px-3 py-2">
-                    <Delta value={bond.unrealized} kind="money" digits={0} className="justify-end text-[12px]" />
+                    <Delta value={bond.unrealized} kind="money" sensitive digits={0} className="justify-end text-[12px]" />
                   </td>
                   <td className="num px-3 py-2 text-ink-2">
                     {bond.nextPayment ? (
@@ -459,7 +461,7 @@ export function BondsPanel({ portfolioId, onChanged }: { portfolioId: string; on
                       <td className="max-w-48 truncate px-4 py-2 text-left text-ink-2">{bond.name}</td>
                       {bond.shocks.map((shock) => (
                         <td key={shock.bps} className="px-3 py-2">
-                          <Delta value={shock.change} kind="money" digits={0} className="justify-end text-[12px]" />
+                          <Delta value={shock.change} kind="money" sensitive digits={0} className="justify-end text-[12px]" />
                         </td>
                       ))}
                     </tr>
@@ -468,7 +470,7 @@ export function BondsPanel({ portfolioId, onChanged }: { portfolioId: string; on
                   <td className="px-4 py-2 text-left text-ink">All bonds</td>
                   {summary.shocks.map((shock) => (
                     <td key={shock.bps} className="px-3 py-2">
-                      <Delta value={shock.change} kind="money" digits={0} className="justify-end text-[12.5px]" />
+                      <Delta value={shock.change} kind="money" sensitive digits={0} className="justify-end text-[12.5px]" />
                       <div className="num text-[10.5px] text-muted">{pct(summary.marketValue ? shock.change / summary.marketValue : null, 1)}</div>
                     </td>
                   ))}

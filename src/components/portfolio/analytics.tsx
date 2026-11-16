@@ -9,7 +9,8 @@ import { Button } from '@/components/ui/button';
 import { Panel, PanelHeader, Segmented, Skeleton, Stat } from '@/components/ui/primitives';
 import { cite, SOURCES } from '@/lib/citation';
 import { exportXlsx } from '@/lib/export-client';
-import { money, pct } from '@/lib/format';
+import { pct } from '@/lib/format';
+import { useMoney } from '@/lib/privacy';
 import { SERIES_COLORS } from '@/lib/theme';
 import { cn } from '@/lib/utils';
 
@@ -158,6 +159,7 @@ function AttributionPanel({ portfolioId }: { portfolioId: string }) {
 }
 
 function DividendPanel({ portfolioId }: { portfolioId: string }) {
+  const { money, hidden } = useMoney();
   const { data } = useSWR<Dividends>(`/api/portfolios/${portfolioId}/dividends`);
   if (!data) return <Skeleton className="h-56" />;
   const payers = data.rows.filter((row) => row.annualIncome > 0);
@@ -170,7 +172,11 @@ function DividendPanel({ portfolioId }: { portfolioId: string }) {
         <Stat label="Payers" value={`${payers.length} of ${data.rows.length}`} />
       </div>
       <div className="grid gap-4 px-4 pb-4 lg:grid-cols-2">
-        <ColumnChart categories={data.months.map((month) => new Date(`${month.month}-15`).toLocaleDateString('en-US', { month: 'short' }))} series={[{ label: 'Estimated income', values: data.months.map((month) => month.income), color: SERIES_COLORS[1] }]} format={(value) => `$${value.toFixed(0)}`} height={180} />
+        {hidden ? (
+          <div className="grid h-[180px] place-items-center rounded-sm border border-line text-[12px] text-muted">Dollar amounts are hidden</div>
+        ) : (
+          <ColumnChart categories={data.months.map((month) => new Date(`${month.month}-15`).toLocaleDateString('en-US', { month: 'short' }))} series={[{ label: 'Estimated income', values: data.months.map((month) => month.income), color: SERIES_COLORS[1] }]} format={(value) => `$${value.toFixed(0)}`} height={180} />
+        )}
         <div className="max-h-[200px] overflow-auto">
           {payers.map((row) => (
             <div key={row.symbol} className="flex items-center justify-between border-t border-line py-1.5 text-[12px]">

@@ -5,12 +5,13 @@ import { motion, useReducedMotion } from 'motion/react';
 import { useState } from 'react';
 
 import { useWidth } from '@/components/charts/svg';
-import { money } from '@/lib/format';
+import { useMoney } from '@/lib/privacy';
 
 type Bands = Record<'p5' | 'p10' | 'p25' | 'p50' | 'p75' | 'p90' | 'p95', number[]>;
 
 /** Percentile fan for Monte Carlo paths: 5–95 and 25–75 bands, median line, contributions reference. */
 export function FanChart({ bands, contributions, height = 300 }: { bands: Bands; contributions: number[]; height?: number }) {
+  const { money } = useMoney();
   const [ref, width] = useWidth<HTMLDivElement>();
   const [hover, setHover] = useState<number | null>(null);
   const reduced = useReducedMotion();

@@ -24,7 +24,8 @@ import { useExtendedQuotes } from '@/lib/extended-client';
 import { useLivePrices } from '@/lib/live-client';
 import { type LiveDetail, withLivePrices } from '@/lib/portfolio-live';
 import { useBaseCurrency } from '@/lib/fx-client';
-import { money, price, relativeTime, signedPct } from '@/lib/format';
+import { price, relativeTime, signedPct } from '@/lib/format';
+import { MASK, useMoney } from '@/lib/privacy';
 import { regularSession, sessionHours } from '@/lib/session';
 import { SERIES_COLORS } from '@/lib/theme';
 import { cn } from '@/lib/utils';
@@ -73,6 +74,7 @@ function isoIn(days: number) {
 /** Portfolio at a glance, with the total also in the base currency when it isn't USD. */
 function PortfolioCard({ data }: { data: DashboardData | undefined }) {
   const base = useBaseCurrency();
+  const { money, hidden } = useMoney();
   const id = data?.portfolio?.id;
   // Same source and live revaluation as the portfolio page, so both show the same total.
   const { data: saved } = useSWR<LiveDetail>(id ? `/api/portfolios/${id}` : null, { refreshInterval: 60_000 });
@@ -98,16 +100,16 @@ function PortfolioCard({ data }: { data: DashboardData | undefined }) {
             <div className="text-[34px] leading-tight font-semibold tracking-[-0.03em] text-ink">
               <AnimatedNumber value={portfolio.totalValue} format={(value) => money(value, { digits: 0 })} />
             </div>
-            {base.rate ? <div className="num text-[12px] text-muted">≈ {base.format(portfolio.totalValue)}</div> : null}
+            {base.rate ? <div className="num text-[12px] text-muted">≈ {hidden ? MASK : base.format(portfolio.totalValue)}</div> : null}
             <div className="mt-1 flex flex-wrap gap-x-4 text-[12.5px]">
               <span className="flex items-center gap-1.5">
                 <span className="text-muted">Today</span>
-                <Delta value={portfolio.dayChange} kind="money" digits={0} />
+                <Delta value={portfolio.dayChange} kind="money" digits={0} sensitive />
                 <Delta value={portfolio.dayChangePct} className="text-[11.5px]" />
               </span>
               <span className="flex items-center gap-1.5">
                 <span className="text-muted">Unrealized</span>
-                <Delta value={portfolio.unrealized} kind="money" digits={0} />
+                <Delta value={portfolio.unrealized} kind="money" digits={0} sensitive />
               </span>
             </div>
           </Link>

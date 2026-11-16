@@ -33,7 +33,8 @@ import { TickerSearch } from '@/components/ui/ticker-search';
 import { localToday } from '@/lib/dates';
 import { api, revalidate } from '@/lib/client';
 import { useLivePrices } from '@/lib/live-client';
-import { fixed, money, pct, price, shortDate, signedPct } from '@/lib/format';
+import { fixed, pct, price, shortDate, signedPct } from '@/lib/format';
+import { MASK, useMoney, useQuantity } from '@/lib/privacy';
 import { cn } from '@/lib/utils';
 import { useSearchParams } from '@/components/shell/keep-alive';
 import { withLivePrices } from '@/lib/portfolio-live';
@@ -106,6 +107,8 @@ const DEFAULT_COLUMN_ORDER = Object.keys(HOLDING_COLUMNS) as HoldingSortKey[];
 const COLUMN_ORDER_KEY = 'portfolio:holding-columns';
 
 function HoldingCell({ column, holding, extendedSession, showExtended }: { column: HoldingSortKey; holding: Holding; extendedSession: 'pre' | 'post' | null; showExtended: boolean }) {
+  const { money } = useMoney();
+  const quantity = useQuantity();
   switch (column) {
     case 'symbol':
       return (
@@ -120,7 +123,7 @@ function HoldingCell({ column, holding, extendedSession, showExtended }: { colum
         </td>
       );
     case 'shares':
-      return <td className="num px-3 py-2 text-right text-ink-2">{holding.shares.toLocaleString('en-US', { maximumFractionDigits: 4 })}</td>;
+      return <td className="num px-3 py-2 text-right text-ink-2">{quantity(holding.shares)}</td>;
     case 'avgCost':
       return <td className="num px-3 py-2 text-right text-ink-2">{price(holding.avgCost)}</td>;
     case 'price':
@@ -179,7 +182,7 @@ function HoldingCell({ column, holding, extendedSession, showExtended }: { colum
       return (
         <td className="px-3 py-2 text-right">
           <div className="flex flex-col items-end">
-            <Delta value={holding.priced === false || (showExtended && !extended) ? null : extended ? holding.extendedChange : holding.dayChange} kind="money" digits={0} className="text-[12px]" />
+            <Delta value={holding.priced === false || (showExtended && !extended) ? null : extended ? holding.extendedChange : holding.dayChange} kind="money" digits={0} sensitive className="text-[12px]" />
             <Delta value={showExtended ? (extended ? holding.extendedChangePct : null) : holding.dayChangePct} alreadyPercent className="text-[10.5px]" />
           </div>
         </td>
@@ -188,7 +191,7 @@ function HoldingCell({ column, holding, extendedSession, showExtended }: { colum
     case 'unrealized':
       return (
         <td className="num px-3 py-2 text-right">
-          <Delta value={holding.unrealized} kind="money" digits={0} className="text-[12px]" />
+          <Delta value={holding.unrealized} kind="money" digits={0} sensitive className="text-[12px]" />
         </td>
       );
     case 'unrealizedPct':
@@ -411,6 +414,8 @@ export function PortfolioView() {
   const params = useSearchParams();
   const { askAssistant, setAssistantContext, prefs } = useShell();
   const base = useBaseCurrency();
+  const { money, hidden } = useMoney();
+  const quantity = useQuantity();
   const { data: portfolios, mutate: refreshList, isLoading } = useSWR<PortfolioListItem[]>('/api/portfolios');
   const selectedId = params.get('id') ?? portfolios?.[0]?.id ?? null;
   // Extended-hours quotes load a few at a time on a cold cache: re-poll quickly while holdings still lack one, a few times only (funds without extended trading never get one).
@@ -634,16 +639,16 @@ export function PortfolioView() {
             <div className="mt-2 text-[48px] leading-none font-semibold tracking-[-0.035em] text-ink">
               <RollingNumber value={displayTotal} format={(value) => money(value, { digits: 0 })} />
             </div>
-            {base.rate && summary ? <div className="num mt-1 text-[13px] text-muted">≈ {base.format(displayTotal ?? summary.totalValue)}</div> : null}
+            {base.rate && summary ? <div className="num mt-1 text-[13px] text-muted">≈ {hidden ? MASK : base.format(displayTotal ?? summary.totalValue)}</div> : null}
             <div className="mt-2 flex items-center gap-2 text-[13px]">
               <span className="text-muted">{showExtended && extendedSession ? SESSION_LABEL[extendedSession] : 'Today'}</span>
-              <Delta value={showExtended ? summary?.extended?.change : summary?.dayChange} kind="money" digits={0} />
+              <Delta value={showExtended ? summary?.extended?.change : summary?.dayChange} kind="money" digits={0} sensitive />
               <Delta value={showExtended ? summary?.extended?.changePct : summary?.dayChangePct} className="text-[12px]" />
             </div>
           </div>
           <div className="grid grid-cols-2 gap-2 self-end md:grid-cols-6">
-            <StatTile label="Unrealized P&L" value={<Delta value={summary?.unrealized} kind="money" digits={0} className="text-[17px]" />} sub={<Delta value={summary?.unrealizedPct} className="text-[11.5px]" />} />
-            <StatTile label="Realized P&L" value={<Delta value={summary?.realized} kind="money" digits={0} className="text-[17px]" />} />
+            <StatTile label="Unrealized P&L" value={<Delta value={summary?.unrealized} kind="money" digits={0} sensitive className="text-[17px]" />} sub={<Delta value={summary?.unrealizedPct} className="text-[11.5px]" />} />
+            <StatTile label="Realized P&L" value={<Delta value={summary?.realized} kind="money" digits={0} sensitive className="text-[17px]" />} />
             <StatTile label="Cost basis" value={money(summary?.costBasis, { digits: 0 })} />
             <StatTile label="Bonds" value={money(summary?.fixedIncome, { digits: 0 })} sub={summary?.bonds ? <span className="text-muted">{summary.bonds} held</span> : undefined} />
             <StatTile label="Cash" value={money(summary?.cash, { digits: 0 })} />
@@ -773,7 +778,7 @@ export function PortfolioView() {
               <Panel>
                 <PanelHeader kicker="Sized by market value · colored by today" title="Holdings map" />
                 <div className="px-4 pb-4">
-                  <MarketHeatmap items={heatmapItems} height={320} />
+                  <MarketHeatmap items={heatmapItems} height={320} hideValues={hidden} />
                 </div>
               </Panel>
               <Panel>
@@ -851,17 +856,17 @@ export function PortfolioView() {
                       </Link>
                     </td>
                     <td className="num px-3 py-2 text-right text-ink-2">
-                      {tx.quantity.toLocaleString('en-US', { maximumFractionDigits: 4 })}
+                      {quantity(tx.quantity)}
                       {tx.split_factor && tx.split_factor !== 1 ? (
                         <div className="text-[10.5px] text-faint" title="Restated in today's shares for stock splits since the trade">
-                          {(tx.quantity / tx.split_factor).toLocaleString('en-US', { maximumFractionDigits: 4 })} before {splitLabel(tx.split_factor)} split
+                          {quantity(tx.quantity / tx.split_factor)} before {splitLabel(tx.split_factor)} split
                         </div>
                       ) : null}
                       {tx.kind === 'opening' ? <div className="text-[10.5px] text-faint">Opening balance</div> : null}
                       {tx.kind === 'removal' ? <div className="text-[10.5px] text-faint">Balancing removal</div> : null}
                     </td>
                     <td className="num px-3 py-2 text-right text-ink-2">{price(tx.price)}</td>
-                    <td className="num px-3 py-2 text-right text-muted">{tx.fees ? price(tx.fees) : '—'}</td>
+                    <td className="num px-3 py-2 text-right text-muted">{tx.fees ? (hidden ? MASK : price(tx.fees)) : '—'}</td>
                     <td className="num px-3 py-2 text-right text-ink">{money(tx.quantity * tx.price + (tx.side === 'buy' ? tx.fees : -tx.fees), { digits: 2 })}</td>
                     <td className="px-3 py-2 text-right">
                       {tx.id.startsWith('balance:') ? null : (

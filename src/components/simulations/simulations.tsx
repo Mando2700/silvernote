@@ -19,6 +19,7 @@ import { TickerSearch } from '@/components/ui/ticker-search';
 import { localToday } from '@/lib/dates';
 import { api } from '@/lib/client';
 import { fixed, money, pct, shortDate, signedPct } from '@/lib/format';
+import { useMoney } from '@/lib/privacy';
 import { cn } from '@/lib/utils';
 import type { MonteCarloInput, MonteCarloResult } from '@/workers/montecarlo.worker';
 
@@ -84,6 +85,7 @@ type WhatIfPurchase = {
 type WhatIfResult = { symbol: string; name: string; amount: number; purchase: WhatIfPurchase | null; baseline: WhatIfSide; proposed: WhatIfSide };
 
 function MonteCarlo({ portfolioId }: { portfolioId: string }) {
+  const { money, hidden } = useMoney();
   // Run once automatically when the model first loads, so the chart is never empty.
   const autoRan = useRef(false);
   const { data: model, isLoading } = useSWR<Model>(`/api/portfolios/${portfolioId}/model`, {
@@ -148,7 +150,7 @@ function MonteCarlo({ portfolioId }: { portfolioId: string }) {
       if (value < low || value > high) continue;
       counts[Math.min(bins - 1, Math.floor((value - low) / width))] += 1;
     }
-    return { categories: counts.map((_, index) => money(low + width * (index + 0.5), { compact: true })), counts };
+    return { categories: counts.map((_, index) => (hidden ? '' : money(low + width * (index + 0.5), { compact: true }))), counts };
   })();
 
   return (
@@ -298,6 +300,7 @@ function MonteCarlo({ portfolioId }: { portfolioId: string }) {
 }
 
 function StressTests({ portfolioId }: { portfolioId: string }) {
+  const { money } = useMoney();
   const { data, isLoading } = useSWR<{ totalValue: number; scenarios: Scenario[] }>(`/api/portfolios/${portfolioId}/stress`);
   const [active, setActive] = useState<string | null>(null);
   if (isLoading && !data) return <Skeleton className="h-96" />;

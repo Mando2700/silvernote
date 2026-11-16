@@ -7,6 +7,7 @@ import { toast, Toaster } from 'sonner';
 import useSWR, { SWRConfig } from 'swr';
 
 import { api, ApiError, fetcher } from '@/lib/client';
+import { applySavedPrivacy } from '@/lib/privacy';
 import { MARKET_PALETTES } from '@/lib/theme';
 
 export type Preferences = {
@@ -96,6 +97,8 @@ function ShellProvider({ children }: { children: ReactNode }) {
     root.dataset.motion = prefs.motion;
     root.dataset.density = prefs.density;
   }, [prefs.marketColors, prefs.motion, prefs.density]);
+
+  useEffect(() => applySavedPrivacy(), []);
 
   // Close the drawer whenever the route changes. Adjusting state during render keeps it in step with the URL.
   const [navPath, setNavPath] = useState(pathname);

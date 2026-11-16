@@ -9,7 +9,8 @@ import { Button, IconButton } from '@/components/ui/button';
 import { Field, Input, Panel, PanelHeader, Skeleton, Stat, Switch } from '@/components/ui/primitives';
 import { TickerSearch } from '@/components/ui/ticker-search';
 import { api } from '@/lib/client';
-import { money, pct, price } from '@/lib/format';
+import { pct, price } from '@/lib/format';
+import { useMoney, useQuantity } from '@/lib/privacy';
 import { cn } from '@/lib/utils';
 
 type Plan = {
@@ -23,6 +24,8 @@ type Plan = {
 
 /** Target weights per holding and the trades that get there (nothing is traded; it's a plan). */
 export function RebalancePanel({ portfolioId, holdings }: { portfolioId: string; holdings: Array<{ symbol: string; weight: number }> }) {
+  const { money } = useMoney();
+  const quantity = useQuantity();
   const { data: stored, mutate } = useSWR<{ targets: Record<string, number> }>(`/api/portfolios/${portfolioId}/targets`);
   const [draft, setDraft] = useState<Record<string, string> | null>(null);
   const [addCash, setAddCash] = useState('');
@@ -121,7 +124,7 @@ export function RebalancePanel({ portfolioId, holdings }: { portfolioId: string;
                       </td>
                       <td className="num px-2 py-1.5 text-right">{price(trade.price)}</td>
                       <td className={cn('num px-2 py-1.5 text-right', trade.shares > 0 ? 'text-gain' : trade.shares < 0 ? 'text-loss' : 'text-muted')}>
-                        {trade.shares ? `${trade.shares > 0 ? 'Buy' : 'Sell'} ${Math.abs(trade.shares).toLocaleString('en-US', { maximumFractionDigits: 4 })}` : 'Hold'}
+                        {trade.shares ? `${trade.shares > 0 ? 'Buy' : 'Sell'} ${quantity(Math.abs(trade.shares))}` : 'Hold'}
                       </td>
                       <td className="num px-4 py-1.5 text-right">{trade.tradeValue ? money(trade.tradeValue, { digits: 0 }) : '—'}</td>
                     </tr>

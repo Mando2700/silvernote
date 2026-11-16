@@ -14,6 +14,7 @@ import { FullscreenOverlay } from '@/components/ui/fullscreen-overlay';
 import { Panel, Segmented, Skeleton } from '@/components/ui/primitives';
 import { moneyWeightedPath, replicateInIndex } from '@/lib/finance/performance';
 import { money, signedMoney, signedPct } from '@/lib/format';
+import { usePrivacy } from '@/lib/privacy';
 import { regularSession, sessionHours } from '@/lib/session';
 import { SERIES_COLORS } from '@/lib/theme';
 import { cn } from '@/lib/utils';
@@ -101,7 +102,10 @@ export function PerformanceChart({ portfolioId, live }: { portfolioId: string; l
   const hasIntraday = (intraday?.points.length ?? 0) > 2;
   const ranges = RANGES.filter((item) => (item.value === '1D' ? hasIntraday || !intraday : item.value === 'ALL' || cutoff(item.value, last) > first - 3 * DAY));
   const range = ranges.some((item) => item.value === picked) ? picked : 'ALL';
-  const [mode, setMode] = useState<Mode>('return');
+  const { hidden } = usePrivacy();
+  const [pickedMode, setMode] = useState<Mode>('return');
+  // Dollar values are the one thing this chart can't show in privacy mode, so it stays on returns.
+  const mode: Mode = hidden ? 'return' : pickedMode;
   const [compare, setCompare] = useState<Compare>('both');
   const [pickedBasis, setBasis] = useState<Basis>('twr');
   const [fullscreen, setFullscreen] = useState(false);
@@ -157,10 +161,7 @@ export function PerformanceChart({ portfolioId, live }: { portfolioId: string; l
             size="xs"
             value={mode}
             onChange={setMode}
-            options={[
-              { value: 'value', label: 'Value' },
-              { value: 'return', label: 'Return vs index' },
-            ]}
+            options={[...(hidden ? [] : [{ value: 'value' as const, label: 'Value' }]), { value: 'return' as const, label: 'Return vs index' }]}
           />
           <Button
             size="sm"

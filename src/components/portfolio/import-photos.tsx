@@ -9,7 +9,8 @@ import { Button } from '@/components/ui/button';
 import { Badge, Field, Input, Segmented, Select } from '@/components/ui/primitives';
 import { localToday } from '@/lib/dates';
 import { api } from '@/lib/client';
-import { money, price } from '@/lib/format';
+import { price } from '@/lib/format';
+import { useMoney, useQuantity } from '@/lib/privacy';
 import { cn } from '@/lib/utils';
 
 /** Mirrors `ImportCandidate` in src/lib/services/portfolio-import.ts. */
@@ -97,6 +98,8 @@ export function ImportPhotosModal({
   const [costMode, setCostMode] = useState<'imported' | 'today'>('imported');
   const [tradedAt, setTradedAt] = useState(() => localToday());
   const [totalValue, setTotalValue] = useState('');
+  const { money } = useMoney();
+  const formatShares = useQuantity();
   const fileInput = useRef<HTMLInputElement>(null);
 
   const reset = () => {
@@ -366,7 +369,7 @@ export function ImportPhotosModal({
                         {row.isCash ? (
                           <span className="text-faint">—</span>
                         ) : (
-                          <NumberCell value={row.quantity} placeholder={item?.quantity ? String(Number(item.quantity.toFixed(4))) : '0'} disabled={row.removed} onChange={(value) => update(row.id, { quantity: value })} label="Shares" />
+                          <NumberCell value={row.quantity} placeholder={item?.quantity ? formatShares(Number(item.quantity.toFixed(4))) : '0'} disabled={row.removed} onChange={(value) => update(row.id, { quantity: value })} label="Shares" />
                         )}
                       </td>
                       <td className="px-2 py-2 text-right">

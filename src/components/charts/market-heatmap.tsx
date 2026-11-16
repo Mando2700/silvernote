@@ -13,6 +13,7 @@ import { CompanyLogo } from '@/components/ui/company-logo';
 import { Segmented } from '@/components/ui/primitives';
 import { sectorPerformance, SECTOR_UNIVERSE_SIZE } from '@/lib/finance/sectors';
 import { compactNumber, price, signedPct } from '@/lib/format';
+import { MASK } from '@/lib/privacy';
 import { SESSION_CHANGE_LABEL } from '@/lib/session';
 import { luminance, NEUTRAL_FILL } from '@/lib/theme';
 import { cn } from '@/lib/utils';
@@ -102,7 +103,8 @@ function layout(items: HeatmapItem[], width: number, height: number, focus: stri
   return { tiles, sectors };
 }
 
-export function MarketHeatmap({ items, height = 520, className }: { items: HeatmapItem[]; height?: number; className?: string }) {
+/** `hideValues` withholds the value column of the hover card (the user's own holdings, in privacy mode). */
+export function MarketHeatmap({ items, height = 520, className, hideValues = false }: { items: HeatmapItem[]; height?: number; className?: string; hideValues?: boolean }) {
   const session = useSnapshotSession();
   const [containerRef, size] = useSize<HTMLDivElement>();
   const [mode, setMode] = useState<Mode>('change');
@@ -292,7 +294,7 @@ export function MarketHeatmap({ items, height = 520, className }: { items: Heatm
                   </div>
                   <div>
                     <div className="text-faint">Mkt value</div>
-                    <div className="num text-ink">${compactNumber(hover.tile.item.marketCap)}</div>
+                    <div className="num text-ink">{hideValues ? MASK : '$' + compactNumber(hover.tile.item.marketCap)}</div>
                   </div>
                   <div>
                     <div className="text-faint">Score</div>

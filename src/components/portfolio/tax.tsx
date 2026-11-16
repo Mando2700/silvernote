@@ -13,7 +13,8 @@ import { StatTile } from '@/components/ui/stat-tile';
 import { Button } from '@/components/ui/button';
 import { api, revalidate } from '@/lib/client';
 import { taxRulesFor } from '@/lib/finance/tax-rules';
-import { money, pct, price, shortDate } from '@/lib/format';
+import { money as formatMoney, pct, price, shortDate } from '@/lib/format';
+import { useMoney, useQuantity } from '@/lib/privacy';
 import { cn } from '@/lib/utils';
 
 type Term = 'short' | 'long';
@@ -133,6 +134,8 @@ export function TaxPanel({ portfolioId, onPortfolioChanged }: { portfolioId: str
   const { data, isLoading, mutate } = useSWR<Report>(`/api/portfolios/${portfolioId}/tax`);
   const [yearFilter, setYearFilter] = useState<string>('');
   const [lotFilter, setLotFilter] = useState<'all' | 'gains' | 'losses'>('all');
+  const { money } = useMoney();
+  const formatShares = useQuantity();
 
   const years = data?.years ?? [];
   const selectedYear = yearFilter || String(years[0]?.year ?? '');
@@ -246,7 +249,7 @@ export function TaxPanel({ portfolioId, onPortfolioChanged }: { portfolioId: str
           <div className="mx-4 mb-4 flex flex-col gap-1 rounded-sm border border-warning/25 bg-warning/10 px-3 py-2 text-[12px] text-ink-2">
             {data.unmatched.map((sale) => (
               <span key={sale.saleId}>
-                {sale.symbol} sale on {shortDate(sale.sold)} sold {sale.shares.toLocaleString('en-US', { maximumFractionDigits: 4 })} more shares than the ledger held; those shares are missing from the realized results. Add the missing buy.
+                {sale.symbol} sale on {shortDate(sale.sold)} sold {formatShares(sale.shares)} more shares than the ledger held; those shares are missing from the realized results. Add the missing buy.
               </span>
             ))}
             {data.estimatedLots ? (
@@ -262,13 +265,13 @@ export function TaxPanel({ portfolioId, onPortfolioChanged }: { portfolioId: str
       <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
         {terms ? (
           <>
-            <StatTile label={`Realized ${currentYear} · short-term`} value={<Delta value={thisYear?.netShort ?? 0} kind="money" digits={0} className="text-[17px]" />} sub={<span className="text-muted">Taxed at {pct(data.rates.shortTerm, 0)}</span>} hint={`Net of losses${rules.lossDeferralDays !== null ? `, after ${deferral.toLowerCase()} adjustments` : ''}`} />
-            <StatTile label={`Realized ${currentYear} · long-term`} value={<Delta value={thisYear?.netLong ?? 0} kind="money" digits={0} className="text-[17px]" />} sub={<span className="text-muted">Taxed at {pct(data.rates.longTerm, 0)}</span>} hint={`Held more than ${holdingPeriod(rules.longTermMonths ?? 12)}`} />
+            <StatTile label={`Realized ${currentYear} · short-term`} value={<Delta value={thisYear?.netShort ?? 0} kind="money" sensitive digits={0} className="text-[17px]" />} sub={<span className="text-muted">Taxed at {pct(data.rates.shortTerm, 0)}</span>} hint={`Net of losses${rules.lossDeferralDays !== null ? `, after ${deferral.toLowerCase()} adjustments` : ''}`} />
+            <StatTile label={`Realized ${currentYear} · long-term`} value={<Delta value={thisYear?.netLong ?? 0} kind="money" sensitive digits={0} className="text-[17px]" />} sub={<span className="text-muted">Taxed at {pct(data.rates.longTerm, 0)}</span>} hint={`Held more than ${holdingPeriod(rules.longTermMonths ?? 12)}`} />
           </>
         ) : (
           <>
-            <StatTile label={`Realized gains ${currentYear}`} value={<Delta value={(thisYear?.shortGains ?? 0) + (thisYear?.longGains ?? 0)} kind="money" digits={0} className="text-[17px]" />} sub={<span className="text-muted">Taxed at {pct(data.rates.shortTerm, 0)}</span>} />
-            <StatTile label={`Realized losses ${currentYear}`} value={<Delta value={(thisYear?.shortLosses ?? 0) + (thisYear?.longLosses ?? 0)} kind="money" digits={0} className="text-[17px]" />} sub={<span className="text-muted">Net {money(thisYear?.net ?? 0, { digits: 0 })}</span>} hint={rules.lossDeferralDays !== null ? `After ${deferral.toLowerCase()} adjustments` : undefined} />
+            <StatTile label={`Realized gains ${currentYear}`} value={<Delta value={(thisYear?.shortGains ?? 0) + (thisYear?.longGains ?? 0)} kind="money" sensitive digits={0} className="text-[17px]" />} sub={<span className="text-muted">Taxed at {pct(data.rates.shortTerm, 0)}</span>} />
+            <StatTile label={`Realized losses ${currentYear}`} value={<Delta value={(thisYear?.shortLosses ?? 0) + (thisYear?.longLosses ?? 0)} kind="money" sensitive digits={0} className="text-[17px]" />} sub={<span className="text-muted">Net {money(thisYear?.net ?? 0, { digits: 0 })}</span>} hint={rules.lossDeferralDays !== null ? `After ${deferral.toLowerCase()} adjustments` : undefined} />
           </>
         )}
         <StatTile
@@ -283,28 +286,28 @@ export function TaxPanel({ portfolioId, onPortfolioChanged }: { portfolioId: str
           }
           hint={
             rules.ordinaryOffset
-              ? `Losses net within and across terms; up to ${money(rules.ordinaryOffset, { digits: 0 })} of net loss offsets ordinary income`
+              ? `Losses net within and across terms; up to ${formatMoney(rules.ordinaryOffset, { digits: 0 })} of net loss offsets ordinary income`
               : 'Losses offset gains; unused losses carry forward'
           }
         />
         <StatTile
           label="Harvestable losses"
-          value={<Delta value={harvestTotal} kind="money" digits={0} className="text-[17px]" />}
+          value={<Delta value={harvestTotal} kind="money" sensitive digits={0} className="text-[17px]" />}
           sub={<span className="text-muted">≈ {money(harvestSavings, { digits: 0 })} tax saved</span>}
           hint="Unrealized losses in open lots, valued at your rates"
         />
       </div>
       {terms ? (
         <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
-          <StatTile label="Unrealized short-term gains" value={<Delta value={data.unrealized.shortGains} kind="money" digits={0} className="text-[17px]" />} />
-          <StatTile label="Unrealized short-term losses" value={<Delta value={data.unrealized.shortLosses} kind="money" digits={0} className="text-[17px]" />} />
-          <StatTile label="Unrealized long-term gains" value={<Delta value={data.unrealized.longGains} kind="money" digits={0} className="text-[17px]" />} />
-          <StatTile label="Unrealized long-term losses" value={<Delta value={data.unrealized.longLosses} kind="money" digits={0} className="text-[17px]" />} />
+          <StatTile label="Unrealized short-term gains" value={<Delta value={data.unrealized.shortGains} kind="money" sensitive digits={0} className="text-[17px]" />} />
+          <StatTile label="Unrealized short-term losses" value={<Delta value={data.unrealized.shortLosses} kind="money" sensitive digits={0} className="text-[17px]" />} />
+          <StatTile label="Unrealized long-term gains" value={<Delta value={data.unrealized.longGains} kind="money" sensitive digits={0} className="text-[17px]" />} />
+          <StatTile label="Unrealized long-term losses" value={<Delta value={data.unrealized.longLosses} kind="money" sensitive digits={0} className="text-[17px]" />} />
         </div>
       ) : (
         <div className="grid grid-cols-2 gap-2">
-          <StatTile label="Unrealized gains" value={<Delta value={data.unrealized.shortGains} kind="money" digits={0} className="text-[17px]" />} />
-          <StatTile label="Unrealized losses" value={<Delta value={data.unrealized.shortLosses} kind="money" digits={0} className="text-[17px]" />} />
+          <StatTile label="Unrealized gains" value={<Delta value={data.unrealized.shortGains} kind="money" sensitive digits={0} className="text-[17px]" />} />
+          <StatTile label="Unrealized losses" value={<Delta value={data.unrealized.shortLosses} kind="money" sensitive digits={0} className="text-[17px]" />} />
         </div>
       )}
 
@@ -323,7 +326,7 @@ export function TaxPanel({ portfolioId, onPortfolioChanged }: { portfolioId: str
                           {idea.symbol}
                         </Link>
                         <span className="text-[12px] text-muted">
-                          Sell {idea.shares.toLocaleString('en-US', { maximumFractionDigits: 4 })} sh
+                          Sell {formatShares(idea.shares)} sh
                           {data.method === 'average' ? '' : ` (${METHOD_LABEL[data.method]} relieves ${idea.lots.length === 1 ? 'this lot' : `these ${idea.lots.length} lots`})`}
                           {terms ? (
                             <>
@@ -340,7 +343,7 @@ export function TaxPanel({ portfolioId, onPortfolioChanged }: { portfolioId: str
                         {idea.washRiskShares > 0 && idea.sellAfter ? (
                           <span className="flex items-center gap-1 text-warning">
                             <AlertTriangle className="size-3" />
-                            {idea.washRiskShares.toLocaleString('en-US', { maximumFractionDigits: 4 })} sh bought in the last {rules.lossDeferralDays} days would defer this loss — sell after {shortDate(idea.sellAfter)}, or sell them too
+                            {formatShares(idea.washRiskShares)} sh bought in the last {rules.lossDeferralDays} days would defer this loss — sell after {shortDate(idea.sellAfter)}, or sell them too
                           </span>
                         ) : null}
                       </div>
@@ -356,7 +359,7 @@ export function TaxPanel({ portfolioId, onPortfolioChanged }: { portfolioId: str
                       ) : null}
                     </div>
                     <div className="text-right">
-                      <Delta value={idea.loss} kind="money" digits={0} className="text-[14px]" />
+                      <Delta value={idea.loss} kind="money" sensitive digits={0} className="text-[14px]" />
                       <div className="text-[11.5px] text-muted">≈ {money(idea.estimatedSavings, { digits: 0 })} saved</div>
                     </div>
                   </div>
@@ -377,7 +380,7 @@ export function TaxPanel({ portfolioId, onPortfolioChanged }: { portfolioId: str
                       <div className="flex items-center gap-2">
                         <span className="font-mono text-[12px] font-semibold text-ink">{idea.symbol}</span>
                         <span className="text-[11.5px] text-muted">
-                          {idea.quantity.toLocaleString('en-US', { maximumFractionDigits: 4 })} sh from {shortDate(idea.purchased)}
+                          {formatShares(idea.quantity)} sh from {shortDate(idea.purchased)}
                         </span>
                       </div>
                       <div className="text-[11.5px] text-muted">
@@ -385,7 +388,7 @@ export function TaxPanel({ portfolioId, onPortfolioChanged }: { portfolioId: str
                       </div>
                     </div>
                     <div className="text-right">
-                      <Delta value={idea.unrealized} kind="money" digits={0} className="text-[12.5px]" />
+                      <Delta value={idea.unrealized} kind="money" sensitive digits={0} className="text-[12.5px]" />
                       <div className="text-[11.5px] text-gain">wait saves {money(idea.savings, { digits: 0 })}</div>
                     </div>
                   </div>
@@ -452,11 +455,11 @@ export function TaxPanel({ portfolioId, onPortfolioChanged }: { portfolioId: str
                         </span>
                       ) : null}
                     </td>
-                    <td className="num px-3 py-2 text-right text-ink-2">{lot.quantity.toLocaleString('en-US', { maximumFractionDigits: 4 })}</td>
+                    <td className="num px-3 py-2 text-right text-ink-2">{formatShares(lot.quantity)}</td>
                     <td className="num px-3 py-2 text-right text-ink-2">{price(lot.costPerShare)}</td>
                     <td className="num px-3 py-2 text-right text-ink">{money(lot.marketValue, { digits: 0 })}</td>
                     <td className="px-3 py-2 text-right">
-                      <Delta value={lot.unrealized} kind="money" digits={0} className="justify-end text-[12px]" />
+                      <Delta value={lot.unrealized} kind="money" sensitive digits={0} className="justify-end text-[12px]" />
                     </td>
                     {terms ? (
                       <>
@@ -541,7 +544,7 @@ export function TaxPanel({ portfolioId, onPortfolioChanged }: { portfolioId: str
                       )}
                       {rules.lossDeferralDays !== null ? <td className="px-3 py-2 text-muted">{year.washDisallowed ? money(year.washDisallowed, { digits: 0 }) : '—'}</td> : null}
                       <td className="px-3 py-2">
-                        <Delta value={year.net} kind="money" digits={0} className="justify-end text-[12px]" />
+                        <Delta value={year.net} kind="money" sensitive digits={0} className="justify-end text-[12px]" />
                       </td>
                       <td className="px-3 py-2 text-ink">{taxed ? money(year.tax, { digits: 0 }) : '—'}</td>
                       <td className="px-4 py-2 text-muted" title={year.carryIn ? `${money(year.carryIn, { digits: 0 })} carried in from earlier years` : undefined}>
@@ -574,12 +577,12 @@ export function TaxPanel({ portfolioId, onPortfolioChanged }: { portfolioId: str
                         <span className="ml-2 text-ink-2">{shortDate(disposal.sold)}</span>
                       </td>
                       <td className="px-3 py-2 text-ink-2">{disposal.estimated ? `Various (by ${shortDate(disposal.acquired)})` : shortDate(disposal.acquired)}</td>
-                      <td className="num px-3 py-2 text-right text-ink-2">{disposal.quantity.toLocaleString('en-US', { maximumFractionDigits: 4 })}</td>
+                      <td className="num px-3 py-2 text-right text-ink-2">{formatShares(disposal.quantity)}</td>
                       <td className="num px-3 py-2 text-right text-ink-2">{money(disposal.proceeds, { digits: 2 })}</td>
                       <td className="num px-3 py-2 text-right text-ink-2">{money(disposal.cost, { digits: 2 })}</td>
                       {rules.lossDeferralDays !== null ? <td className="num px-3 py-2 text-right text-warning">{disposal.washDisallowed ? `W ${money(disposal.washDisallowed, { digits: 2 })}` : ''}</td> : null}
                       <td className="px-3 py-2 text-right">
-                        <Delta value={disposal.reportable} kind="money" digits={2} className="justify-end text-[12px]" />
+                        <Delta value={disposal.reportable} kind="money" sensitive digits={2} className="justify-end text-[12px]" />
                       </td>
                       {terms ? (
                         <td className="px-4 py-2">
@@ -606,7 +609,7 @@ export function TaxPanel({ portfolioId, onPortfolioChanged }: { portfolioId: str
                 <div>
                   <span className="font-mono font-semibold text-ink">{event.symbol}</span>
                   <span className="ml-2 text-ink-2">
-                    sold {shortDate(event.sold)} · {event.sharesWashed.toLocaleString('en-US', { maximumFractionDigits: 4 })} sh washed by buys on{' '}
+                    sold {shortDate(event.sold)} · {formatShares(event.sharesWashed)} sh washed by buys on{' '}
                     {[...new Set(event.replacements.map((replacement) => shortDate(replacement.purchased)))].join(', ')}
                   </span>
                 </div>

@@ -1,6 +1,6 @@
 'use client';
 
-import { Bell, Database, Menu as MenuIcon, RefreshCw, Search, Sparkles } from 'lucide-react';
+import { Bell, Database, Eye, EyeOff, Menu as MenuIcon, RefreshCw, Search, Sparkles } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
@@ -16,6 +16,7 @@ import { CompanyLogo } from '@/components/ui/company-logo';
 import { Kbd } from '@/components/ui/primitives';
 import { api, revalidate } from '@/lib/client';
 import { plural, price, relativeTime } from '@/lib/format';
+import { usePrivacy } from '@/lib/privacy';
 import { cn } from '@/lib/utils';
 import { marketSession, type MarketSession } from '@/lib/session';
 
@@ -379,6 +380,7 @@ export function Topbar() {
   const { setPaletteOpen, setAssistantOpen, setNavOpen } = useShell();
   const { status, refresh } = useStatus();
   const onGrokPage = usePathname()?.startsWith('/assistant') ?? false;
+  const { hidden, toggle } = usePrivacy();
   return (
     <header className="sticky top-0 z-30 flex h-13 items-center gap-2 border-b border-line bg-bg/70 px-3 backdrop-blur-xl backdrop-saturate-150 sm:gap-3 sm:px-4">
       <button onClick={() => setNavOpen(true)} className="grid size-8 shrink-0 place-items-center rounded-sm text-muted hover:bg-white/5 hover:text-ink md:hidden" aria-label="Open navigation">
@@ -402,6 +404,16 @@ export function Topbar() {
           <JobsIndicator status={status} refresh={() => void refresh()} />
         </span>
         <AlertsBell />
+        <IconButton
+          label={hidden ? 'Show portfolio values' : 'Hide portfolio values'}
+          variant="outline"
+          size="sm"
+          aria-pressed={hidden}
+          onClick={toggle}
+          className={cn(hidden && 'border-brand/50 text-brand')}
+        >
+          {hidden ? <EyeOff className="size-3.5" /> : <Eye className="size-3.5" />}
+        </IconButton>
         <IconButton label="Assistant" variant="outline" size="sm" onClick={() => setAssistantOpen(true)} disabled={onGrokPage} className="disabled:pointer-events-none disabled:opacity-40">
           <Sparkles className="size-3.5 text-brand" />
         </IconButton>
