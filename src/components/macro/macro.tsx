@@ -8,8 +8,8 @@ import useSWR from 'swr';
 import { MacroTape } from '@/components/macro/macro-tape';
 import { LineChart } from '@/components/charts/svg';
 import { Page } from '@/components/shell/page';
-import { IconButton } from '@/components/ui/button';
-import { Panel, PanelHeader, Segmented, Skeleton } from '@/components/ui/primitives';
+import { Button, IconButton } from '@/components/ui/button';
+import { EmptyState, Panel, PanelHeader, Segmented, Skeleton } from '@/components/ui/primitives';
 import { cite } from '@/lib/citation';
 import { SERIES_COLORS } from '@/lib/theme';
 import { cn } from '@/lib/utils';
@@ -89,7 +89,7 @@ function SeriesCard({ series }: { series: Series }) {
 
 export function Macro() {
   const [years, setYears] = useState<'2' | '5' | '10' | '20'>('5');
-  const { data } = useSWR<Payload>(`/api/macro?years=${years}`, { refreshInterval: 30 * 60_000 });
+  const { data, error, isValidating, mutate } = useSWR<Payload>(`/api/macro?years=${years}`, { refreshInterval: 30 * 60_000 });
   const curve = data?.curve ?? [];
   return (
     <Page
@@ -110,6 +110,17 @@ export function Macro() {
       }
     >
       <MacroTape />
+      {error && !data ? (
+        <EmptyState
+          title="Macro data didn't load"
+          body={error instanceof Error ? error.message : 'FRED did not answer in time.'}
+          action={
+            <Button variant="secondary" size="sm" loading={isValidating} onClick={() => void mutate()}>
+              Try again
+            </Button>
+          }
+        />
+      ) : null}
       <Panel>
         <PanelHeader kicker="US Treasury constant maturity" title="Yield curve" />
         <div className="px-4 pb-4">

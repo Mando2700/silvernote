@@ -5,27 +5,31 @@ import { useEffect, useMemo, useSyncExternalStore } from 'react';
 import { marketSession } from '@/lib/session';
 
 /**
- * Browser side of the live price stream: components register the symbols they show, one
- * EventSource carries all of them (capped at 50, first registered first), and components
- * re-render only when prices arrive. The stream is open only while the tab is visible and US trading
- * is on (pre-market to after-hours): an open stream holds a server function open the whole time,
- * which on a free host's plan is what runs out.
+ * Browser side of live prices: components register the symbols they show, one poll of /api/live every
+ * 15 s carries all of them (capped at 50, first registered first), and components re-render only when
+ * prices arrive. It polls only while the tab is visible and the regular US session is open: short
+ * requests cost a free host's plan a second each, where a held-open stream used it up.
  */
 
 export type LivePrice = { symbol: string; price: number; change: number | null; changePct: number | null; timestamp: number };
 
 const MAX = 50;
+const POLL_MS = 15_000;
 const wanted = new Map<string, number>();
 const prices = new Map<string, LivePrice>();
 const listeners = new Set<() => void>();
 let version = 0;
-let source: EventSource | null = null;
-let sourceKey = '';
+let pollKey = '';
+let pollTimer: ReturnType<typeof setInterval> | null = null;
 let syncTimer: ReturnType<typeof setTimeout> | null = null;
-let unavailable = false;
 let watching = false;
 
-/** Reopen or close the stream when the tab is shown or hidden and when the session opens or closes. */
+function notify() {
+  version += 1;
+  for (const listener of listeners) listener();
+}
+
+/** Re-check when the tab is shown or hidden and when the session opens or closes. */
 function watchActivity() {
   if (watching || typeof document === 'undefined') return;
   watching = true;
@@ -33,39 +37,35 @@ function watchActivity() {
   setInterval(schedule, 60_000);
 }
 
-function streamWanted() {
-  return document.visibilityState === 'visible' && marketSession() !== 'closed';
+function pollWanted() {
+  return document.visibilityState === 'visible' && marketSession() === 'regular';
 }
 
-function notify() {
-  version += 1;
-  for (const listener of listeners) listener();
+async function poll() {
+  const key = pollKey;
+  if (!key) return;
+  try {
+    const response = await fetch(`/api/live?symbols=${encodeURIComponent(key)}`, { headers: { Accept: 'application/json' } });
+    if (!response.ok || key !== pollKey) return;
+    const { ticks } = (await response.json()) as { ticks: LivePrice[] };
+    for (const tick of ticks) prices.set(tick.symbol, tick);
+    if (ticks.length) notify();
+  } catch {
+    // keep the last prices; the next poll tries again
+  }
 }
 
 function sync() {
   syncTimer = null;
-  const symbols = streamWanted() ? [...wanted.keys()].slice(0, MAX).sort() : [];
+  const symbols = pollWanted() ? [...wanted.keys()].slice(0, MAX).sort() : [];
   const key = symbols.join(',');
-  if (key === sourceKey || unavailable) return;
-  source?.close();
-  source = null;
-  sourceKey = key;
-  if (!symbols.length) return;
-  const next = new EventSource(`/api/live?symbols=${encodeURIComponent(key)}`);
-  next.onmessage = (event) => {
-    try {
-      for (const tick of JSON.parse(event.data) as LivePrice[]) prices.set(tick.symbol, tick);
-      notify();
-    } catch {}
-  };
-  // A non-200 answer (no Finnhub key) closes the stream for good: fall back to delayed data.
-  next.onerror = () => {
-    if (next.readyState === EventSource.CLOSED) {
-      unavailable = true;
-      if (source === next) source = null;
-    }
-  };
-  source = next;
+  if (key === pollKey) return;
+  if (pollTimer) clearInterval(pollTimer);
+  pollTimer = null;
+  pollKey = key;
+  if (!key) return;
+  void poll();
+  pollTimer = setInterval(() => void poll(), POLL_MS);
 }
 
 function schedule() {
@@ -78,7 +78,7 @@ function subscribe(listener: () => void) {
   return () => listeners.delete(listener);
 }
 
-/** Real-time prices for the given symbols, when the server has a Finnhub key. */
+/** Prices for the given symbols, refreshed every 15 s while the tab is visible in the regular session. */
 export function useLivePrices(symbols: readonly string[]): Record<string, LivePrice | undefined> {
   const key = [...new Set(symbols.map((symbol) => symbol.toUpperCase()))].join(',');
   useEffect(() => {

@@ -27,6 +27,16 @@ async function main() {
   const steps = await runCron();
   // Only step names and outcomes: the logs of a public repository are public, so no portfolio details.
   for (const step of steps) console.log(`${step.ok ? '✓' : '✗'} ${step.step}`);
+  // Refresh the Macro page's FRED series here, so the site serves them from the cache instead of downloading 30 series
+  // while a page waits. Inside runInBackground, cached() waits for the refresh instead of returning the expired copy.
+  try {
+    const { runInBackground } = await import('../src/lib/data/http');
+    const { getMacroDashboard, getYieldCurves } = await import('../src/lib/services/macro');
+    await runInBackground(() => Promise.all([getMacroDashboard(5), getYieldCurves()]));
+    console.log('✓ macro data');
+  } catch {
+    console.log('✗ macro data');
+  }
   await settleJobs();
   console.log(`Done in ${Math.round((Date.now() - started) / 1000)} s`);
   process.exit(steps.every((step) => step.ok) ? 0 : 1);

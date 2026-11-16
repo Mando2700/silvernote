@@ -117,7 +117,9 @@ function transform(points: Array<{ date: string; value: number }>, kind: Series[
 
 async function loadSeries(series: Series, years: number): Promise<MacroSeries> {
   const start = new Date(Date.now() - (years + 1.2) * 365 * 86_400_000).toISOString().slice(0, 10);
-  const raw = await cached(`fred:${series.id}:${start.slice(0, 7)}`, 6 * 3600, () => fetchFredSeries(series.id, start)).catch(() => []);
+  // Keyed without the start date: an expired entry is still served at once (and refreshed behind it), so a new month
+  // doesn't make the page wait on 30 FRED downloads.
+  const raw = await cached(`fred:${series.id}:${years}y`, 6 * 3600, () => fetchFredSeries(series.id, start)).catch(() => []);
   const cutoff = new Date(Date.now() - years * 365 * 86_400_000).toISOString().slice(0, 10);
   let points = transform(raw, series.transform).filter((point) => point.date >= cutoff);
   if (series.id === 'ICSA') points = points.map((point) => ({ ...point, value: point.value / 1000 }));
@@ -150,7 +152,7 @@ export async function getYieldCurves() {
     ['DGS3', '3Y', 3], ['DGS5', '5Y', 5], ['DGS7', '7Y', 7], ['DGS10', '10Y', 10], ['DGS20', '20Y', 20], ['DGS30', '30Y', 30],
   ] as const;
   const start = new Date(Date.now() - 400 * 86_400_000).toISOString().slice(0, 10);
-  const series = await Promise.all(tenors.map(([id]) => cached(`fred:${id}:${start.slice(0, 7)}`, 6 * 3600, () => fetchFredSeries(id, start)).catch(() => [])));
+  const series = await Promise.all(tenors.map(([id]) => cached(`fred:${id}:curve`, 6 * 3600, () => fetchFredSeries(id, start)).catch(() => [])));
   const at = (points: Array<{ date: string; value: number }>, daysAgo: number) => {
     const target = new Date(Date.now() - daysAgo * 86_400_000).toISOString().slice(0, 10);
     for (let index = points.length - 1; index >= 0; index -= 1) if (points[index].date <= target) return points[index].value;
