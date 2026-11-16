@@ -1,6 +1,7 @@
 import 'server-only';
 
 import { cached } from '@/lib/data/http';
+import * as finnhub from '@/lib/data/providers/finnhub';
 import * as nasdaq from '@/lib/data/providers/nasdaq';
 import { todayInNewYork } from '@/lib/dates';
 import { getUserSymbols } from '@/lib/services/news';
@@ -109,26 +110,44 @@ export async function upcomingEarnings(symbols: string[], days = 10) {
 }
 
 export type NextEarningsInfo = nasdaq.NextEarnings & {
-  /** True when the company hasn't announced a date and this is last year's report date carried forward. */
+  /** True when the company hasn't confirmed a date: it is a provider projection or last year's date carried forward. */
   estimated: boolean;
+  /** Consensus revenue for the quarter, in dollars. */
+  revenueEstimate: number | null;
+  /** Lowest and highest analyst EPS for the quarter. */
+  epsLow: number | null;
+  epsHigh: number | null;
 };
 
 /**
- * When a company reports next. Nasdaq knows the date only a few weeks ahead (and nothing for some large
- * names); beyond that the report date of the same quarter a year ago, moved forward 52 weeks to land on
- * the same weekday, is a close guess, so it is returned marked `estimated`.
+ * When a company reports next, with what analysts expect. Nasdaq knows confirmed dates a few weeks ahead
+ * (with EPS); Finnhub adds consensus revenue and, for companies that haven't announced yet, a projected
+ * date. With neither, the report date of the same quarter a year ago moved forward 52 weeks (the same
+ * weekday) is a close guess. Anything that isn't confirmed is returned marked `estimated`.
  */
 export function getNextEarnings(symbol: string): Promise<NextEarningsInfo | null> {
   const upper = symbol.toUpperCase();
-  return cached<NextEarningsInfo | null>(`next-earnings:${upper}`, 6 * 3600, async () => {
+  return cached<NextEarningsInfo | null>(`next-earnings-v2:${upper}`, 6 * 3600, async () => {
     const today = todayInNewYork();
-    const announced = await nasdaq.fetchNextEarnings(upper).catch(() => null);
-    if (announced && announced.date >= today) return { ...announced, estimated: false };
+    const announcedRow = await nasdaq.fetchNextEarnings(upper).catch(() => null);
+    const announced = announcedRow && announcedRow.date >= today ? announcedRow : null;
+    const [report, quarters] = await Promise.all([
+      finnhub.finnhubEnabled() ? finnhub.fetchUpcomingReport(upper, announced?.date ?? today, announced?.date ?? addDays(today, 150)).catch(() => null) : Promise.resolve(null),
+      announced ? nasdaq.fetchQuarterlyEpsForecast(upper).catch(() => []) : Promise.resolve([]),
+    ]);
+    const range = quarters.find((row) => row.fiscalEnd === announced?.fiscalQuarter);
+    const estimates = { revenueEstimate: report?.revenueEstimate ?? null, epsLow: range?.low ?? null, epsHigh: range?.high ?? null };
+    if (announced) return { ...announced, epsForecast: announced.epsForecast ?? report?.epsEstimate ?? null, estimated: false, ...estimates };
+
+    const hour = report?.hour === 'bmo' ? 'pre' : report?.hour === 'amc' ? 'post' : 'unknown';
+    if (report && report.date >= today) {
+      return { date: report.date, time: hour, fiscalQuarter: null, epsForecast: report.epsEstimate, estimates: null, lastYearEps: null, estimated: true, ...estimates };
+    }
     const past = await nasdaq.fetchEarningsSurprises(upper).catch(() => []);
     const projected = past
       .map((row) => addDays(row.reportedOn, 364))
       .filter((date) => date >= today)
       .sort()[0];
-    return projected ? { date: projected, time: 'unknown', fiscalQuarter: null, epsForecast: null, estimates: null, lastYearEps: null, estimated: true } : null;
+    return projected ? { date: projected, time: 'unknown', fiscalQuarter: null, epsForecast: null, estimates: null, lastYearEps: null, estimated: true, ...estimates } : null;
   }).catch(() => null);
 }

@@ -67,7 +67,7 @@ function n(value: unknown) {
   return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }
 
-type NextEarningsPayload = { earnings: { date: string; time: 'pre' | 'post' | 'unknown'; fiscalQuarter: string | null; epsForecast: number | null; estimates: number | null; lastYearEps: number | null; estimated: boolean } | null };
+type NextEarningsPayload = { earnings: { date: string; time: 'pre' | 'post' | 'unknown'; fiscalQuarter: string | null; epsForecast: number | null; estimates: number | null; lastYearEps: number | null; estimated: boolean; revenueEstimate: number | null; epsLow: number | null; epsHigh: number | null } | null };
 
 /** Days from today (in the viewer's calendar) to a YYYY-MM-DD date. */
 function daysUntil(date: string) {
@@ -86,10 +86,20 @@ function NextEarnings({ symbol }: { symbol: string }) {
     ? [
         next.time === 'pre' ? 'Before open' : next.time === 'post' ? 'After close' : null,
         next.fiscalQuarter ? `Qtr ending ${next.fiscalQuarter}` : null,
-        next.epsForecast !== null ? `EPS est $${next.epsForecast.toFixed(2)}${next.estimates ? ` (${next.estimates} analysts)` : ''}` : null,
+        next.estimates ? `${next.estimates} analysts` : null,
       ].filter(Boolean)
     : [];
   return (
+  const expectations = next
+    ? [
+        {
+          label: 'EPS estimate',
+          value: next.epsForecast !== null ? `$${next.epsForecast.toFixed(2)}` : null,
+          note: [next.epsLow !== null && next.epsHigh !== null ? `Range $${next.epsLow.toFixed(2)}–${next.epsHigh.toFixed(2)}` : null, next.lastYearEps !== null ? `Year ago $${next.lastYearEps.toFixed(2)}` : null].filter(Boolean).join(' · '),
+        },
+        { label: 'Revenue estimate', value: next.revenueEstimate !== null ? `$${compactNumber(next.revenueEstimate, 2)}` : null, note: '' },
+      ].filter((item) => item.value)
+    : [];
     <div className="border-t border-line px-4 py-3">
       <div className="flex items-baseline justify-between gap-3">
         <span className="text-[11px] text-muted">Next earnings{next?.estimated ? ' (estimated)' : ''}</span>
@@ -103,7 +113,18 @@ function NextEarnings({ symbol }: { symbol: string }) {
         )}
       </div>
       {details.length ? <div className="mt-1 text-right text-[11px] text-muted">{details.join(' · ')}</div> : null}
-      {next?.estimated ? <div className="mt-1 text-right text-[10.5px] text-faint">The company hasn’t announced a date; this is last year’s report date carried forward.</div> : null}
+      {expectations.length ? (
+        <div className="mt-2.5 grid grid-cols-2 gap-x-6">
+          {expectations.map((item) => (
+            <div key={item.label}>
+              <div className="text-[11px] text-muted">{item.label}</div>
+              <div className="num mt-0.5 text-[14px] font-medium text-ink">{item.value}</div>
+              {item.note ? <div className="text-[10.5px] text-faint">{item.note}</div> : null}
+            </div>
+          ))}
+        </div>
+      ) : null}
+      {next?.estimated ? <div className="mt-1 text-right text-[10.5px] text-faint">The company hasn’t confirmed a date; this is a projection.</div> : null}
     </div>
   );
 }

@@ -272,6 +272,18 @@ export async function fetchYearlyEpsForecast(symbol: string) {
     .filter((row) => row.fiscalEnd && row.eps !== null);
 }
 
+/** Analyst low, consensus and high EPS for each of the next few fiscal quarters (`fiscalEnd` as "Oct 2026"). */
+export async function fetchQuarterlyEpsForecast(symbol: string) {
+  const data = await get<{ quarterlyForecast?: { rows?: YearlyForecastRow[] | null } }>(`/analyst/${apiSymbol(symbol)}/earnings-forecast`);
+  return (data?.quarterlyForecast?.rows ?? []).map((row) => ({
+    fiscalEnd: row.fiscalEnd ?? '',
+    eps: parseLooseNumber(row.consensusEPSForecast),
+    high: parseLooseNumber(row.highEPSForecast),
+    low: parseLooseNumber(row.lowEPSForecast),
+    analysts: parseLooseNumber(row.noOfEstimates),
+  }));
+}
+
 export async function fetchSummary(symbol: string) {
   const [data, forwardEps] = await Promise.all([
     get<{ summaryData?: Record<string, Labeled> }>(`/quote/${apiSymbol(symbol)}/summary?assetclass=stocks`),
