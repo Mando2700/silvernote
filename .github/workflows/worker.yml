@@ -7,8 +7,9 @@ name: Worker
 
 on:
   schedule:
-    # Every 10 minutes through the US session (pre-market to after-hours, UTC), weekdays.
-    - cron: '*/10 11-23 * * 1-5'
+    # Every 10 minutes through the US session (pre-market to after-hours, UTC), weekdays. Off the round
+    # minutes: GitHub delays and drops scheduled runs most at busy times such as the top of the hour.
+    - cron: '3,13,23,33,43,53 11-23 * * 1-5'
     # Hourly otherwise (weekends: Sunday red team, catch-up jobs).
     - cron: '7 0-10 * * *'
     - cron: '7 11-23 * * 0,6'

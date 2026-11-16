@@ -34,7 +34,7 @@ export type UniverseRow = {
 const QUOTED = "coalesce(securities.price_at > now() - interval '36 hours', false)";
 
 /** Write live quotes straight to their rows, rescaling market cap to the new price. */
-async function saveQuotes(quotes: Map<string, BatchQuote>) {
+export async function saveQuotes(quotes: Map<string, BatchQuote>) {
   if (!quotes.size) return;
   const payload = [...quotes].map(([symbol, quote]) => ({ symbol, price: quote.price, change: quote.change, change_pct: quote.changePct, volume: quote.volume }));
   await q(

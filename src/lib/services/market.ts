@@ -2,7 +2,7 @@ import 'server-only';
 
 import { q } from '@/lib/db';
 import { ASSET_KIND_LABEL, getAsset } from '@/lib/data/assets';
-import { cached, runUrgent, within } from '@/lib/data/http';
+import { cached, keepAlive, memo, runUrgent, within } from '@/lib/data/http';
 import * as finnhub from '@/lib/data/providers/finnhub';
 import * as fmp from '@/lib/data/providers/fmp';
 import * as nasdaq from '@/lib/data/providers/nasdaq';
@@ -10,8 +10,7 @@ import { fetchSubmissions } from '@/lib/data/providers/sec';
 import { fetchYahooDay } from '@/lib/data/providers/yahoo';
 import type { CompanyProfile, ExtendedQuote, Filing, NewsItem, Quote } from '@/lib/data/types';
 import { isMarketOpen } from '@/lib/services/prices';
-import { regularSession } from '@/lib/session';
-import { getSecuritiesBySymbols, getSecurity } from '@/lib/services/universe';
+import { getSecuritiesBySymbols, getSecurity, saveQuotes } from '@/lib/services/universe';
 
 /** Index-tracking funds: quoted everywhere, used for charts, benchmarks and as the index strip's fallback. */
 export const INDEX_PROXIES = [
@@ -63,6 +62,27 @@ async function assetQuote(symbol: string): Promise<Quote | null> {
 }
 
 const STALE_REQUOTE_LIMIT = 60;
+/** In the session a price older than this is refreshed when a page asks for it. */
+const STALE_AFTER_MS = 5 * 60_000;
+/** How long a page waits for that refresh; anything slower lands in the database for the next view. */
+const REQUOTE_BUDGET_MS = 2_500;
+
+/**
+ * Re-quote the given stocks in Nasdaq batches (20 per request) and store the prices, so what is on screen
+ * stays current between background sweeps for about a second of server time. A set already refreshed in
+ * the last minute on this instance isn't asked again.
+ */
+function requote(symbols: string[]) {
+  const key = [...symbols].sort().join(',');
+  return memo(`requote:${key}`, 60_000, async () => {
+    const quotes = new Map<string, nasdaq.BatchQuote>();
+    await nasdaq.fetchBatchQuotes(symbols, async (batch) => {
+      for (const [symbol, quote] of batch) quotes.set(symbol, quote);
+      await saveQuotes(batch);
+    });
+    return quotes;
+  });
+}
 
 /**
  * Quotes for many symbols at once. The universe table is refreshed from Nasdaq's full-market
@@ -84,14 +104,23 @@ export async function getQuotes(symbols: string[]): Promise<Record<string, Quote
       source: 'Nasdaq',
     };
   }
-  // Right after the open the snapshot still holds yesterday's close and move until the next refresh lands, and rows the
-  // quote sweep hasn't reached carry the screener's session-old price: re-quote those live (a portfolio's worth; bigger lists keep the snapshot).
-  const sessionOpen = regularSession(Date.now() / 1000).open * 1000;
+  // In the session, prices older than a few minutes (background sweeps run every so often) are re-quoted in batches
+  // and stored: a portfolio's worth; bigger lists keep the snapshot.
   const quotedAt = new Map(rows.map((row) => [row.symbol, row.price_at ? new Date(row.price_at).getTime() : 0]));
-  const stale = isMarketOpen() ? upper.filter((symbol) => result[symbol] && (quotedAt.get(symbol) ?? 0) < sessionOpen).slice(0, STALE_REQUOTE_LIMIT) : [];
+  const stale = isMarketOpen()
+    ? upper.filter((symbol) => result[symbol] && Date.now() - (quotedAt.get(symbol) ?? 0) > STALE_AFTER_MS).slice(0, STALE_REQUOTE_LIMIT)
+    : [];
+  if (stale.length) {
+    const work = requote(stale);
+    keepAlive(work);
+    const fresh = await within(work, REQUOTE_BUDGET_MS).catch(() => undefined);
+    for (const [symbol, quote] of fresh ?? []) {
+      const previous = result[symbol];
+      result[symbol] = { ...previous, price: quote.price, change: quote.change, changePct: quote.changePct, previousClose: quote.change !== null ? quote.price - quote.change : previous.previousClose, volume: quote.volume ?? previous.volume, timestamp: Date.now() };
+    }
+  }
   // Funds and anything else outside the stock universe: live quotes, a few at a time (every symbol, no cap).
-  const missing = upper.filter((symbol) => !result[symbol]);
-  const queue = [...missing, ...stale];
+  const queue = upper.filter((symbol) => !result[symbol]);
   await Promise.all(
     Array.from({ length: Math.min(4, queue.length) }, async () => {
       for (;;) {
