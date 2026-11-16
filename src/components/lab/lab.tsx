@@ -9,7 +9,8 @@ import { useSearchParams } from '@/components/shell/keep-alive';
 import { Page } from '@/components/shell/page';
 import { Button } from '@/components/ui/button';
 import { CompanyLogo } from '@/components/ui/company-logo';
-import { Badge, EmptyState, Field, Input, Panel, PanelHeader, Segmented, Skeleton, Stat, Tabs } from '@/components/ui/primitives';
+import { Badge, EmptyState, Field, Input, Panel, PanelHeader, Segmented, Stat, Tabs } from '@/components/ui/primitives';
+import { SkeletonPanel, SkeletonTable } from '@/components/ui/skeletons';
 import { TickerSearch } from '@/components/ui/ticker-search';
 import { cite, SOURCES } from '@/lib/citation';
 import { api } from '@/lib/client';
@@ -303,9 +304,11 @@ export function CompsTool({ initialSymbol, initialPeers }: { initialSymbol?: str
       {!symbol ? (
         <EmptyState icon={<Scale className="size-4" />} title="Build a comps table" body="Pick a company; SilverNote suggests peers (edit them freely), computes peer statistics and the value implied by peer multiples." />
       ) : isLoading && !data ? (
-        <Skeleton className="h-72" />
+        <SkeletonPanel header={false} bodyClassName="p-0">
+          <SkeletonTable rows={6} cols={7} />
+        </SkeletonPanel>
       ) : data ? (
-        <>
+        <div className="reveal flex flex-col gap-4">
           <Panel>
             <div className="overflow-x-auto">
               <table className="w-full min-w-[980px] text-[12.5px]">
@@ -377,7 +380,7 @@ export function CompsTool({ initialSymbol, initialPeers }: { initialSymbol?: str
               />
             </div>
           </Panel>
-        </>
+        </div>
       ) : null}
     </div>
   );

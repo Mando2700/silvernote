@@ -11,6 +11,7 @@ import { Page } from '@/components/shell/page';
 import { useShell } from '@/components/shell/providers';
 import { Button } from '@/components/ui/button';
 import { Panel, Skeleton } from '@/components/ui/primitives';
+import { SkeletonText } from '@/components/ui/skeletons';
 import { checkNumber, TRACKS } from '@/lib/learn/curriculum';
 import { DRILL_META, DRILL_TYPES, generateDrill, type DrillType } from '@/lib/learn/drills';
 import { cn } from '@/lib/utils';
@@ -124,7 +125,18 @@ export function PracticeLab() {
 
           <Panel className="p-5">
             {!drill ? (
-              <Skeleton className="h-64 w-full" />
+              <div className="flex flex-col gap-4">
+                <div className="flex items-center gap-2">
+                  <Skeleton className="h-5 w-24" />
+                  <Skeleton className="h-3 w-40" />
+                </div>
+                <SkeletonText lines={3} />
+                <div className="grid gap-2 sm:grid-cols-2">
+                  {[0, 1, 2, 3].map((key) => (
+                    <Skeleton key={key} className="h-10" />
+                  ))}
+                </div>
+              </div>
             ) : (
               <AnimatePresence mode="wait">
                 <motion.div key={`${drill.type}-${drill.seed}`} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }} transition={{ duration: 0.22 }} className="flex flex-col gap-4">

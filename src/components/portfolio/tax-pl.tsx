@@ -4,7 +4,8 @@ import { Download } from 'lucide-react';
 import useSWR from 'swr';
 
 import { Button } from '@/components/ui/button';
-import { EmptyState, Panel, PanelHeader, Skeleton, Stat } from '@/components/ui/primitives';
+import { EmptyState, Panel, PanelHeader, Stat } from '@/components/ui/primitives';
+import { SkeletonPanel, SkeletonStats, SkeletonTable } from '@/components/ui/skeletons';
 import { downloadFrom } from '@/lib/export-client';
 import { cn } from '@/lib/utils';
 
@@ -20,11 +21,22 @@ const pln = (value: number) => new Intl.NumberFormat('pl-PL', { style: 'currency
 /** Polish PIT-38 view: FIFO lots in PLN at NBP D-1 rates, 19% on the year's net income. */
 export function PolishTaxPanel({ portfolioId }: { portfolioId: string }) {
   const { data, isLoading } = useSWR<Report>(`/api/portfolios/${portfolioId}/tax?jurisdiction=PL`);
-  if (isLoading && !data) return <Skeleton className="h-72" />;
+  if (isLoading && !data) {
+    return (
+      <div className="flex flex-col gap-4">
+        <SkeletonPanel>
+          <SkeletonStats count={5} className="md:grid-cols-5" />
+        </SkeletonPanel>
+        <SkeletonPanel bodyClassName="p-0">
+          <SkeletonTable rows={4} cols={6} logo={false} />
+        </SkeletonPanel>
+      </div>
+    );
+  }
   if (!data?.years.length) return <EmptyState title="No disposals yet" body="Sales will appear here converted to PLN at the NBP rate from the business day before each trade, ready for PIT-38." />;
   const latest = data.years[data.years.length - 1];
   return (
-    <div className="flex flex-col gap-4">
+    <div className="reveal flex flex-col gap-4">
       <Panel>
         <PanelHeader
           kicker="PIT-38 · FIFO · kurs NBP z dnia poprzedzającego"

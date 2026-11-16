@@ -8,6 +8,7 @@ import useSWR from 'swr';
 import { LineChart } from '@/components/charts/svg';
 import { ScoreRing } from '@/components/motion/score-ring';
 import { Badge, EmptyState, Panel, PanelHeader, Skeleton } from '@/components/ui/primitives';
+import { SkeletonBars, SkeletonChart, SkeletonPanel } from '@/components/ui/skeletons';
 import { shortDate } from '@/lib/format';
 import type { SilverNoteScore, SubScore } from '@/lib/score/types';
 import { cn } from '@/lib/utils';
@@ -102,10 +103,20 @@ export function ScorePanel({ symbol }: { symbol: string }) {
 
   if (isLoading && !data) {
     return (
-      <Panel className="p-4">
-        <Skeleton className="mb-4 h-32 w-full" />
-        <Skeleton className="h-64 w-full" />
-      </Panel>
+      <div className="flex flex-col gap-4">
+        <SkeletonPanel header={false} bodyClassName="p-5">
+          <div className="grid gap-6 lg:grid-cols-[auto_1fr]">
+            <div className="flex flex-col items-center gap-3">
+              <Skeleton className="size-32 rounded-full" />
+              <Skeleton className="h-5 w-28 rounded-full" />
+            </div>
+            <SkeletonBars rows={6} />
+          </div>
+        </SkeletonPanel>
+        <SkeletonPanel>
+          <SkeletonChart height={256} />
+        </SkeletonPanel>
+      </div>
     );
   }
   if (!score) {
@@ -120,7 +131,7 @@ export function ScorePanel({ symbol }: { symbol: string }) {
   const sorted = [...score.subScores].sort((a, b) => b.score - a.score);
 
   return (
-    <div className="flex flex-col gap-4">
+    <div className="flex flex-col gap-4 reveal">
       <Panel className="overflow-hidden">
         <div className="grid gap-6 p-5 lg:grid-cols-[auto_1fr]">
           <div className="flex flex-col items-center gap-3">

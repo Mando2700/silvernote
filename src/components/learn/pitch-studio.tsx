@@ -13,6 +13,7 @@ import { useShell } from '@/components/shell/providers';
 import { Button } from '@/components/ui/button';
 import { CompanyLogo } from '@/components/ui/company-logo';
 import { Badge, EmptyState, Field, Input, Panel, PanelHeader, Segmented, Select, Skeleton, Textarea } from '@/components/ui/primitives';
+import { SkeletonText } from '@/components/ui/skeletons';
 import { TickerSearch } from '@/components/ui/ticker-search';
 import { api } from '@/lib/client';
 import { money, multiple, pct, price as fmtPrice, relativeTime, signedPct } from '@/lib/format';
@@ -176,9 +177,31 @@ export function PitchStudio() {
       }
     >
       {!hydrated ? (
-        <Skeleton className="h-[640px] w-full" />
-      ) : (
         <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_380px]">
+          <div className="flex min-w-0 flex-col gap-4">
+            <Panel className="p-4">
+              <div className="flex flex-wrap items-end gap-3">
+                <Skeleton className="h-8 w-52" />
+                <Skeleton className="h-8 w-28" />
+                <Skeleton className="h-8 w-44" />
+              </div>
+            </Panel>
+            {[0, 1, 2].map((key) => (
+              <Panel key={key} className="p-4">
+                <div className="mb-3 flex flex-col gap-1.5">
+                  <Skeleton className="h-3 w-32" />
+                  <Skeleton className="h-2.5 w-56" />
+                </div>
+                <Skeleton className="h-24 w-full" />
+              </Panel>
+            ))}
+          </div>
+          <Panel className="p-4">
+            <SkeletonText lines={8} />
+          </Panel>
+        </div>
+      ) : (
+        <div className="reveal grid gap-4 xl:grid-cols-[minmax(0,1fr)_380px]">
           <div className="flex min-w-0 flex-col gap-4">
             <Panel className="p-4">
               <div className="flex flex-wrap items-end gap-3">
@@ -249,7 +272,7 @@ export function PitchStudio() {
                     </div>
                   </div>
                 ) : peers.isLoading ? (
-                  <div className="mt-3 text-[12px] text-muted">Loading {draft.symbol}…</div>
+                  <SkeletonText lines={2} className="mt-3" />
                 ) : null
               ) : example ? (
                 <div className="mt-3 rounded-sm border border-ion/20 bg-ion/[0.04] px-3 py-2 text-[12px] text-ink-2">

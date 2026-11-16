@@ -11,7 +11,8 @@ import { useShell } from '@/components/shell/providers';
 import { Page } from '@/components/shell/page';
 import { Button, Magnetic } from '@/components/ui/button';
 import { CompanyLogo } from '@/components/ui/company-logo';
-import { Badge, EmptyState, Input, Panel, PanelHeader, Skeleton, Tabs } from '@/components/ui/primitives';
+import { Badge, EmptyState, Input, Panel, PanelHeader, Tabs } from '@/components/ui/primitives';
+import { SkeletonList } from '@/components/ui/skeletons';
 import type { Filing, NewsItem } from '@/lib/data/types';
 import { relativeTime, shortDate } from '@/lib/format';
 import { cn } from '@/lib/utils';
@@ -155,11 +156,7 @@ export function News() {
           </AnimatePresence>
 
           {isLoading && !data ? (
-            <div className="flex flex-col gap-2 p-4">
-              {Array.from({ length: 8 }, (_, index) => (
-                <Skeleton key={index} className="h-14" />
-              ))}
-            </div>
+            <SkeletonList rows={8} className="p-4" />
           ) : scope === 'filings' ? (
             filings.length ? (
               <FilingsList filings={filings} onSymbol={setSymbol} onSummarize={(filing) => askAssistant(`Summarize this ${filing.form} for ${filing.name ?? filing.symbol}: what changed, what surprised, and what to watch.\n[filing:${filing.url}]`, { type: 'company', symbol: filing.symbol, name: filing.name ?? undefined })} />
@@ -250,7 +247,7 @@ function SymbolRow({ symbol, name, held, count, active, onClick }: { symbol: str
 function HeadlineList({ items, active, onSymbol }: { items: NewsItem[]; active: string | null; onSymbol: (symbol: string) => void }) {
   const groups = groupByDay(items, (item) => item.publishedAt);
   return (
-    <div className="flex flex-col">
+    <div className="reveal flex flex-col">
       {groups.map((group) => (
         <div key={group.label}>
           <div className="sticky top-0 z-10 border-b border-line bg-surface-2/95 px-4 py-1.5 backdrop-blur">
@@ -301,7 +298,7 @@ function HeadlineList({ items, active, onSymbol }: { items: NewsItem[]; active: 
 function FilingsList({ filings, onSymbol, onSummarize }: { filings: FilingItem[]; onSymbol: (symbol: string) => void; onSummarize: (filing: FilingItem) => void }) {
   const groups = groupByDay(filings, (filing) => `${filing.filedAt}T12:00:00`);
   return (
-    <div className="flex flex-col">
+    <div className="reveal flex flex-col">
       {groups.map((group) => (
         <div key={group.label}>
           <div className="sticky top-0 z-10 border-b border-line bg-surface-2/95 px-4 py-1.5 backdrop-blur">

@@ -4,7 +4,8 @@ import { ExternalLink } from 'lucide-react';
 import { useState } from 'react';
 import useSWR from 'swr';
 
-import { Badge, EmptyState, Panel, PanelHeader, Segmented, Skeleton, Stat } from '@/components/ui/primitives';
+import { Badge, EmptyState, Panel, PanelHeader, Segmented, Stat } from '@/components/ui/primitives';
+import { SkeletonTable, SkeletonText } from '@/components/ui/skeletons';
 import { money, shortDate } from '@/lib/format';
 import { cn } from '@/lib/utils';
 
@@ -35,7 +36,7 @@ function Insiders({ symbol }: { symbol: string }) {
         actions={<Segmented size="xs" value={filter} onChange={setFilter} options={[{ value: 'market', label: 'Open market' }, { value: 'all', label: 'All' }]} />}
       />
       {isLoading && !data ? (
-        <Skeleton className="mx-4 mb-4 h-60" />
+        <SkeletonTable rows={6} cols={6} logo={false} className="mb-2" />
       ) : data ? (
         <>
           <div className="grid grid-cols-3 gap-4 px-4 pb-3">
@@ -56,7 +57,7 @@ function Insiders({ symbol }: { symbol: string }) {
                     <th className="px-4 py-2 text-right font-medium">Value</th>
                   </tr>
                 </thead>
-                <tbody>
+                <tbody className="reveal-rows">
                   {trades.map((row, index) => (
                     <tr key={`${row.accession}-${index}`} className="border-b border-line">
                       <td className="px-4 py-1.5 text-muted">{shortDate(row.date)}</td>
@@ -110,11 +111,11 @@ function RiskFactors({ symbol }: { symbol: string }) {
         }
       />
       {isLoading && !data ? (
-        <Skeleton className="mx-4 mb-4 h-60" />
+        <SkeletonText lines={6} className="mx-4 mb-4" />
       ) : !changes ? (
         <EmptyState title="Not enough annual reports" body="Needs two 10-K filings on EDGAR (foreign filers use 20-F, which isn't compared yet)." />
       ) : (
-        <div className="max-h-[520px] overflow-auto px-4 pb-4">
+        <div className="max-h-[520px] overflow-auto px-4 pb-4 reveal">
           {view === 'added' &&
             changes.added.map((text, index) => (
               <p key={index} className="border-l-2 border-gain/60 py-1.5 pl-3 text-[12.5px] leading-relaxed text-ink-2">

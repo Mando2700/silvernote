@@ -154,6 +154,22 @@ export function KeepAliveViews() {
   ));
 }
 
+/**
+ * Route loading fallback wrapper. If the page being navigated to is still alive in the deck, show it right
+ * away (its own KeepAlive takes over once the route resolves); otherwise render the placeholder.
+ */
+export function KeepAliveFallback({ children }: { children: ReactNode }) {
+  const key = keyOf(usePathname());
+  const { entries, activate, deactivate } = useKeepAlive();
+  const alive = entries.some((entry) => entry.key === key);
+  useLayoutEffect(() => {
+    if (!alive) return;
+    activate(key);
+    return () => deactivate(key);
+  }, [alive, activate, deactivate, key]);
+  return alive ? null : children;
+}
+
 /** Wrap a page's content in this from its route: the content is drawn by the deck and kept alive after you navigate away. */
 export function KeepAlive({ children }: { children: ReactNode }) {
   const key = keyOf(usePathname());

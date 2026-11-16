@@ -6,7 +6,8 @@ import useSWR from 'swr';
 
 import { PriceChart, type ChartDrawing, type ChartMarker, type ChartOverlay } from '@/components/charts/price-chart';
 import { Button, IconButton } from '@/components/ui/button';
-import { Segmented, Skeleton } from '@/components/ui/primitives';
+import { Segmented } from '@/components/ui/primitives';
+import { SkeletonChart } from '@/components/ui/skeletons';
 import { TickerSearch } from '@/components/ui/ticker-search';
 import type { Candle } from '@/lib/data/types';
 import { bollinger, ema, macd, rsi, sma } from '@/lib/finance/indicators';
@@ -253,9 +254,7 @@ export function StockChart({
             onPick={studies.onPick}
           />
         ) : (
-          <div style={{ height: chartHeight }}>
-            <Skeleton className="h-full w-full" />
-          </div>
+          <SkeletonChart height={chartHeight} />
         )}
       </div>
     </div>

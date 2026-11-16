@@ -15,6 +15,7 @@ import { useShell } from '@/components/shell/providers';
 import { Button, Magnetic } from '@/components/ui/button';
 import { CompanyLogo } from '@/components/ui/company-logo';
 import { Badge, EmptyState, Field, Input, Panel, PanelHeader, Segmented, Select, Skeleton, Tabs } from '@/components/ui/primitives';
+import { SkeletonChart, SkeletonPanel, SkeletonStats, SkeletonText } from '@/components/ui/skeletons';
 import { TickerSearch } from '@/components/ui/ticker-search';
 import { localToday } from '@/lib/dates';
 import { api } from '@/lib/client';
@@ -135,7 +136,23 @@ function MonteCarlo({ portfolioId }: { portfolioId: string }) {
     worker.postMessage(input);
   };
 
-  if (isLoading && !model) return <Skeleton className="h-96" />;
+  if (isLoading && !model) {
+    return (
+      <div className="flex flex-col gap-4">
+        <SkeletonPanel header={false}>
+          <div className="flex flex-wrap items-end gap-3">
+            <Skeleton className="h-8 w-44" />
+            <Skeleton className="h-8 w-44" />
+            <Skeleton className="ml-auto h-8 w-32" />
+          </div>
+        </SkeletonPanel>
+        <SkeletonStats count={6} className="md:grid-cols-3 xl:grid-cols-6" />
+        <SkeletonPanel>
+          <SkeletonChart height={320} />
+        </SkeletonPanel>
+      </div>
+    );
+  }
   if (!model?.symbols.length) return <EmptyState title="Not enough price history" body="Monte Carlo needs holdings with at least a few months of daily prices." />;
 
   const histogram = (() => {
@@ -154,7 +171,7 @@ function MonteCarlo({ portfolioId }: { portfolioId: string }) {
   })();
 
   return (
-    <div className="flex flex-col gap-4">
+    <div className="reveal flex flex-col gap-4">
       <Panel>
         <div className="flex flex-wrap items-end gap-3 p-4">
           <Field label="Horizon">
@@ -219,7 +236,7 @@ function MonteCarlo({ portfolioId }: { portfolioId: string }) {
       </Panel>
 
       {result ? (
-        <>
+        <div className="reveal flex flex-col gap-4">
           <div className="grid grid-cols-2 gap-2 md:grid-cols-3 xl:grid-cols-6">
             {(() => {
               const invested = result.contributions[result.months];
@@ -288,9 +305,27 @@ function MonteCarlo({ portfolioId }: { portfolioId: string }) {
               </div>
             </Panel>
           ) : null}
+        </div>
+      ) : running ? (
+        <>
+          <SkeletonStats count={6} className="md:grid-cols-3 xl:grid-cols-6" />
+          <SkeletonPanel>
+            <SkeletonChart height={320} />
+          </SkeletonPanel>
         </>
       ) : (
-        <Skeleton className="h-80" />
+        <Panel>
+          <EmptyState
+            icon={<FlaskConical className="size-4" />}
+            title="No projection yet"
+            body="Pick a horizon and an expected return, then run the simulation."
+            action={
+              <Button variant="primary" icon={<Play className="size-3.5" />} onClick={() => run()}>
+                Run simulation
+              </Button>
+            }
+          />
+        </Panel>
       )}
       <p className="text-[11px] leading-relaxed text-faint">
         Projections resample the past; they are not forecasts. Bootstrap keeps real fat tails but assumes the future looks like the sample window; lognormal is smoother and understates crashes. The default market expected return (CAPM: risk-free plus beta times a 5% equity premium) keeps the historical volatility and shape but re-centres the average, which is more prudent than extrapolating a strong sample.
@@ -303,13 +338,28 @@ function StressTests({ portfolioId }: { portfolioId: string }) {
   const { money } = useMoney();
   const { data, isLoading } = useSWR<{ totalValue: number; scenarios: Scenario[] }>(`/api/portfolios/${portfolioId}/stress`);
   const [active, setActive] = useState<string | null>(null);
-  if (isLoading && !data) return <Skeleton className="h-96" />;
+  if (isLoading && !data) {
+    return (
+      <div className="flex flex-col gap-4">
+        <div className="grid gap-3 md:grid-cols-3">
+          {[0, 1, 2].map((index) => (
+            <div key={index} className="rounded-md border border-line bg-surface-2 p-4">
+              <SkeletonText lines={3} />
+            </div>
+          ))}
+        </div>
+        <SkeletonPanel>
+          <SkeletonChart height={300} />
+        </SkeletonPanel>
+      </div>
+    );
+  }
   if (!data?.scenarios.length) return <EmptyState title="Stress tests unavailable" body="Add positions first; the market proxy histories could not be loaded." />;
   const scenario = data.scenarios.find((item) => item.id === active) ?? data.scenarios[0];
   const step = Math.max(1, Math.floor(scenario.path.length / 120));
   const sampled = scenario.path.filter((_, index) => index % step === 0 || index === scenario.path.length - 1);
   return (
-    <div className="flex flex-col gap-4">
+    <div className="reveal flex flex-col gap-4">
       <div className="grid gap-3 md:grid-cols-3">
         {data.scenarios.map((item) => (
           <button
@@ -670,7 +720,9 @@ export function Simulations() {
           {tab === 'whatif' ? <WhatIf key={selected} portfolioId={selected} /> : null}
         </>
       ) : (
-        <Skeleton className="h-96" />
+        <SkeletonPanel>
+          <SkeletonChart height={320} />
+        </SkeletonPanel>
       )}
     </Page>
   );

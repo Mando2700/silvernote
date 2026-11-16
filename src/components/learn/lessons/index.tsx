@@ -3,9 +3,15 @@
 import dynamic from 'next/dynamic';
 import type { ComponentType } from 'react';
 
-import { Skeleton } from '@/components/ui/primitives';
+import { SkeletonChart, SkeletonText } from '@/components/ui/skeletons';
 
-const loading = () => <Skeleton className="h-[600px] w-full" />;
+const loading = () => (
+  <div className="flex h-[600px] w-full flex-col gap-6 py-2">
+    <SkeletonText lines={3} />
+    <SkeletonChart height={200} />
+    <SkeletonText lines={4} />
+  </div>
+);
 
 /** Lesson bodies by slug, each loaded only when its lesson opens. */
 export const LESSON_BODIES: Record<string, ComponentType> = {

@@ -6,7 +6,8 @@ import { toast } from 'sonner';
 import useSWR from 'swr';
 
 import { Button, IconButton } from '@/components/ui/button';
-import { Field, Input, Panel, PanelHeader, Skeleton, Stat, Switch } from '@/components/ui/primitives';
+import { Field, Input, Panel, PanelHeader, Stat, Switch } from '@/components/ui/primitives';
+import { SkeletonList, SkeletonPanel, SkeletonTable } from '@/components/ui/skeletons';
 import { TickerSearch } from '@/components/ui/ticker-search';
 import { api } from '@/lib/client';
 import { pct, price } from '@/lib/format';
@@ -34,7 +35,18 @@ export function RebalancePanel({ portfolioId, holdings }: { portfolioId: string;
   const [plan, setPlan] = useState<Plan | null>(null);
   const [busy, setBusy] = useState(false);
 
-  if (!stored) return <Skeleton className="h-64" />;
+  if (!stored) {
+    return (
+      <div className="grid gap-4 xl:grid-cols-[380px_1fr]">
+        <SkeletonPanel>
+          <SkeletonList rows={5} />
+        </SkeletonPanel>
+        <SkeletonPanel bodyClassName="p-0">
+          <SkeletonTable rows={5} cols={4} logo={false} />
+        </SkeletonPanel>
+      </div>
+    );
+  }
   // Start from saved targets, else today's weights, so "no change" is the default plan.
   const initial: Record<string, string> = Object.keys(stored.targets).length
     ? Object.fromEntries(Object.entries(stored.targets).map(([symbol, weight]) => [symbol, (weight * 100).toFixed(1)]))
@@ -58,7 +70,7 @@ export function RebalancePanel({ portfolioId, holdings }: { portfolioId: string;
   };
 
   return (
-    <div className="grid gap-4 xl:grid-cols-[380px_1fr]">
+    <div className="reveal grid gap-4 xl:grid-cols-[380px_1fr]">
       <Panel>
         <PanelHeader kicker="Percent of total value" title="Target weights" actions={<Button size="xs" variant="outline" onClick={() => void saveTargets()} disabled={sum > 1.0001}>Save</Button>} />
         <div className="flex flex-col gap-1.5 px-4 pb-4">

@@ -11,6 +11,7 @@ import { Page } from '@/components/shell/page';
 import { Button, IconButton } from '@/components/ui/button';
 import { CompanyLogo } from '@/components/ui/company-logo';
 import { Badge, EmptyState, Panel, Segmented, Skeleton, Switch } from '@/components/ui/primitives';
+import { SkeletonList } from '@/components/ui/skeletons';
 import { api } from '@/lib/client';
 import { compactNumber } from '@/lib/format';
 import { cn } from '@/lib/utils';
@@ -123,13 +124,16 @@ export function Calendar() {
       {isLoading && !data ? (
         <div className="grid gap-3 md:grid-cols-5">
           {Array.from({ length: 5 }, (_, index) => (
-            <Skeleton key={index} className="h-96" />
+            <div key={index} className="panel p-3">
+              <Skeleton className="mb-3 h-3 w-24" />
+              <SkeletonList rows={6} />
+            </div>
           ))}
         </div>
       ) : !days.length ? (
         <EmptyState icon={<CalendarDays className="size-4" />} title="Nothing scheduled" body="No trading days in this range." />
       ) : (
-        <div className="grid gap-3 md:grid-cols-5">
+        <div className="reveal grid gap-3 md:grid-cols-5">
           {days.map((day) => {
             const earnings = day.earnings.filter((row) => !mineOnly || row.mine);
             const dividends = day.dividends.filter((row) => !mineOnly || row.mine);

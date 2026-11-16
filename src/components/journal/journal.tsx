@@ -9,7 +9,8 @@ import { Page } from '@/components/shell/page';
 import { Button, IconButton } from '@/components/ui/button';
 import { CompanyLogo } from '@/components/ui/company-logo';
 import { Modal } from '@/components/ui/overlay';
-import { Badge, EmptyState, Field, Input, Panel, PanelHeader, Segmented, Select, Skeleton, Stat, Textarea } from '@/components/ui/primitives';
+import { Badge, EmptyState, Field, Input, Panel, PanelHeader, Segmented, Select, Stat, Textarea } from '@/components/ui/primitives';
+import { SkeletonBars, SkeletonPanel, SkeletonTable } from '@/components/ui/skeletons';
 import { TickerSearch } from '@/components/ui/ticker-search';
 import { api, revalidate } from '@/lib/client';
 import { pct, price } from '@/lib/format';
@@ -248,7 +249,13 @@ export function Journal() {
             <Stat label="Open calls" value={(data?.decisions ?? []).filter((row) => row.status === 'open').length} />
           </div>
         </Panel>
-        {stats ? <Calibration stats={stats} /> : <Skeleton className="h-40" />}
+        {stats ? (
+          <Calibration stats={stats} />
+        ) : (
+          <SkeletonPanel>
+            <SkeletonBars rows={5} />
+          </SkeletonPanel>
+        )}
       </div>
 
       <Panel>
@@ -257,11 +264,11 @@ export function Journal() {
           actions={<Segmented size="xs" value={filter} onChange={setFilter} options={[{ value: 'open', label: 'Open' }, { value: 'closed', label: 'Closed' }, { value: 'all', label: 'All' }]} />}
         />
         {isLoading && !data ? (
-          <Skeleton className="mx-4 mb-4 h-40" />
+          <SkeletonTable rows={5} cols={8} className="mb-2" />
         ) : !decisions.length ? (
           <EmptyState icon={<BookCheck className="size-4" />} title="No decisions yet" body="Log your first call: what you think, how sure you are, and when you’ll know." action={<Button onClick={() => setCreating(true)}>Log decision</Button>} />
         ) : (
-          <div className="overflow-x-auto">
+          <div className="overflow-x-auto reveal">
             <table className="w-full min-w-[860px] text-[12.5px]">
               <thead>
                 <tr className="border-y border-line text-left text-[11px] text-muted">

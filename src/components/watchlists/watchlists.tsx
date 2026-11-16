@@ -251,8 +251,17 @@ export function Watchlists() {
         <AlertsView />
       ) : (
         <div className="grid gap-4 lg:grid-cols-[230px_1fr]">
-          <Panel className="self-start p-2">
-            {isLoading && !lists ? <Skeleton className="h-24" /> : null}
+          <Panel className="reveal-rows self-start p-2">
+            {isLoading && !lists ? (
+              <div className="flex flex-col gap-2.5 px-2.5 py-2" aria-hidden>
+                {[0, 1, 2].map((key) => (
+                  <div key={key} className="flex items-center justify-between gap-3 py-0.5">
+                    <Skeleton className="h-3" style={{ width: `${[62, 48, 70][key]}%` }} />
+                    <Skeleton className="h-2.5 w-5" />
+                  </div>
+                ))}
+              </div>
+            ) : null}
             {lists?.map((list) => (
               <button
                 key={list.id}

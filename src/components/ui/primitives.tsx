@@ -75,19 +75,11 @@ export function Kbd({ children, className }: { children: ReactNode; className?: 
   );
 }
 
-export function Skeleton({ className }: { className?: string }) {
-  return (
-    <div className={cn('relative overflow-hidden rounded-sm bg-white/[0.035]', className)}>
-      <div className="absolute inset-0 -translate-x-full animate-sweep motion-reduce:hidden" aria-hidden>
-        <div className="absolute inset-y-0 right-0 w-1/2 bg-gradient-to-r from-transparent to-white/[0.04]" />
-      </div>
-    </div>
-  );
-}
+export { Skeleton } from '@/components/ui/skeletons';
 
 export function EmptyState({ icon, title, body, action, className }: { icon?: ReactNode; title: string; body?: ReactNode; action?: ReactNode; className?: string }) {
   return (
-    <div className={cn('flex flex-col items-center justify-center gap-2 px-6 py-10 text-center', className)}>
+    <div className={cn('reveal flex flex-col items-center justify-center gap-2 px-6 py-10 text-center', className)}>
       {icon ? (
         <div className="mb-2 grid size-10 place-items-center rounded-md border border-line bg-surface-2 text-muted">{icon}</div>
       ) : null}

@@ -27,7 +27,8 @@ import { useBaseCurrency } from '@/lib/fx-client';
 import { Button, Magnetic } from '@/components/ui/button';
 import { CompanyLogo } from '@/components/ui/company-logo';
 import { Menu, Modal } from '@/components/ui/overlay';
-import { Badge, EmptyState, Field, Input, Panel, PanelHeader, Segmented, Select, Skeleton } from '@/components/ui/primitives';
+import { Badge, EmptyState, Field, Input, Panel, PanelHeader, Segmented, Select } from '@/components/ui/primitives';
+import { SkeletonStats } from '@/components/ui/skeletons';
 import { StatTile } from '@/components/ui/stat-tile';
 import { TickerSearch } from '@/components/ui/ticker-search';
 import { localToday } from '@/lib/dates';
@@ -325,11 +326,14 @@ function RiskPanel({ portfolioId, benchmark, concentration }: { portfolioId: str
         />
         <div className="px-4 pb-4">
           {isLoading && !data ? (
-            <Skeleton className="h-40" />
+            <div className="flex flex-col gap-2">
+              <SkeletonStats count={4} />
+              <SkeletonStats count={4} />
+            </div>
           ) : !stats ? (
             <p className="text-[12.5px] text-muted">Risk statistics need at least 30 days of overlapping price history for your holdings.</p>
           ) : (
-            <>
+            <div className="reveal">
               <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
                 <StatTile label="Annualized return" value={<Delta value={stats.annualReturn} digits={1} className="text-[17px]" />} sub={<span className="text-muted">{benchmark} {signedPct(stats.benchmarkReturn, 1)}</span>} hint="Compound annual return of today’s weights over the window" />
                 <StatTile label="Volatility" value={pct(stats.volatility)} sub={<span className="text-muted">{benchmark} {pct(stats.benchmarkVolatility)}</span>} hint="Annualized standard deviation of daily returns" />
@@ -358,7 +362,7 @@ function RiskPanel({ portfolioId, benchmark, concentration }: { portfolioId: str
                 </p>
               ) : null}
               {data?.excluded.length ? <p className="mt-2 text-[11px] text-faint">Excluded for lack of price history: {data.excluded.join(', ')}</p> : null}
-            </>
+            </div>
           )}
         </div>
       </Panel>

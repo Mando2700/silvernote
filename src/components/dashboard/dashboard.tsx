@@ -18,7 +18,8 @@ import { useSearchParams } from '@/components/shell/keep-alive';
 import { Page } from '@/components/shell/page';
 import { Button } from '@/components/ui/button';
 import { CompanyLogo } from '@/components/ui/company-logo';
-import { EmptyState, Panel, PanelHeader, Segmented, Skeleton } from '@/components/ui/primitives';
+import { EmptyState, Panel, PanelHeader, Segmented } from '@/components/ui/primitives';
+import { SkeletonBars, SkeletonChart, SkeletonList } from '@/components/ui/skeletons';
 import { api } from '@/lib/client';
 import { useExtendedQuotes } from '@/lib/extended-client';
 import { useLivePrices } from '@/lib/live-client';
@@ -155,9 +156,9 @@ function WeekAhead() {
   return (
     <Panel className="flex flex-col">
       <PanelHeader kicker="Your names · next 7 days" title="Week ahead" actions={<Link href="/calendar" className="text-[11.5px] text-brand-soft hover:underline">Calendar</Link>} />
-      <div className="flex-1 px-4 pb-3">
+      <div className="flex-1 px-4 pb-3 reveal-rows">
         {!data ? (
-          <Skeleton className="h-24" />
+          <SkeletonList rows={4} />
         ) : items.length ? (
           items.slice(0, 6).map((item) => (
             <Link key={item.key} href={`/company/${item.symbol}`} className="flex items-center gap-2 border-t border-line py-1.5 text-[12px] hover:bg-white/[0.02]">
@@ -319,7 +320,7 @@ function PortfolioVsIndices({ portfolio }: { portfolio: NonNullable<DashboardDat
         {points.length ? (
           <LineChart categories={categories} series={series} format={(value) => `${value > 0 ? '+' : ''}${value.toFixed(2)}%`} height={220} zeroLine time={time} />
         ) : (
-          <Skeleton className="h-[220px] w-full" />
+          <SkeletonChart height={220} />
         )}
       </div>
     </Panel>
@@ -362,7 +363,7 @@ export function Dashboard() {
           {heatmapItems.length ? (
             <MarketHeatmap items={heatmapItems} height={500} />
           ) : isLoading ? (
-            <Skeleton className="h-[500px] w-full" />
+            <SkeletonChart height={500} />
           ) : (
             <EmptyState title="Building the market universe" body="SilverNote is downloading the US stock list and SEC fundamentals. This first run takes a couple of minutes; the map fills in automatically." />
           )}
@@ -440,7 +441,7 @@ export function Dashboard() {
       <div className="grid gap-4 lg:grid-cols-[1.1fr_1fr]">
         <Panel>
           <PanelHeader kicker="Cap-weighted" title="Sector performance today" />
-          {data ? <SectorBars sectors={data.sectors} /> : <Skeleton className="mx-4 mb-4 h-64" />}
+          {data ? <SectorBars sectors={data.sectors} /> : <SkeletonBars rows={11} className="mx-4 mb-4" />}
         </Panel>
         <div className="grid gap-4">
           <Panel>
@@ -469,7 +470,7 @@ export function Dashboard() {
           <Panel>
             <PanelHeader kicker="Headlines" title="Market news" actions={<Link href="/news" className="text-[11.5px] text-brand-soft hover:underline">All news</Link>} />
             {data?.news.length ? (
-              <div className="flex flex-col pb-1">
+              <div className="flex flex-col pb-1 reveal">
                 {data.news.map((item) => (
                   <a key={item.id} href={item.url} target="_blank" rel="noreferrer" className="row-glow group flex items-start gap-3 border-t border-line px-4 py-2 transition-colors hover:bg-white/[0.03]">
                     <Newspaper className="mt-0.5 size-3.5 shrink-0 text-muted" />
@@ -484,7 +485,7 @@ export function Dashboard() {
                 ))}
               </div>
             ) : (
-              <div className="px-4 pb-5 text-[12px] text-muted">Loading headlines…</div>
+              <SkeletonList rows={4} className="px-4 pb-5" />
             )}
           </Panel>
         </div>

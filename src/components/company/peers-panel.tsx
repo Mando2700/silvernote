@@ -8,7 +8,8 @@ import useSWR from 'swr';
 
 import { Button } from '@/components/ui/button';
 import { CompanyLogo } from '@/components/ui/company-logo';
-import { EmptyState, Input, Panel, PanelHeader, Segmented, Skeleton } from '@/components/ui/primitives';
+import { EmptyState, Input, Panel, PanelHeader, Segmented } from '@/components/ui/primitives';
+import { SkeletonPanel, SkeletonTable } from '@/components/ui/skeletons';
 import { compactNumber, multiple, pct } from '@/lib/format';
 import { cn } from '@/lib/utils';
 
@@ -118,7 +119,12 @@ export function PeersPanel({ symbol }: { symbol: string }) {
   };
   const benchmarkLabel = mode === 'sector' ? `${data?.subject?.sector ?? 'Sector'} median` : mode === 'industry' ? 'Industry median' : 'Peer median';
 
-  if (isLoading && !data) return <Skeleton className="h-96 w-full" />;
+  if (isLoading && !data)
+    return (
+      <SkeletonPanel>
+        <SkeletonTable rows={6} cols={6} />
+      </SkeletonPanel>
+    );
   if (!data?.subject) {
     return (
       <Panel>
@@ -133,7 +139,7 @@ export function PeersPanel({ symbol }: { symbol: string }) {
   const peerComponents = peers.map((peer) => data.componentScores[peer.symbol]).filter(Boolean);
 
   return (
-    <div className="flex flex-col gap-4">
+    <div className="flex flex-col gap-4 reveal">
       <Panel>
         <PanelHeader
           kicker={mode === 'peers' ? data.suggested.source : mode === 'sector' ? `${data.sector?.count ?? 0} companies above $50M` : `${data.industry?.count ?? 0} companies in ${subject.industry}`}

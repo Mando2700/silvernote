@@ -11,7 +11,8 @@ import { AnimatedNumber } from '@/components/motion/animated-number';
 import { useMarketColors } from '@/components/shell/providers';
 import { Button } from '@/components/ui/button';
 import { FullscreenOverlay } from '@/components/ui/fullscreen-overlay';
-import { Panel, Segmented, Skeleton } from '@/components/ui/primitives';
+import { Panel, Segmented } from '@/components/ui/primitives';
+import { SkeletonChart } from '@/components/ui/skeletons';
 import { moneyWeightedPath, replicateInIndex } from '@/lib/finance/performance';
 import { money, signedMoney, signedPct } from '@/lib/format';
 import { usePrivacy } from '@/lib/privacy';
@@ -113,7 +114,7 @@ export function PerformanceChart({ portfolioId, live }: { portfolioId: string; l
   if (!data) {
     return (
       <Panel className="p-4">
-        <Skeleton className="h-[360px]" />
+        <SkeletonChart height={360} />
       </Panel>
     );
   }
@@ -183,7 +184,7 @@ export function PerformanceChart({ portfolioId, live }: { portfolioId: string; l
     );
   }
 
-  return <Panel className="overflow-hidden">{body}</Panel>;
+  return <Panel className="overflow-hidden reveal">{body}</Panel>;
 }
 
 function ChartBody({

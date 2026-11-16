@@ -9,6 +9,7 @@ import { ColumnChart, LineChart, ScrollReveal, StackedColumns, Waterfall, type W
 import { Sparkline } from '@/components/motion/sparkline';
 import { Button } from '@/components/ui/button';
 import { Badge, EmptyState, Panel, PanelHeader, Segmented, Skeleton, Tabs } from '@/components/ui/primitives';
+import { SkeletonChart } from '@/components/ui/skeletons';
 import { Drawer } from '@/components/ui/overlay';
 import { downloadFrom } from '@/lib/export-client';
 import { compactNumber, isNum, pct, relativeTime, signedPct } from '@/lib/format';
@@ -652,7 +653,7 @@ export function Financials({ symbol, isBank }: { symbol: string; isBank: boolean
     return (
       <Panel className="p-4">
         <Skeleton className="mb-3 h-6 w-64" />
-        <Skeleton className="h-72 w-full" />
+        <SkeletonChart height={288} />
       </Panel>
     );
   }
@@ -669,7 +670,7 @@ export function Financials({ symbol, isBank }: { symbol: string; isBank: boolean
   const sentence = period ? summarySentence(kind, period, prior, currency) : null;
 
   return (
-    <Panel>
+    <Panel className="reveal">
       <PanelHeader
         kicker={`Source: ${data.source === 'sec' ? 'SEC XBRL filings' : data.source === 'fmp' ? 'Financial Modeling Prep' : 'SEC frames'} · updated ${relativeTime(data.fetchedAt)}`}
         title="Financial statements"

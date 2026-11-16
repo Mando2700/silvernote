@@ -15,7 +15,8 @@ import { useSnapshotSession } from '@/components/shell/topbar';
 import { Button } from '@/components/ui/button';
 import { CompanyLogo } from '@/components/ui/company-logo';
 import { Menu, Modal } from '@/components/ui/overlay';
-import { Badge, EmptyState, Field, Input, Panel, Segmented, Select, Skeleton, Switch } from '@/components/ui/primitives';
+import { Badge, EmptyState, Field, Input, Panel, Segmented, Select, Switch } from '@/components/ui/primitives';
+import { SkeletonTable } from '@/components/ui/skeletons';
 import { cite, SOURCES } from '@/lib/citation';
 import { api } from '@/lib/client';
 import { exportXlsx } from '@/lib/export-client';
@@ -575,11 +576,11 @@ export function Explorer() {
           ) : (
             <Panel className="overflow-hidden">
               {isLoading && !data ? (
-                <Skeleton className="m-4 h-[60vh]" />
+                <SkeletonTable rows={12} cols={7} />
               ) : !filtered.length ? (
                 <EmptyState icon={<FilterIcon className="size-4" />} title="Nothing matches this screen" body="Loosen a filter or clear the sector selection." />
               ) : (
-                <div ref={scrollRef} className="relative h-[calc(100dvh-230px)] min-h-[420px] overflow-auto">
+                <div ref={scrollRef} className="reveal relative h-[calc(100dvh-230px)] min-h-[420px] overflow-auto">
                   <div style={{ width: Math.max(totalWidth, 600) }}>
                     <div className="sticky top-0 z-20 flex border-b border-line-strong bg-surface-2/95 backdrop-blur" style={{ height: 34 }}>
                       {[

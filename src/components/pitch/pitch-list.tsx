@@ -78,11 +78,28 @@ export function PitchList() {
       {!data ? (
         <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
           {[0, 1, 2].map((key) => (
-            <Skeleton key={key} className="h-40" />
+            <div key={key} className="panel flex h-full flex-col gap-3 p-4">
+              <div className="flex items-center gap-3">
+                <Skeleton className="size-8 shrink-0 rounded-full" />
+                <div className="flex min-w-0 flex-1 flex-col gap-1.5">
+                  <Skeleton className="h-2.5 w-16" />
+                  <Skeleton className="h-2 w-28" />
+                </div>
+                <Skeleton className="h-5 w-14 rounded-xs" />
+              </div>
+              <div className="flex min-h-10 flex-col gap-1.5">
+                <Skeleton className="h-3.5 w-4/5" />
+                <Skeleton className="h-3.5 w-3/5" />
+              </div>
+              <div className="mt-auto flex items-center gap-4 border-t border-line pt-3">
+                <Skeleton className="h-2.5 w-20" />
+                <Skeleton className="h-2.5 w-20" />
+              </div>
+            </div>
           ))}
         </div>
       ) : data.length ? (
-        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+        <div className="reveal grid gap-3 md:grid-cols-2 xl:grid-cols-3">
           {data.map((pitch, index) => {
             const upside = pitch.target_price && pitch.price ? pitch.target_price / pitch.price - 1 : null;
             return (

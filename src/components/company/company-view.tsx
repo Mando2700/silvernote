@@ -27,6 +27,7 @@ import { Button, Magnetic } from '@/components/ui/button';
 import { CompanyLogo } from '@/components/ui/company-logo';
 import { FullscreenOverlay } from '@/components/ui/fullscreen-overlay';
 import { Badge, Panel, PanelHeader, Segmented, Skeleton, Tabs } from '@/components/ui/primitives';
+import { SkeletonChart, SkeletonList, SkeletonPanel, SkeletonStats, SkeletonText } from '@/components/ui/skeletons';
 import { CompanyWorkspace, type WorkspaceData } from '@/components/workspace/company-workspace';
 import { getAsset } from '@/lib/data/assets';
 import type { Candle, CompanyProfile, NewsItem, Quote } from '@/lib/data/types';
@@ -79,7 +80,7 @@ function daysUntil(date: string) {
 function NextEarnings({ symbol }: { symbol: string }) {
   const { data, isLoading } = useSWR<NextEarningsPayload>(`/api/company/${symbol}/earnings`, { revalidateOnFocus: false });
   const next = data?.earnings;
-  if (isLoading) return <Skeleton className="mx-4 mb-4 h-10" />;
+  if (isLoading) return <SkeletonText lines={2} className="mx-4 mb-4" />;
   const days = next ? daysUntil(next.date) : null;
   const when = days === null ? null : days === 0 ? 'today' : days === 1 ? 'tomorrow' : `in ${days} days`;
   const details = next
@@ -89,7 +90,6 @@ function NextEarnings({ symbol }: { symbol: string }) {
         next.estimates ? `${next.estimates} analysts` : null,
       ].filter(Boolean)
     : [];
-  return (
   const expectations = next
     ? [
         {
@@ -100,7 +100,8 @@ function NextEarnings({ symbol }: { symbol: string }) {
         { label: 'Revenue estimate', value: next.revenueEstimate !== null ? `$${compactNumber(next.revenueEstimate, 2)}` : null, note: '' },
       ].filter((item) => item.value)
     : [];
-    <div className="border-t border-line px-4 py-3">
+  return (
+    <div className="border-t border-line px-4 py-3 reveal">
       <div className="flex items-baseline justify-between gap-3">
         <span className="text-[11px] text-muted">Next earnings{next?.estimated ? ' (estimated)' : ''}</span>
         {next ? (
@@ -130,7 +131,12 @@ function NextEarnings({ symbol }: { symbol: string }) {
 }
 
 function KeyStats({ data, profileLoading }: { data: CompanyPayload | null; profileLoading: boolean }) {
-  if (!data) return <Skeleton className="h-[236px] w-full" />;
+  if (!data)
+    return (
+      <SkeletonPanel>
+        <SkeletonStats count={8} />
+      </SkeletonPanel>
+    );
   const f = data.fundamentals ?? {};
   const marketCap = data.security?.market_cap ?? null;
   const netIncome = n(f.net_income);
@@ -163,7 +169,7 @@ function KeyStats({ data, profileLoading }: { data: CompanyPayload | null; profi
   const low = data.profile?.low52 ?? null;
   const position = high && low && priceNow && high > low ? Math.min(1, Math.max(0, (priceNow - low) / (high - low))) : null;
   return (
-    <Panel>
+    <Panel className="reveal">
       <PanelHeader kicker={`Fiscal ${f.fiscal_year ?? '—'} · latest price`} title="Key statistics" />
       <div className="grid grid-cols-2 gap-x-6 gap-y-3 px-4 pb-4 sm:grid-cols-3 lg:grid-cols-4">
         {stats.map((stat) => (
@@ -267,7 +273,7 @@ function Overview({ symbol, data, profile, profileLoading, descriptionLoading, o
             onPick={studies.onPick}
           />
         ) : (
-          <Skeleton className="h-[340px] w-full" />
+          <SkeletonChart height={340} />
         )}
         {markers.length || workspace?.meta?.target_price ? (
           <div className="mt-2 flex items-center gap-4 text-[11px] text-muted">
@@ -358,13 +364,9 @@ function Overview({ symbol, data, profile, profileLoading, descriptionLoading, o
             <PanelHeader kicker={[profile?.sector, profile?.industry].filter(Boolean).join(' · ') || 'Company'} title="About" />
             <div className="px-4 pb-4">
               {descriptionLoading ? (
-                <div className="flex flex-col gap-2">
-                  <Skeleton className="h-3 w-full" />
-                  <Skeleton className="h-3 w-full" />
-                  <Skeleton className="h-3 w-2/3" />
-                </div>
+                <SkeletonText lines={3} />
               ) : (
-                <p className="line-clamp-[10] text-[12.5px] leading-relaxed text-ink-2">{profile?.description ?? 'No description available.'}</p>
+                <p className="line-clamp-[10] text-[12.5px] leading-relaxed text-ink-2 reveal">{profile?.description ?? 'No description available.'}</p>
               )}
               <div className="mt-3 grid grid-cols-2 gap-x-4 gap-y-2 text-[12px]">
                 {[
@@ -405,11 +407,7 @@ function Overview({ symbol, data, profile, profileLoading, descriptionLoading, o
             {news ? (
               <NewsList items={news.news.slice(0, 5)} compact />
             ) : (
-              <div className="flex flex-col gap-3 px-4 pb-4">
-                <Skeleton className="h-3.5 w-full" />
-                <Skeleton className="h-3.5 w-5/6" />
-                <Skeleton className="h-3.5 w-full" />
-              </div>
+              <SkeletonList rows={4} className="px-4 pb-4" />
             )}
           </Panel>
         )}

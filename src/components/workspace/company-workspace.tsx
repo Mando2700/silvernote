@@ -13,7 +13,8 @@ import { Button } from '@/components/ui/button';
 import { FullscreenOverlay } from '@/components/ui/fullscreen-overlay';
 import { MarkdownToolbar } from '@/components/ui/markdown-toolbar';
 import { Drawer } from '@/components/ui/overlay';
-import { Badge, Input, Panel, PanelHeader, Select, Skeleton, Textarea } from '@/components/ui/primitives';
+import { Badge, Input, Panel, PanelHeader, Select, Textarea } from '@/components/ui/primitives';
+import { SkeletonList, SkeletonPanel, SkeletonText } from '@/components/ui/skeletons';
 import { KillCriteria } from '@/components/workspace/kill-criteria';
 import { ThesisExportDialog } from '@/components/workspace/thesis-export';
 import { api, revalidate } from '@/lib/client';
@@ -260,7 +261,18 @@ export function CompanyWorkspace({ symbol, name, currentPrice }: { symbol: strin
     router.push(`/pitches/${pitch.id}`);
   };
 
-  if (isLoading && !data) return <Skeleton className="h-96 w-full" />;
+  if (isLoading && !data)
+    return (
+      <div className="grid gap-4 xl:grid-cols-[1fr_340px]">
+        <SkeletonPanel bodyClassName="flex flex-col gap-4">
+          <SkeletonText lines={6} />
+          <SkeletonText lines={4} />
+        </SkeletonPanel>
+        <SkeletonPanel>
+          <SkeletonList rows={5} />
+        </SkeletonPanel>
+      </div>
+    );
   const versions = data?.versions ?? [];
   const meta = data?.meta;
   const upside = meta?.target_price && currentPrice ? meta.target_price / currentPrice - 1 : null;
@@ -268,7 +280,7 @@ export function CompanyWorkspace({ symbol, name, currentPrice }: { symbol: strin
   const thesisText = THESIS_SECTIONS.map((section) => (data?.current[section] ? `## ${THESIS_SECTION_META[section].title}\n${data.current[section]?.content}` : '')).filter(Boolean).join('\n\n');
 
   return (
-    <div className="grid gap-4 xl:grid-cols-[1fr_340px]">
+    <div className="grid gap-4 xl:grid-cols-[1fr_340px] reveal">
       <div className="flex flex-col gap-4">
         <Panel>
           <div className="flex flex-wrap items-end gap-4 p-4">
