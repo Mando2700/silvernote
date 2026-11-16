@@ -2,10 +2,14 @@
 
 import { useEffect, useMemo, useSyncExternalStore } from 'react';
 
+import { marketSession } from '@/lib/session';
+
 /**
  * Browser side of the live price stream: components register the symbols they show, one
  * EventSource carries all of them (capped at 50, first registered first), and components
- * re-render only when prices arrive.
+ * re-render only when prices arrive. The stream is open only while the tab is visible and US trading
+ * is on (pre-market to after-hours): an open stream holds a server function open the whole time,
+ * which on a free host's plan is what runs out.
  */
 
 export type LivePrice = { symbol: string; price: number; change: number | null; changePct: number | null; timestamp: number };
@@ -19,6 +23,19 @@ let source: EventSource | null = null;
 let sourceKey = '';
 let syncTimer: ReturnType<typeof setTimeout> | null = null;
 let unavailable = false;
+let watching = false;
+
+/** Reopen or close the stream when the tab is shown or hidden and when the session opens or closes. */
+function watchActivity() {
+  if (watching || typeof document === 'undefined') return;
+  watching = true;
+  document.addEventListener('visibilitychange', schedule);
+  setInterval(schedule, 60_000);
+}
+
+function streamWanted() {
+  return document.visibilityState === 'visible' && marketSession() !== 'closed';
+}
 
 function notify() {
   version += 1;
@@ -27,7 +44,7 @@ function notify() {
 
 function sync() {
   syncTimer = null;
-  const symbols = [...wanted.keys()].slice(0, MAX).sort();
+  const symbols = streamWanted() ? [...wanted.keys()].slice(0, MAX).sort() : [];
   const key = symbols.join(',');
   if (key === sourceKey || unavailable) return;
   source?.close();
@@ -52,6 +69,7 @@ function sync() {
 }
 
 function schedule() {
+  watchActivity();
   if (!syncTimer) syncTimer = setTimeout(sync, 250);
 }
 
