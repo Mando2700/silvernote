@@ -209,7 +209,7 @@ function Overview({ symbol, data, profile, profileLoading, descriptionLoading, o
   const { data: candles } = useSWR<{ candles: Candle[]; range: string }>(
     `/api/company/${symbol}/candles?range=${range}${pages > 1 ? `&pages=${pages}` : ''}`,
   );
-  const studies = useChartStudies(symbol, candles?.candles ?? [], range);
+  const studies = useChartStudies(symbol, candles?.candles ?? [], range, candles?.range);
   const loadOlder = useCallback(() => setHistory((current) => ({ view, pages: current.view === view ? Math.min(current.pages * 2, 32) : 2 })), [view]);
   const { data: workspace } = useSWR<WorkspaceData>(`/api/workspaces/${symbol}`);
   // Commodities and crypto have no filings or company news feed.
@@ -262,6 +262,7 @@ function Overview({ symbol, data, profile, profileLoading, descriptionLoading, o
             mode={mode}
             height={fullscreen ? 640 : 340}
             animationKey={symbol}
+            legendLabel={symbol}
             rangeKey={candles.range}
             intraday={['1d', '1w', '1m', '3m'].includes(candles.range)}
             onReachStart={loadOlder}

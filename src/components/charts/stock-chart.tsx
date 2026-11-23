@@ -77,7 +77,7 @@ function Popover({ label, active, icon, children }: { label: string; active: boo
  * Studies for a price chart: indicator overlays and panes, compared tickers (switches to % scale)
  * and drawing tools (price levels, trend lines; kept per symbol in this browser).
  */
-export function useChartStudies(symbol: string, candles: Candle[], range: string) {
+export function useChartStudies(symbol: string, candles: Candle[], range: string, shownRange: string | undefined = range) {
   const [indicators, setIndicators] = useState<IndicatorId[]>([]);
   const [compare, setCompare] = useState<string[]>([]);
   const [tool, setTool] = useState<'none' | 'hline' | 'trend'>('none');
@@ -93,10 +93,17 @@ export function useChartStudies(symbol: string, candles: Candle[], range: string
     if (loadedFor === symbol) writeDrawings(symbol, drawings);
   }, [drawings, symbol, loadedFor]);
 
-  const { data: compared } = useSWR<Array<{ symbol: string; candles: Candle[] }>>(
+  const { data: fetched } = useSWR<{ range: string; items: Array<{ symbol: string; candles: Candle[] }> }>(
     compare.length ? ['compare', range, ...compare] : null,
-    () => Promise.all(compare.map(async (other) => ({ symbol: other, candles: ((await fetch(`/api/company/${other}/candles?range=${range}`).then((response) => response.json())) as { candles: Candle[] }).candles ?? [] }))),
+    async () => ({
+      range,
+      items: await Promise.all(compare.map(async (other) => ({ symbol: other, candles: ((await fetch(`/api/company/${other}/candles?range=${range}`).then((response) => response.json())) as { candles: Candle[] }).candles ?? [] }))),
+    }),
   );
+  // Compared bars are only drawn against main bars of the same timeframe: the last matching set stays put until its
+  // replacement lands, so the lines morph into the new timeframe together instead of collapsing and reappearing.
+  const [settled, setSettled] = useState<typeof fetched>(undefined);
+  if (fetched && fetched.range === shownRange && settled !== fetched) setSettled(fetched);
 
   const overlays = useMemo<ChartOverlay[]>(() => {
     const bars = [...candles].sort((a, b) => a.t - b.t).map((bar) => ({ t: bar.t, c: bar.c }));
@@ -120,13 +127,15 @@ export function useChartStudies(symbol: string, candles: Candle[], range: string
         out.push({ id: 'macd-s', label: 'Signal', color: COLORS.signal, points: result.signal, pane: macdPane });
       }
     }
-    (compared ?? []).forEach((item, index) => {
-      // Only bars on the main chart's timestamps, so the % baselines line up.
-      const times = new Set(bars.map((bar) => bar.t));
-      out.push({ id: `cmp-${item.symbol}`, label: item.symbol, color: SERIES_COLORS[index % SERIES_COLORS.length], points: item.candles.filter((bar) => times.has(bar.t)).map((bar) => ({ t: bar.t, value: bar.c })), width: 2 });
+    const times = new Set(bars.map((bar) => bar.t));
+    const compared = settled && settled.range === shownRange ? settled.items.filter((item) => compare.includes(item.symbol)) : [];
+    compared.forEach((item) => {
+      // Only bars on the main chart's timestamps, so the % baselines line up. Colour follows the ticker's slot in the compare list.
+      const slot = compare.indexOf(item.symbol);
+      out.push({ id: `cmp-${item.symbol}`, label: item.symbol, color: SERIES_COLORS[slot % SERIES_COLORS.length], points: item.candles.filter((bar) => times.has(bar.t)).map((bar) => ({ t: bar.t, value: bar.c })), width: 2, legend: true });
     });
     return out;
-  }, [candles, indicators, compared]);
+  }, [candles, indicators, settled, compare, shownRange]);
 
   const onPick = useCallback(
     (point: { t: number; price: number }) => {
@@ -216,7 +225,7 @@ export function StockChart({
   const [range, setRange] = useState<ChartRange>('1y');
   const [mode, setMode] = useState<'area' | 'candles'>('area');
   const { data } = useSWR<{ candles: Candle[]; range: string; previousClose?: number | null }>(`/api/company/${symbol}/candles?range=${range}`);
-  const studies = useChartStudies(symbol, data?.candles ?? [], range);
+  const studies = useChartStudies(symbol, data?.candles ?? [], range, data?.range);
   const boxRef = useRef<HTMLDivElement>(null);
   const [boxHeight, setBoxHeight] = useState<number | null>(null);
   useEffect(() => {
@@ -244,6 +253,7 @@ export function StockChart({
             mode={mode}
             height={chartHeight}
             animationKey={symbol}
+            legendLabel={symbol}
             rangeKey={data.range}
             intraday={['1d', '1w', '1m', '3m'].includes(data.range)}
             markers={markers}

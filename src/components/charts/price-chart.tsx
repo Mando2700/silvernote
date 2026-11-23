@@ -31,7 +31,7 @@ import { cn } from '@/lib/utils';
 export type ChartMarker = { t: number; label: string; tone?: 'brand' | 'muted' };
 
 /** Extra series drawn on the chart: indicators (pane 0 = on price, 1+ = own pane below) and compared tickers. */
-export type ChartOverlay = { id: string; label: string; color: string; points: Array<{ t: number; value: number }>; pane?: number; kind?: 'line' | 'histogram'; dashed?: boolean; width?: number };
+export type ChartOverlay = { id: string; label: string; color: string; points: Array<{ t: number; value: number }>; pane?: number; kind?: 'line' | 'histogram'; dashed?: boolean; width?: number; /** Listed in the legend above the plot, with its return. */ legend?: boolean };
 
 /** User drawings: horizontal price levels and two-point trend lines. */
 export type ChartDrawing = { id: string; kind: 'hline'; price: number } | { id: string; kind: 'trend'; from: { t: number; price: number }; to: { t: number; price: number } };
@@ -92,6 +92,27 @@ function interpolate(from: Candle[], to: Candle[], progress: number): Candle[] {
   });
 }
 
+type Point = { t: number; value: number };
+
+/** The source line sampled at the target's point positions (by index ratio), carrying the target's timestamps. */
+function resamplePoints(source: Point[], target: Point[]): Point[] {
+  if (!source.length) return target;
+  return target.map((point, index) => {
+    const position = (target.length <= 1 ? 1 : index / (target.length - 1)) * (source.length - 1);
+    const lower = source[Math.floor(position)];
+    const upper = source[Math.ceil(position)];
+    return { t: point.t, value: lerp(lower.value, upper.value, position - Math.floor(position)) };
+  });
+}
+
+function lerpPoints(from: Point[], to: Point[], progress: number): Point[] {
+  return to.map((point, index) => ({ t: point.t, value: lerp((from[index] ?? point).value, point.value, progress) }));
+}
+
+function samePoints(a: Point[], b: Point[]) {
+  return a.length === b.length && a.every((point, index) => point.t === b[index].t && point.value === b[index].value);
+}
+
 function priceRange(bars: Candle[], mode: Mode): PriceRange | null {
   if (!bars.length) return null;
   let min = Infinity;
@@ -133,6 +154,7 @@ export function PriceChart({
   markers = [],
   targetPrice,
   animationKey,
+  legendLabel,
   rangeKey,
   onReachStart,
   intraday = false,
@@ -150,6 +172,8 @@ export function PriceChart({
   targetPrice?: number | null;
   /** Data for a different key (e.g. another symbol) replaces the chart instead of morphing into it. */
   animationKey?: string;
+  /** Name of the main series in the legend shown above the plot while overlays marked `legend` are drawn. */
+  legendLabel?: string;
   /** The selected timeframe: a new one re-frames the chart, while more bars under the same one are older history loaded on the left. */
   rangeKey?: string;
   /** Called when the view is zoomed or panned past the oldest loaded bar, to load more history. */
@@ -175,6 +199,8 @@ export function PriceChart({
   // What is on screen right now (mid-transition frames included), so a new range morphs from the current frame.
   const shownRef = useRef<{ bars: Candle[]; key: string | undefined; rangeKey: string | undefined }>({ bars: [], key: undefined, rangeKey: undefined });
   const animationRef = useRef<{ frame: number | null; range: PriceRange | null }>({ frame: null, range: null });
+  // The line overlays as last drawn (mid-morph frames included), so a new timeframe morphs them from what is on screen.
+  const overlayShownRef = useRef<{ key: string | undefined; lines: Map<string, Point[]> }>({ key: undefined, lines: new Map() });
   const [series, setSeries] = useState<PriceSeries | null>(null);
   const [hover, setHover] = useState<Hover>(null);
   const [visible, setVisible] = useState<{ from: number; to: number } | null>(null);
@@ -519,25 +545,56 @@ export function PriceChart({
   useEffect(() => {
     const chart = chartRef.current;
     if (!chart || !series) return;
+    // Lines morph from what they showed before (a new timeframe) to their new points, in step with the main series;
+    // in % mode a newly compared ticker grows out of a flat line. Another symbol replaces them outright.
+    const animate = !prefersReducedMotion();
+    const shown = overlayShownRef.current.key === animationKey ? overlayShownRef.current.lines : new Map<string, Point[]>();
+    const next = new Map<string, Point[]>();
+    overlayShownRef.current = { key: animationKey, lines: next };
+    const morphs: Array<{ line: ISeriesApi<'Line'>; key: string; from: Point[]; to: Point[] }> = [];
+    const toData = (points: Point[]) => points.map((point) => ({ time: point.t as UTCTimestamp, value: point.value }));
     const added = overlays.map((overlay) => {
       const pane = overlay.pane ?? 0;
-      const data = overlay.points.map((point) => ({ time: point.t as UTCTimestamp, value: point.value }));
       if (overlay.kind === 'histogram') {
         const histogram = chart.addSeries(HistogramSeries, { priceLineVisible: false, lastValueVisible: false, priceFormat: { type: 'price', precision: 2, minMove: 0.01 } }, pane);
-        histogram.setData(data.map((point) => ({ ...point, color: withAlpha(point.value >= 0 ? market.gainFill : market.lossFill, 0.6) })));
+        histogram.setData(toData(overlay.points).map((point) => ({ ...point, color: withAlpha(point.value >= 0 ? market.gainFill : market.lossFill, 0.6) })));
         return histogram;
       }
       const line = chart.addSeries(
         LineSeries,
-        { color: overlay.color, lineWidth: (overlay.width ?? 1.5) as 1, lineStyle: overlay.dashed ? LineStyle.Dashed : LineStyle.Solid, priceLineVisible: false, lastValueVisible: pane > 0 || percentMode, crosshairMarkerVisible: false, title: pane > 0 || percentMode ? overlay.label : '' },
+        { color: overlay.color, lineWidth: (overlay.width ?? 1.5) as 1, lineStyle: overlay.dashed ? LineStyle.Dashed : LineStyle.Solid, priceLineVisible: false, lastValueVisible: pane > 0 || percentMode, crosshairMarkerVisible: false, title: pane > 0 ? overlay.label : '' },
         pane,
       );
-      line.setData(data);
+      const before = shown.get(overlay.id);
+      let start = overlay.points;
+      if (animate && overlay.points.length) {
+        if (before?.length && !samePoints(before, overlay.points)) start = resamplePoints(before, overlay.points);
+        else if (!before && percentMode) start = overlay.points.map((point) => ({ t: point.t, value: overlay.points[0].value }));
+      }
+      line.setData(toData(start));
+      next.set(overlay.id, start);
+      if (start !== overlay.points) morphs.push({ line, key: overlay.id, from: start, to: overlay.points });
       return line;
     });
+    let frame: number | null = null;
+    if (morphs.length) {
+      let startedAt: number | null = null;
+      const step = (now: number) => {
+        startedAt ??= now;
+        const progress = easeInOutCubic((now - startedAt) / TRANSITION_MS);
+        for (const morph of morphs) {
+          const points = progress >= 1 ? morph.to : lerpPoints(morph.from, morph.to, progress);
+          morph.line.setData(toData(points));
+          next.set(morph.key, points);
+        }
+        frame = progress >= 1 ? null : requestAnimationFrame(step);
+      };
+      frame = requestAnimationFrame(step);
+    }
     const panes = chart.panes();
     for (let index = 1; index < panes.length; index += 1) panes[index].setHeight(Math.round(height * 0.26));
     return () => {
+      if (frame !== null) cancelAnimationFrame(frame);
       if (chartRef.current !== chart) return;
       for (const item of added) {
         try {
@@ -552,6 +609,7 @@ export function PriceChart({
         if (!remaining[index].getSeries().length) chart.removePane(index);
       }
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- animationKey only decides whether the previous frames carry over
   }, [overlays, series, market, height, percentMode]);
 
   useEffect(() => {
@@ -639,6 +697,26 @@ export function PriceChart({
   const shown = mode === 'candles' && hover ? hover : rangeShown;
   const rangeReturn = firstCandle && lastVisible ? lastVisible.c / (baseline ?? firstCandle.c) - 1 : null;
 
+  // Legend above the plot (not titles drawn on the lines): each series with its return to the hovered bar, or over the visible range.
+  const legendOverlays = overlays.filter((overlay) => overlay.legend && overlay.kind !== 'histogram');
+  const legendEnd = hover?.t ?? lastVisible?.t;
+  const legendItems = [
+    ...(legendOverlays.length && legendLabel && firstCandle && lastVisible
+      ? [{ id: 'main', label: legendLabel, color: trendColor(sorted, market, baseline), value: hover ? hover.c / (baseline ?? firstCandle.c) - 1 : rangeReturn }]
+      : []),
+    ...legendOverlays.map((overlay) => {
+      const start = firstCandle ? overlay.points.find((point) => point.t >= firstCandle.t)?.value : undefined;
+      let end: number | undefined;
+      for (let index = overlay.points.length - 1; index >= 0 && legendEnd !== undefined; index -= 1) {
+        if (overlay.points[index].t <= legendEnd) {
+          end = overlay.points[index].value;
+          break;
+        }
+      }
+      return { id: overlay.id, label: overlay.label, color: overlay.color, value: start && end !== undefined ? end / start - 1 : null };
+    }),
+  ];
+
   return (
     <div className={cn('relative', className)}>
       <div className="pointer-events-none absolute top-0 left-0 z-10 flex flex-wrap items-baseline gap-x-3 gap-y-0.5 text-[11px]">
@@ -666,7 +744,19 @@ export function PriceChart({
           <span className={cn('num font-medium', rangeReturn >= 0 ? 'text-gain' : 'text-loss')}>{signedPct(rangeReturn)} over range</span>
         ) : null}
       </div>
-      <div ref={hostRef} className="w-full pt-5" style={{ height }} />
+      {legendItems.length ? (
+        <div className="pointer-events-none absolute top-5 left-0 z-10 flex max-w-full items-center gap-x-4 overflow-hidden whitespace-nowrap text-[11px]">
+          {legendItems.map((item) => (
+            <span key={item.id} className="flex items-center gap-1.5">
+              <span className="size-2 shrink-0 rounded-full" style={{ background: item.color }} />
+              <span className="font-mono text-ink-2">{item.label}</span>
+              {item.value !== null ? <span className={cn('num font-medium', item.value >= 0 ? 'text-gain' : 'text-loss')}>{signedPct(item.value)}</span> : null}
+            </span>
+          ))}
+        </div>
+      ) : null}
+      {/* The legend takes its own row above the plot, so it never sits on a line. */}
+      <div ref={hostRef} className={cn('w-full', legendItems.length ? 'pt-11' : 'pt-5')} style={{ height }} />
     </div>
   );
 }
