@@ -17,6 +17,7 @@ import { FullscreenOverlay } from '@/components/ui/fullscreen-overlay';
 import { MarkdownToolbar } from '@/components/ui/markdown-toolbar';
 import { Drawer } from '@/components/ui/overlay';
 import { Badge, EmptyState, Input, Panel, PanelHeader, Segmented, Skeleton } from '@/components/ui/primitives';
+import { SkeletonList, SkeletonTable, SkeletonText } from '@/components/ui/skeletons';
 import { DiffView } from '@/components/workspace/company-workspace';
 import { api } from '@/lib/client';
 import { dateTime, price, relativeTime } from '@/lib/format';
@@ -91,7 +92,28 @@ function NoteEditor({ id, onChanged, onDeleted }: { id: string; onChanged: () =>
     if (timer.current) clearTimeout(timer.current);
   }, []);
 
-  if (!data) return <Skeleton className="h-[60vh]" />;
+  if (!data) {
+    return (
+      <Panel className="flex h-[60vh] flex-col">
+        <div className="flex items-center gap-2 border-b border-line px-4 py-2.5">
+          <Skeleton className="h-6 w-24" />
+          <Skeleton className="h-2.5 w-32" />
+          <div className="ml-auto flex items-center gap-1.5">
+            <Skeleton className="h-7 w-16" />
+            <Skeleton className="h-7 w-24" />
+          </div>
+        </div>
+        <div className="grid grid-cols-[1fr_120px_1fr] gap-2 border-b border-line px-4 py-2.5">
+          <Skeleton className="h-4 w-2/3" />
+          <Skeleton className="h-7" />
+          <Skeleton className="h-7" />
+        </div>
+        <div className="p-4">
+          <SkeletonText lines={6} />
+        </div>
+      </Panel>
+    );
+  }
   const versions = data.versions ?? [];
   const selectedVersion = versions.find((version) => version.id === compare);
   const previous = selectedVersion ? versions[versions.indexOf(selectedVersion) + 1] : null;
@@ -285,9 +307,9 @@ function ThesesBoard() {
       <Panel>
         <PanelHeader kicker="One workspace per company" title="Theses" />
         {isLoading && !workspaces ? (
-          <Skeleton className="mx-4 mb-4 h-48" />
+          <SkeletonTable rows={4} cols={7} className="mb-2" />
         ) : workspaces?.length ? (
-          <table className="w-full text-[12.5px]">
+          <table className="reveal w-full text-[12.5px]">
             <thead>
               <tr className="border-y border-line bg-surface-1 text-left text-[11px] text-muted">
                 <th className="px-4 py-2 font-medium">Company</th>
@@ -437,7 +459,7 @@ export function Notes() {
               <Input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search notes" className="pl-8" />
             </div>
             <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-2">
-              {isLoading && !notes ? <Skeleton className="h-40" /> : null}
+              {isLoading && !notes ? <SkeletonList rows={5} className="px-2.5" /> : null}
               {notes?.map((note) => (
                 <button
                   key={note.id}

@@ -11,6 +11,7 @@ import { ProgressBar } from '@/components/learn/progress-bar';
 import { RankCard } from '@/components/learn/rank-card';
 import { Page } from '@/components/shell/page';
 import { Panel, Skeleton } from '@/components/ui/primitives';
+import { SkeletonText } from '@/components/ui/skeletons';
 import { api, revalidate } from '@/lib/client';
 import { lessonsInTrack, SOURCES, TRACKS, type Lesson } from '@/lib/learn/curriculum';
 import { DRILL_TYPES } from '@/lib/learn/drills';
@@ -82,7 +83,31 @@ export function LearnHub() {
       title="Learn"
       description="Investing and investment banking from first principles to pitch-ready — every lesson runs on real companies and your own data, with quizzes, drills and graded practice."
     >
-      {state ? <RankCard rank={state.rank} byId={byId} pace={pace} /> : isLoading ? <Skeleton className="h-[230px] w-full" /> : null}
+      {state ? <RankCard rank={state.rank} byId={byId} pace={pace} /> : isLoading ? (
+        <Panel className="overflow-hidden p-5">
+          <div className="grid gap-6 lg:grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)]">
+            <div className="flex flex-col gap-5">
+              <div className="flex items-center gap-4">
+                <Skeleton className="size-[78px] shrink-0 rounded-full" />
+                <div className="flex min-w-0 flex-col gap-2">
+                  <Skeleton className="h-2 w-24" />
+                  <Skeleton className="h-6 w-40" />
+                  <Skeleton className="h-2.5 w-20" />
+                </div>
+              </div>
+              <div className="flex items-start gap-1">
+                {[0, 1, 2, 3, 4].map((key) => (
+                  <div key={key} className="flex min-w-0 flex-1 flex-col gap-1.5">
+                    <Skeleton className="h-1.5" />
+                    <Skeleton className="h-2 w-12" />
+                  </div>
+                ))}
+              </div>
+            </div>
+            <SkeletonText lines={3} />
+          </div>
+        </Panel>
+      ) : null}
 
       <Panel className="p-5">
         <div className="flex flex-wrap items-end justify-between gap-x-6 gap-y-2">

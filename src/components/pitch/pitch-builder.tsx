@@ -34,6 +34,7 @@ import { FullscreenOverlay } from '@/components/ui/fullscreen-overlay';
 import { MarkdownToolbar } from '@/components/ui/markdown-toolbar';
 import { Menu } from '@/components/ui/overlay';
 import { Badge, Input, Panel, Segmented, Skeleton, Switch } from '@/components/ui/primitives';
+import { SkeletonList, SkeletonPanel, SkeletonText } from '@/components/ui/skeletons';
 import { api, revalidate } from '@/lib/client';
 import { compactNumber, price, relativeTime } from '@/lib/format';
 import { renderMarkdown } from '@/lib/markdown';
@@ -237,8 +238,28 @@ export function PitchBuilder({ id }: { id: string }) {
   if (!data || !draft) {
     return (
       <div className="flex flex-col gap-4">
-        <Skeleton className="h-32" />
-        <Skeleton className="h-[60vh]" />
+        <Panel className="p-5">
+          <div className="flex items-start gap-5">
+            <Skeleton className="size-14 shrink-0 rounded-full" />
+            <div className="flex min-w-0 flex-1 flex-col gap-3">
+              <Skeleton className="h-2.5 w-40" />
+              <Skeleton className="h-6 w-2/3" />
+              <div className="flex gap-2">
+                <Skeleton className="h-7 w-16" />
+                <Skeleton className="h-7 w-16" />
+                <Skeleton className="h-7 w-16" />
+              </div>
+            </div>
+          </div>
+        </Panel>
+        <div className="grid items-start gap-4 lg:grid-cols-[272px_minmax(0,1fr)]">
+          <SkeletonPanel>
+            <SkeletonList rows={6} />
+          </SkeletonPanel>
+          <SkeletonPanel className="h-[60vh]">
+            <SkeletonText lines={10} />
+          </SkeletonPanel>
+        </div>
       </div>
     );
   }
@@ -249,7 +270,7 @@ export function PitchBuilder({ id }: { id: string }) {
   const included = draft.sections.filter((item) => item.included);
 
   return (
-    <Page>
+    <Page className="reveal">
       <Link href="/pitches" className="kicker inline-flex w-fit items-center gap-1 hover:text-ink-2">
         <ArrowLeft className="size-3" /> All pitches
       </Link>

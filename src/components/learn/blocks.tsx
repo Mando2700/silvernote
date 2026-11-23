@@ -8,6 +8,7 @@ import { useShell } from '@/components/shell/providers';
 import { Button } from '@/components/ui/button';
 import { CompanyLogo } from '@/components/ui/company-logo';
 import { Panel, PanelHeader } from '@/components/ui/primitives';
+import { SkeletonChart } from '@/components/ui/skeletons';
 import { TickerSearch } from '@/components/ui/ticker-search';
 import { cn } from '@/lib/utils';
 
@@ -206,12 +207,9 @@ export function Readout({ label, value, tone, sub }: { label: string; value: Rea
 /** Loading / error placeholder for live-data widgets. */
 export function DataState({ loading, error, empty, height = 220 }: { loading?: boolean; error?: unknown; empty?: string | null; height?: number }) {
   return (
-    <div className="grid place-items-center rounded-md border border-dashed border-line text-center text-[12.5px] text-muted" style={{ height }}>
+    <div className={cn('grid place-items-center rounded-md text-center text-[12.5px] text-muted', loading ? 'border-0' : 'border border-dashed border-line')} style={{ height }}>
       {loading ? (
-        <span className="flex items-center gap-2">
-          <span className="size-1.5 animate-pulse rounded-full bg-ion" />
-          Loading live data…
-        </span>
+        <SkeletonChart height="100%" className="border-0" />
       ) : error ? (
         <span className="max-w-sm px-4">Couldn’t load this company’s data: {(error as Error)?.message ?? 'unknown error'}. Try another ticker.</span>
       ) : (

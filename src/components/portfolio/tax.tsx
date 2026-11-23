@@ -9,6 +9,7 @@ import useSWR from 'swr';
 import { Delta } from '@/components/motion/delta';
 import { CompanyLogo } from '@/components/ui/company-logo';
 import { Badge, EmptyState, Field, Input, Panel, PanelHeader, Segmented, Select, Skeleton } from '@/components/ui/primitives';
+import { SkeletonPanel, SkeletonStats, SkeletonTable } from '@/components/ui/skeletons';
 import { StatTile } from '@/components/ui/stat-tile';
 import { Button } from '@/components/ui/button';
 import { api, revalidate } from '@/lib/client';
@@ -164,7 +165,23 @@ export function TaxPanel({ portfolioId, onPortfolioChanged }: { portfolioId: str
     }
   };
 
-  if (isLoading && !data) return <Skeleton className="h-72" />;
+  if (isLoading && !data) {
+    return (
+      <div className="flex flex-col gap-4">
+        <SkeletonPanel>
+          <div className="grid gap-3 md:grid-cols-[1.3fr_1fr_0.6fr]">
+            <Skeleton className="h-12" />
+            <Skeleton className="h-12" />
+            <Skeleton className="h-12" />
+          </div>
+        </SkeletonPanel>
+        <SkeletonStats count={4} />
+        <SkeletonPanel bodyClassName="p-0">
+          <SkeletonTable rows={6} cols={5} logo={false} />
+        </SkeletonPanel>
+      </div>
+    );
+  }
   if (!data) return null;
 
   const rules = taxRulesFor(data.jurisdiction);
@@ -179,7 +196,7 @@ export function TaxPanel({ portfolioId, onPortfolioChanged }: { portfolioId: str
   const currentYear = Number(data.today.slice(0, 4));
 
   return (
-    <div className="flex flex-col gap-4">
+    <div className="reveal flex flex-col gap-4">
       <Panel>
         <PanelHeader
           kicker={`Lot-level cost basis · ${rules.name} rules`}

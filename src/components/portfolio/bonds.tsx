@@ -10,7 +10,8 @@ import { LineChart, SERIES_COLORS, StackedColumns } from '@/components/charts/sv
 import { Delta } from '@/components/motion/delta';
 import { Button } from '@/components/ui/button';
 import { Modal } from '@/components/ui/overlay';
-import { Badge, EmptyState, Field, Input, Panel, PanelHeader, Select, Skeleton } from '@/components/ui/primitives';
+import { Badge, EmptyState, Field, Input, Panel, PanelHeader, Select } from '@/components/ui/primitives';
+import { SkeletonPanel, SkeletonStats, SkeletonTable } from '@/components/ui/skeletons';
 import { StatTile } from '@/components/ui/stat-tile';
 import { localToday } from '@/lib/dates';
 import { api } from '@/lib/client';
@@ -271,7 +272,16 @@ export function BondsPanel({ portfolioId, onChanged }: { portfolioId: string; on
     </Modal>
   );
 
-  if (isLoading && !data) return <Skeleton className="h-72" />;
+  if (isLoading && !data) {
+    return (
+      <div className="flex flex-col gap-4">
+        <SkeletonStats count={6} className="md:grid-cols-6" />
+        <SkeletonPanel bodyClassName="p-0">
+          <SkeletonTable rows={5} cols={8} logo={false} />
+        </SkeletonPanel>
+      </div>
+    );
+  }
   if (!data?.bonds.length) {
     return (
       <Panel>
@@ -295,7 +305,7 @@ export function BondsPanel({ portfolioId, onChanged }: { portfolioId: string; on
   const flows = data.cashFlows.slice(0, 15);
 
   return (
-    <div className="flex flex-col gap-4">
+    <div className="reveal flex flex-col gap-4">
       <div className="grid grid-cols-2 gap-2 md:grid-cols-6">
         <StatTile label="Market value" value={money(summary.marketValue, { digits: 0 })} sub={<span className="text-muted">Face {money(summary.face, { digits: 0 })} · accrued {money(summary.accrued, { digits: 0 })}</span>} />
         <StatTile label="Unrealized" value={<Delta value={summary.unrealized} kind="money" sensitive digits={0} className="text-[17px]" />} sub={<span className="text-muted">Clean price vs. price paid</span>} />

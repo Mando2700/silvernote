@@ -22,6 +22,7 @@ import { useShell } from '@/components/shell/providers';
 import { Button, IconButton } from '@/components/ui/button';
 import { CompanyLogo } from '@/components/ui/company-logo';
 import { Panel, Select, Skeleton } from '@/components/ui/primitives';
+import { SkeletonChart } from '@/components/ui/skeletons';
 import { TickerSearch } from '@/components/ui/ticker-search';
 import { CompanyWorkspace } from '@/components/workspace/company-workspace';
 import { compactNumber, price } from '@/lib/format';
@@ -95,7 +96,26 @@ type CompanyPayload = {
 
 function QuotePanel({ symbol }: { symbol: string }) {
   const { data } = useSWR<CompanyPayload>(`/api/company/${symbol}`, { refreshInterval: 30_000 });
-  if (!data) return <Skeleton className="h-40" />;
+  if (!data)
+    return (
+      <div className="flex flex-col gap-3" aria-hidden>
+        <div className="flex items-center gap-3">
+          <Skeleton className="size-8 shrink-0 rounded-full" />
+          <div className="flex flex-col gap-1.5">
+            <Skeleton className="h-3.5 w-20" />
+            <Skeleton className="h-2.5 w-36" />
+          </div>
+        </div>
+        <div className="grid grid-cols-2 gap-x-4 gap-y-3">
+          {Array.from({ length: 8 }, (_, index) => (
+            <div key={index} className="flex flex-col gap-1.5">
+              <Skeleton className="h-2.5 w-16" />
+              <Skeleton className="h-3 w-12" />
+            </div>
+          ))}
+        </div>
+      </div>
+    );
   const f = data.fundamentals ?? {};
   const cap = data.security?.market_cap ?? null;
   const num = (key: string) => (typeof f[key] === 'number' ? (f[key] as number) : null);
@@ -110,7 +130,7 @@ function QuotePanel({ symbol }: { symbol: string }) {
     ['Score', data.score ? `${data.score.overall} · ${data.score.label}` : '—'],
   ];
   return (
-    <div className="flex flex-col gap-3">
+    <div className="flex flex-col gap-3 reveal">
       <div className="flex items-center gap-3">
         <CompanyLogo symbol={symbol} size="md" />
         <div className="min-w-0">
@@ -139,7 +159,7 @@ function QuotePanel({ symbol }: { symbol: string }) {
 
 function HeatmapPanel({ height }: { height: number }) {
   const { data } = useSWR<{ heatmap: HeatmapItem[] }>('/api/dashboard', { refreshInterval: 60_000 });
-  return data?.heatmap.length ? <MarketHeatmap items={data.heatmap} height={height} /> : <div style={{ height }}><Skeleton className="h-full" /></div>;
+  return data?.heatmap.length ? <MarketHeatmap items={data.heatmap} height={height} /> : <SkeletonChart height={height} />;
 }
 
 function PanelBody({ type, symbol, tall }: { type: PanelType; symbol: string; tall?: boolean }) {

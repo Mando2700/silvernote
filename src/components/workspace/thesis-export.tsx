@@ -126,7 +126,7 @@ export function ThesisExportDialog({ open, onClose, symbol, name, workspace }: {
               ))}
             </div>
           ) : images.length ? (
-            <div className="grid max-h-[46vh] grid-cols-2 gap-2 overflow-y-auto pr-1 sm:grid-cols-3">
+            <div className="grid max-h-[46vh] grid-cols-2 gap-2 overflow-y-auto pr-1 sm:grid-cols-3 reveal">
               {images.map((image) => {
                 const order = selected.indexOf(image.id);
                 return (

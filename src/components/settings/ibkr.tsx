@@ -7,7 +7,8 @@ import { toast } from 'sonner';
 import useSWR from 'swr';
 
 import { Button } from '@/components/ui/button';
-import { Badge, Field, Input, Panel, PanelHeader, Skeleton } from '@/components/ui/primitives';
+import { Badge, Field, Input, Panel, PanelHeader } from '@/components/ui/primitives';
+import { SkeletonText } from '@/components/ui/skeletons';
 import { api, revalidate } from '@/lib/client';
 import { relativeTime } from '@/lib/format';
 
@@ -112,10 +113,10 @@ export function IbkrPanel() {
         }
       />
       <div className="flex flex-col gap-4 px-4 pb-5">
-        {!data ? <Skeleton className="h-28" /> : null}
+        {!data ? <SkeletonText lines={3} /> : null}
 
         {connected ? (
-          <div className="flex flex-col gap-3">
+          <div className="reveal flex flex-col gap-3">
             {connected.accounts.length ? (
               <div className="flex flex-col gap-1">
                 {connected.accounts.map((account) => (
@@ -153,7 +154,7 @@ export function IbkrPanel() {
         ) : null}
 
         {showForm ? (
-          <div className="flex flex-col gap-4">
+          <div className="reveal flex flex-col gap-4">
             {!connected ? (
               <p className="text-[12px] leading-relaxed text-ink-2">
                 One-time setup, about two minutes. SilverNote uses IBKR’s read-only reporting token: it can’t trade or move money, you never enter your IBKR password here, and it keeps syncing without daily logins.

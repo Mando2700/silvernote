@@ -11,7 +11,8 @@ import { Page } from '@/components/shell/page';
 import { useShell, type Preferences } from '@/components/shell/providers';
 import { Button } from '@/components/ui/button';
 import { NotificationsPanel } from '@/components/settings/notifications';
-import { Badge, Input, Panel, PanelHeader, Segmented, Select, Skeleton } from '@/components/ui/primitives';
+import { Badge, Input, Panel, PanelHeader, Segmented, Select } from '@/components/ui/primitives';
+import { SkeletonList } from '@/components/ui/skeletons';
 import { api, revalidate } from '@/lib/client';
 import { TAX_COUNTRIES, taxRulesFor, type TaxRegion } from '@/lib/finance/tax-rules';
 import { relativeTime } from '@/lib/format';
@@ -212,10 +213,10 @@ export function Settings() {
             <PanelHeader kicker="Data" title="Sources" />
             {!status ? (
               <div className="px-4 pb-4">
-                <Skeleton className="h-40" />
+                <SkeletonList rows={6} />
               </div>
             ) : (
-              <div className="flex flex-col">
+              <div className="reveal flex flex-col">
                 <SourceRow name="Nasdaq" detail="Universe, quotes, 10-year history, profiles, headlines" ok />
                 <SourceRow name="SEC EDGAR" detail={status.config.secUserAgentCustomized ? 'Filings, XBRL statements and frames' : 'Set SEC_USER_AGENT with your contact email (SEC fair-access policy)'} ok warn={!status.config.secUserAgentCustomized} />
                 <SourceRow name="FRED" detail="Nasdaq Composite history (2008 stress test), 3-month T-bill" ok />

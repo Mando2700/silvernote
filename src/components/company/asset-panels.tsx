@@ -4,7 +4,8 @@ import { ExternalLink } from 'lucide-react';
 import useSWR from 'swr';
 
 import { Delta } from '@/components/motion/delta';
-import { Panel, PanelHeader, Skeleton } from '@/components/ui/primitives';
+import { Panel, PanelHeader } from '@/components/ui/primitives';
+import { SkeletonPanel, SkeletonStats, SkeletonText } from '@/components/ui/skeletons';
 import { ASSET_KIND_LABEL, getAsset } from '@/lib/data/assets';
 import { compactNumber, pct, price, shortDate } from '@/lib/format';
 import type { AssetDetails } from '@/lib/services/assets';
@@ -62,7 +63,12 @@ export function useAssetDetails(symbol: string) {
 /** Today's trading, the 52-week range and, for crypto, the market's size. */
 export function AssetMarketPanel({ symbol, livePrice }: { symbol: string; livePrice: number | null }) {
   const { data } = useAssetDetails(symbol);
-  if (!data) return <Skeleton className="h-[188px] w-full" />;
+  if (!data)
+    return (
+      <SkeletonPanel>
+        <SkeletonStats count={4} />
+      </SkeletonPanel>
+    );
   const market = data.market;
   const coin = data.coin;
   const stats: Stat[] = [
@@ -82,7 +88,7 @@ export function AssetMarketPanel({ symbol, livePrice }: { symbol: string; livePr
     );
   }
   return (
-    <Panel>
+    <Panel className="reveal">
       <PanelHeader kicker={market?.exchange && market.exchange !== 'CCC' ? `${market.exchange} · ${market.currency ?? 'USD'}` : (market?.currency ?? 'USD')} title="Market" />
       <StatGrid stats={stats} />
       <RangeBar label="52-week range" low={market?.low52 ?? null} high={market?.high52 ?? null} value={livePrice} />
@@ -93,11 +99,16 @@ export function AssetMarketPanel({ symbol, livePrice }: { symbol: string; livePr
 /** Returns across horizons, plus how bumpy the ride has been. */
 export function AssetPerformancePanel({ symbol }: { symbol: string }) {
   const { data } = useAssetDetails(symbol);
-  if (!data) return <Skeleton className="h-[176px] w-full" />;
+  if (!data)
+    return (
+      <SkeletonPanel>
+        <SkeletonStats count={4} />
+      </SkeletonPanel>
+    );
   const shown = data.performance.filter((period) => period.value !== null);
   const years = data.historyYears && data.historyYears >= 1.5 ? `${Math.round(data.historyYears)}-year` : '1-year';
   return (
-    <Panel>
+    <Panel className="reveal">
       <PanelHeader kicker="Daily closes" title="Performance" />
       <div className="grid grid-cols-4 gap-px overflow-hidden border-y border-line bg-line sm:grid-cols-8">
         {shown.map((period) => (
@@ -142,13 +153,9 @@ export function AssetAboutPanel({ symbol }: { symbol: string }) {
       <PanelHeader kicker={ASSET_KIND_LABEL[asset.kind]} title={`About ${asset.name}`} />
       <div className="px-4 pb-4">
         {!data && asset.kind === 'crypto' ? (
-          <div className="flex flex-col gap-2">
-            <Skeleton className="h-3 w-full" />
-            <Skeleton className="h-3 w-full" />
-            <Skeleton className="h-3 w-2/3" />
-          </div>
+          <SkeletonText lines={3} />
         ) : (
-          <p className="line-clamp-[10] text-[12.5px] leading-relaxed whitespace-pre-line text-ink-2">{description}</p>
+          <p className="line-clamp-[10] text-[12.5px] leading-relaxed whitespace-pre-line text-ink-2 reveal">{description}</p>
         )}
         <div className="mt-3 grid grid-cols-2 gap-x-4 gap-y-2 text-[12px]">
           {data?.contract ? (

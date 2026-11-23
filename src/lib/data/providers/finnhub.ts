@@ -117,6 +117,15 @@ export async function fetchRecommendations(symbol: string) {
   return Array.isArray(rows) ? rows : [];
 }
 
+/** Scheduled reports for one company between two dates (YYYY-MM-DD), with the consensus revenue (in dollars) and EPS. */
+export async function fetchUpcomingReport(symbol: string, from: string, to: string) {
+  const data = await get<{ earningsCalendar?: Array<{ date: string; hour: string; epsEstimate: number | null; revenueEstimate: number | null }> | null }>(
+    '/calendar/earnings',
+    { symbol: symbol.replace('.', '-'), from, to },
+  );
+  return (data?.earningsCalendar ?? []).sort((a, b) => a.date.localeCompare(b.date))[0] ?? null;
+}
+
 export async function fetchEarningsSurprises(symbol: string) {
   const rows = await get<Array<{ period: string; actual: number | null; estimate: number | null; surprisePercent: number | null }>>(
     '/stock/earnings',

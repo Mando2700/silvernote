@@ -12,7 +12,8 @@ import { ScoreRing } from '@/components/motion/score-ring';
 import { Page } from '@/components/shell/page';
 import { Button, Magnetic } from '@/components/ui/button';
 import { CompanyLogo } from '@/components/ui/company-logo';
-import { Badge, EmptyState, Field, Input, Panel, PanelHeader, Segmented, Select, Skeleton } from '@/components/ui/primitives';
+import { Badge, EmptyState, Field, Input, Panel, PanelHeader, Segmented, Select } from '@/components/ui/primitives';
+import { SkeletonChart, SkeletonPanel, SkeletonText } from '@/components/ui/skeletons';
 import { StatTile } from '@/components/ui/stat-tile';
 import { api } from '@/lib/client';
 import { FIELD_LABELS, type Field as RuleField, type Operator, PRICE_FIELDS, SCORE_FIELDS, type BacktestResult, type Strategy, type Trade } from '@/lib/finance/backtest';
@@ -315,7 +316,7 @@ function Results({ result, strategyName }: { result: BacktestResult; strategyNam
   }, [result]);
 
   return (
-    <div className="flex flex-col gap-4">
+    <div className="reveal flex flex-col gap-4">
       <div className="grid grid-cols-2 gap-2 md:grid-cols-5">
         <StatTile label="Annual return" value={<Delta value={stats.cagr} digits={1} className="text-[17px]" />} sub={<span className="text-muted">SPY {signedPct(bench.cagr, 1)} · universe {signedPct(universe.cagr, 1)}</span>} hint="Compound annual growth rate after trading costs" />
         <StatTile label="Total return" value={<Delta value={stats.totalReturn} digits={0} className="text-[17px]" />} sub={<span className="text-muted">SPY {signedPct(bench.totalReturn, 0)}</span>} />
@@ -491,7 +492,9 @@ export function Backtest() {
       }
     >
       {!status ? (
-        <Skeleton className="h-40" />
+        <SkeletonPanel>
+          <SkeletonText lines={3} />
+        </SkeletonPanel>
       ) : !hasPanel ? (
         <Panel>
           <EmptyState
@@ -509,7 +512,7 @@ export function Backtest() {
         </Panel>
       ) : (
         <>
-          <Panel>
+          <Panel className="reveal">
             <PanelHeader
               kicker={`History: ${status.panel?.symbols.toLocaleString()} companies · ${status.panel?.first ? shortDate(status.panel.first) : ''} – ${status.panel?.last ? shortDate(status.panel.last) : ''}`}
               title="Strategy"
@@ -651,7 +654,11 @@ export function Backtest() {
               {status.job?.status === 'running' ? <Badge tone="warning">Rebuilding history · {status.job.message}</Badge> : null}
             </div>
           </Panel>
-          {running && !result ? <Skeleton className="h-80" /> : null}
+          {running && !result ? (
+            <SkeletonPanel>
+              <SkeletonChart height={320} />
+            </SkeletonPanel>
+          ) : null}
           {result ? <Results result={result} strategyName={name} /> : null}
         </>
       )}

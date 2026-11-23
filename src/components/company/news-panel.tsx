@@ -7,7 +7,8 @@ import useSWR from 'swr';
 
 import { useShell } from '@/components/shell/providers';
 import { Button } from '@/components/ui/button';
-import { Badge, EmptyState, Panel, PanelHeader, Segmented, Skeleton } from '@/components/ui/primitives';
+import { Badge, EmptyState, Panel, PanelHeader, Segmented } from '@/components/ui/primitives';
+import { SkeletonList } from '@/components/ui/skeletons';
 import { cite } from '@/lib/citation';
 import type { Filing, NewsItem } from '@/lib/data/types';
 import { relativeTime, shortDate } from '@/lib/format';
@@ -63,7 +64,7 @@ export function NewsPanel({ symbol, name }: { symbol: string; name: string }) {
     <div className="grid gap-4 xl:grid-cols-[1.25fr_1fr]">
       <Panel>
         <PanelHeader kicker="Headlines" title={`${name} in the news`} />
-        {isLoading && !data ? <Skeleton className="mx-4 mb-4 h-72" /> : <NewsList items={data?.news ?? []} />}
+        {isLoading && !data ? <SkeletonList rows={6} className="mx-4 mb-4" /> : <NewsList items={data?.news ?? []} />}
       </Panel>
       <div className="flex flex-col gap-4">
         {latestRecommendation ? (
@@ -129,7 +130,7 @@ export function NewsPanel({ symbol, name }: { symbol: string; name: string }) {
             }
           />
           {filings.length ? (
-            <div className="flex flex-col">
+            <div className="flex flex-col reveal">
               {filings.map((filing) => (
                 <div key={filing.accession} className="group flex items-center gap-3 border-t border-line px-4 py-2 hover:bg-white/[0.025]">
                   <FileText className="size-3.5 shrink-0 text-muted" />
@@ -172,7 +173,7 @@ export function NewsPanel({ symbol, name }: { symbol: string; name: string }) {
               ))}
             </div>
           ) : isLoading ? (
-            <Skeleton className="mx-4 mb-4 h-40" />
+            <SkeletonList rows={4} className="mx-4 mb-4" />
           ) : (
             <EmptyState title="No SEC filings found" body="This security has no EDGAR filer record." />
           )}

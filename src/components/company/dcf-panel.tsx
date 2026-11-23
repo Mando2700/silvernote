@@ -5,7 +5,8 @@ import { useMemo, useState, type ReactNode } from 'react';
 import useSWR from 'swr';
 
 import { Button } from '@/components/ui/button';
-import { Badge, EmptyState, Field, Input, Panel, PanelHeader, Segmented, Skeleton, Stat, Switch } from '@/components/ui/primitives';
+import { Badge, EmptyState, Field, Input, Panel, PanelHeader, Segmented, Stat, Switch } from '@/components/ui/primitives';
+import { SkeletonChart, SkeletonPanel, SkeletonStats } from '@/components/ui/skeletons';
 import { applyLever, fade, runDcf, sensitivity, solveForPerShare, waccFromInputs, type DcfAssumptions, type DcfYear, type SolveLever } from '@/lib/finance/dcf';
 import { compactNumber, multiple, pct, price } from '@/lib/format';
 import type { DcfInputs } from '@/lib/services/dcf';
@@ -305,7 +306,17 @@ export function DcfPanel({ symbol }: { symbol: string }) {
     });
   }, [data, saved.models]);
 
-  if (isLoading && !data) return <Skeleton className="h-[640px] w-full" />;
+  if (isLoading && !data)
+    return (
+      <div className="flex flex-col gap-4">
+        <SkeletonPanel>
+          <SkeletonStats count={4} />
+        </SkeletonPanel>
+        <SkeletonPanel>
+          <SkeletonChart height={300} />
+        </SkeletonPanel>
+      </div>
+    );
   if (!data || !data.baseRevenue) {
     return (
       <Panel>
@@ -323,7 +334,17 @@ export function DcfPanel({ symbol }: { symbol: string }) {
       </Panel>
     );
   }
-  if (!model || !computed) return <Skeleton className="h-[640px] w-full" />;
+  if (!model || !computed)
+    return (
+      <div className="flex flex-col gap-4">
+        <SkeletonPanel>
+          <SkeletonStats count={4} />
+        </SkeletonPanel>
+        <SkeletonPanel>
+          <SkeletonChart height={300} />
+        </SkeletonPanel>
+      </div>
+    );
 
   const { result, capital, wacc, implied } = computed;
   // Writes a solved lever back into the scenario so the forecast table shows the path the price implies.
@@ -338,7 +359,7 @@ export function DcfPanel({ symbol }: { symbol: string }) {
   const foreign = data.currency !== 'USD';
 
   return (
-    <div className="flex flex-col gap-4">
+    <div className="flex flex-col gap-4 reveal">
       {/* Result */}
       <Panel>
         <PanelHeader

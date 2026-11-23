@@ -6,7 +6,8 @@ import useSWR from 'swr';
 
 import { ColumnChart } from '@/components/charts/svg';
 import { Button } from '@/components/ui/button';
-import { Panel, PanelHeader, Segmented, Skeleton, Stat } from '@/components/ui/primitives';
+import { Panel, PanelHeader, Segmented, Stat } from '@/components/ui/primitives';
+import { SkeletonBars, SkeletonChart, SkeletonList, SkeletonPanel, SkeletonStats, SkeletonTable } from '@/components/ui/skeletons';
 import { cite, SOURCES } from '@/lib/citation';
 import { exportXlsx } from '@/lib/export-client';
 import { pct } from '@/lib/format';
@@ -44,7 +45,16 @@ const signif = (t: number) => (Math.abs(t) >= 2.58 ? '***' : Math.abs(t) >= 1.96
 
 function FactorPanel({ portfolioId }: { portfolioId: string }) {
   const { data } = useSWR<Factors>(`/api/portfolios/${portfolioId}/factors`);
-  if (!data) return <Skeleton className="h-64" />;
+  if (!data) {
+    return (
+      <SkeletonPanel>
+        <div className="grid gap-4 lg:grid-cols-[1fr_260px]">
+          <SkeletonBars rows={6} />
+          <SkeletonStats count={2} className="md:grid-cols-2" />
+        </div>
+      </SkeletonPanel>
+    );
+  }
   const model = data.portfolio;
   const download = () =>
     void exportXlsx('factor-exposure', [
@@ -62,7 +72,7 @@ function FactorPanel({ portfolioId }: { portfolioId: string }) {
       },
     ], [cite(SOURCES.french(), 'APA'), cite(SOURCES.prices(), 'APA')]);
   return (
-    <Panel>
+    <Panel className="reveal">
       <PanelHeader
         kicker={`Fama-French 5 + momentum · ${model?.days ?? 0} days · data through ${data.dataThrough ?? '—'}`}
         title="Factor exposure"
@@ -111,9 +121,12 @@ function AttributionPanel({ portfolioId }: { portfolioId: string }) {
         actions={<Segmented size="xs" value={days} onChange={setDays} options={[{ value: '90', label: '3M' }, { value: '180', label: '6M' }, { value: '365', label: '1Y' }, { value: '730', label: '2Y' }]} />}
       />
       {!data ? (
-        <Skeleton className="mx-4 mb-4 h-48" />
+        <div className="mx-4 mb-4 flex flex-col gap-3">
+          <SkeletonStats count={5} className="md:grid-cols-5" />
+          <SkeletonTable rows={5} cols={6} logo={false} />
+        </div>
       ) : (
-        <>
+        <div className="reveal">
           <div className="grid grid-cols-2 gap-4 px-4 pb-3 sm:grid-cols-5">
             <Stat label="Portfolio" value={pct(data.portfolioReturn)} />
             <Stat label="Benchmark" value={pct(data.benchmarkReturn)} sub={data.spyReturn !== null ? <span className="text-muted">SPY {pct(data.spyReturn)}</span> : undefined} />
@@ -152,7 +165,7 @@ function AttributionPanel({ portfolioId }: { portfolioId: string }) {
             </table>
           </div>
           <p className="px-4 py-2 text-[11px] text-faint">{data.method}</p>
-        </>
+        </div>
       )}
     </Panel>
   );
@@ -161,10 +174,20 @@ function AttributionPanel({ portfolioId }: { portfolioId: string }) {
 function DividendPanel({ portfolioId }: { portfolioId: string }) {
   const { money, hidden } = useMoney();
   const { data } = useSWR<Dividends>(`/api/portfolios/${portfolioId}/dividends`);
-  if (!data) return <Skeleton className="h-56" />;
+  if (!data) {
+    return (
+      <SkeletonPanel>
+        <SkeletonStats count={3} className="md:grid-cols-3" />
+        <div className="mt-4 grid gap-4 lg:grid-cols-2">
+          <SkeletonChart height={180} />
+          <SkeletonList rows={4} />
+        </div>
+      </SkeletonPanel>
+    );
+  }
   const payers = data.rows.filter((row) => row.annualIncome > 0);
   return (
-    <Panel>
+    <Panel className="reveal">
       <PanelHeader kicker="Indicated annual dividends" title="Dividend income" />
       <div className="grid grid-cols-2 gap-4 px-4 pb-3 sm:grid-cols-3">
         <Stat label="Next 12 months" value={money(data.annualIncome)} />

@@ -19,9 +19,20 @@ function formatTape(item: TapeItem) {
 /** Cross-asset strip: volatility, rates, dollar, commodities, crypto, FX (Settings → Macro tape to change). */
 export function MacroTape({ className, compact = false }: { className?: string; compact?: boolean }) {
   const { data } = useSWR<TapeItem[]>('/api/macro/tape', { refreshInterval: 60_000 });
-  if (!data) return <Skeleton className={cn('h-14 w-full', className)} />;
+  if (!data)
+    return (
+      <div className={cn('grid grid-cols-2 gap-px overflow-hidden rounded-sm border border-line bg-line sm:grid-cols-4 lg:grid-cols-7', className)} aria-hidden>
+        {Array.from({ length: 7 }, (_, index) => (
+          <div key={index} className="bg-surface-2 px-3 py-2">
+            <Skeleton className="h-2.5 w-14" />
+            <Skeleton className="mt-1.5 h-3 w-16" />
+            <Skeleton className="mt-1.5 h-2.5 w-10" />
+          </div>
+        ))}
+      </div>
+    );
   return (
-    <div className={cn('grid grid-cols-2 gap-px overflow-hidden rounded-sm border border-line bg-line sm:grid-cols-4 lg:grid-cols-7', className)}>
+    <div className={cn('grid grid-cols-2 gap-px overflow-hidden rounded-sm border border-line bg-line sm:grid-cols-4 lg:grid-cols-7 reveal', className)}>
       {data.map((item) => (
         <div key={item.symbol} className="flex items-center justify-between gap-2 bg-surface-2 px-3 py-2" title={`${item.label} (${item.symbol})`}>
           <div className="min-w-0">

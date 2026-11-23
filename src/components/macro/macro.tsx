@@ -10,6 +10,7 @@ import { LineChart } from '@/components/charts/svg';
 import { Page } from '@/components/shell/page';
 import { Button, IconButton } from '@/components/ui/button';
 import { EmptyState, Panel, PanelHeader, Segmented, Skeleton } from '@/components/ui/primitives';
+import { SkeletonCards, SkeletonChart } from '@/components/ui/skeletons';
 import { cite } from '@/lib/citation';
 import { SERIES_COLORS } from '@/lib/theme';
 import { cn } from '@/lib/utils';
@@ -136,13 +137,13 @@ export function Macro() {
               height={220}
             />
           ) : (
-            <Skeleton className="h-[220px] w-full" />
+            <SkeletonChart height={220} />
           )}
         </div>
       </Panel>
       {data
         ? data.groups.map((group) => (
-            <section key={group.group} className="flex flex-col gap-2">
+            <section key={group.group} className="flex flex-col gap-2 reveal">
               <h2 className="kicker">{group.group}</h2>
               <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
                 {group.series.map((series) => (
@@ -151,7 +152,12 @@ export function Macro() {
               </div>
             </section>
           ))
-        : Array.from({ length: 2 }, (_, index) => <Skeleton key={index} className="h-64 w-full" />)}
+        : Array.from({ length: 2 }, (_, index) => (
+            <div key={index} className="flex flex-col gap-2">
+              <Skeleton className="h-2 w-24" />
+              <SkeletonCards count={3} height={150} />
+            </div>
+          ))}
       <p className="text-[11px] text-faint">Sources: {data?.source ?? 'FRED'}; market tape from Yahoo Finance (delayed). FRED series update on their own release schedules.</p>
     </Page>
   );

@@ -2,7 +2,6 @@
 
 import { ArrowDown, ArrowUp, Briefcase, ImagePlus, MoreHorizontal, Pencil, Plus, Share2, Sparkles, Trash2 } from 'lucide-react';
 import { motion } from 'motion/react';
-import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useEffect, useMemo, useRef, useState, ViewTransition } from 'react';
 import { toast } from 'sonner';
@@ -16,6 +15,7 @@ import { BondsPanel } from '@/components/portfolio/bonds';
 import { ImportPhotosModal } from '@/components/portfolio/import-photos';
 import { ShareStudio } from '@/components/portfolio/share/share-studio';
 import { TaxPanel } from '@/components/portfolio/tax';
+import { TransactionsPanel, type Transaction } from '@/components/portfolio/transactions';
 import { Delta } from '@/components/motion/delta';
 import { ScoreRing } from '@/components/motion/score-ring';
 import { Page } from '@/components/shell/page';
@@ -27,7 +27,8 @@ import { useBaseCurrency } from '@/lib/fx-client';
 import { Button, Magnetic } from '@/components/ui/button';
 import { CompanyLogo } from '@/components/ui/company-logo';
 import { Menu, Modal } from '@/components/ui/overlay';
-import { Badge, EmptyState, Field, Input, Panel, PanelHeader, Segmented, Select, Skeleton } from '@/components/ui/primitives';
+import { Badge, EmptyState, Field, Input, Panel, PanelHeader, Segmented, Select } from '@/components/ui/primitives';
+import { SkeletonStats } from '@/components/ui/skeletons';
 import { StatTile } from '@/components/ui/stat-tile';
 import { TickerSearch } from '@/components/ui/ticker-search';
 import { localToday } from '@/lib/dates';
@@ -42,7 +43,6 @@ import { withLivePrices } from '@/lib/portfolio-live';
 type PortfolioListItem = { id: string; name: string; benchmark: string; cash: number; summary: Summary };
 type Summary = { totalValue: number; invested: number; fixedIncome: number; bonds: number; cash: number; costBasis: number; unrealized: number; unrealizedPct: number | null; realized: number; dayChange: number; dayChangePct: number | null; extended?: { session: 'pre' | 'post'; change: number; changePct: number | null } | null; positions: number; unpriced?: string[]; pricesAsOf?: number | null };
 type Holding = { symbol: string; name: string; sector: string | null; industry: string | null; shares: number; avgCost: number; costBasis: number; price: number | null; marketValue: number; dayChange: number; dayChangePct: number | null; extendedPrice?: number | null; extendedChange?: number; extendedChangePct?: number | null; unrealized: number; unrealizedPct: number | null; realized: number; weight: number; score: number | null; priced?: boolean; priceAsOf?: number | null };
-type Transaction = { id: string; symbol: string; side: 'buy' | 'sell'; quantity: number; price: number; fees: number; traded_at: string; note: string | null; split_factor?: number; kind?: 'trade' | 'opening' | 'removal' };
 type Detail = {
   portfolio: { id: string; name: string; benchmark: string; cash: number };
   holdings: Holding[];
@@ -78,11 +78,6 @@ type Risk = {
   backfilled: string[];
   benchmark: string;
 };
-/** "10-for-1" for a factor of 10, "1-for-10" for a reverse split. */
-function splitLabel(factor: number) {
-  const round = (value: number) => Number(value.toFixed(3)).toString();
-  return factor >= 1 ? `${round(factor)}-for-1` : `1-for-${round(1 / factor)}`;
-}
 
 type HoldingSortKey = 'symbol' | 'shares' | 'avgCost' | 'price' | 'priceChange' | 'priceChangePct' | 'marketValue' | 'weight' | 'dayChange' | 'unrealized' | 'unrealizedPct' | 'score';
 const HOLDING_SORT_DEFAULT_DIR: Record<HoldingSortKey, 'asc' | 'desc'> = { symbol: 'asc', shares: 'desc', avgCost: 'desc', price: 'desc', priceChange: 'desc', priceChangePct: 'desc', marketValue: 'desc', weight: 'desc', dayChange: 'desc', unrealized: 'desc', unrealizedPct: 'desc', score: 'desc' };
@@ -325,11 +320,14 @@ function RiskPanel({ portfolioId, benchmark, concentration }: { portfolioId: str
         />
         <div className="px-4 pb-4">
           {isLoading && !data ? (
-            <Skeleton className="h-40" />
+            <div className="flex flex-col gap-2">
+              <SkeletonStats count={4} />
+              <SkeletonStats count={4} />
+            </div>
           ) : !stats ? (
             <p className="text-[12.5px] text-muted">Risk statistics need at least 30 days of overlapping price history for your holdings.</p>
           ) : (
-            <>
+            <div className="reveal">
               <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
                 <StatTile label="Annualized return" value={<Delta value={stats.annualReturn} digits={1} className="text-[17px]" />} sub={<span className="text-muted">{benchmark} {signedPct(stats.benchmarkReturn, 1)}</span>} hint="Compound annual return of today’s weights over the window" />
                 <StatTile label="Volatility" value={pct(stats.volatility)} sub={<span className="text-muted">{benchmark} {pct(stats.benchmarkVolatility)}</span>} hint="Annualized standard deviation of daily returns" />
@@ -358,7 +356,7 @@ function RiskPanel({ portfolioId, benchmark, concentration }: { portfolioId: str
                 </p>
               ) : null}
               {data?.excluded.length ? <p className="mt-2 text-[11px] text-faint">Excluded for lack of price history: {data.excluded.join(', ')}</p> : null}
-            </>
+            </div>
           )}
         </div>
       </Panel>
@@ -415,7 +413,6 @@ export function PortfolioView() {
   const { askAssistant, setAssistantContext, prefs } = useShell();
   const base = useBaseCurrency();
   const { money, hidden } = useMoney();
-  const quantity = useQuantity();
   const { data: portfolios, mutate: refreshList, isLoading } = useSWR<PortfolioListItem[]>('/api/portfolios');
   const selectedId = params.get('id') ?? portfolios?.[0]?.id ?? null;
   // Extended-hours quotes load a few at a time on a cold cache: re-poll quickly while holdings still lack one, a few times only (funds without extended trading never get one).
@@ -826,75 +823,8 @@ export function PortfolioView() {
         prefs.taxJurisdiction === 'PL' ? <PolishTaxPanel portfolioId={selectedId} /> : <TaxPanel portfolioId={selectedId} onPortfolioChanged={refresh} />
       ) : null}
 
-      {tab === 'transactions' && detail ? (
-        <Panel>
-          {detail.transactions.length ? (
-            <table className="w-full text-[12.5px]">
-              <thead>
-                <tr className="border-b border-line bg-surface-1 text-left text-[11px] text-muted">
-                  <th className="px-4 py-2 font-medium">Date</th>
-                  <th className="px-3 py-2 font-medium">Side</th>
-                  <th className="px-3 py-2 font-medium">Ticker</th>
-                  <th className="px-3 py-2 text-right font-medium">Shares</th>
-                  <th className="px-3 py-2 text-right font-medium">Price</th>
-                  <th className="px-3 py-2 text-right font-medium">Fees</th>
-                  <th className="px-3 py-2 text-right font-medium">Amount</th>
-                  <th className="px-3 py-2" />
-                </tr>
-              </thead>
-              <tbody>
-                {detail.transactions.map((tx) => (
-                  <tr key={tx.id} className="border-b border-line">
-                    <td className="px-4 py-2 text-ink-2">{shortDate(tx.traded_at)}</td>
-                    <td className="px-3 py-2">
-                      <Badge tone={tx.side === 'buy' ? 'gain' : 'loss'}>{tx.side.toUpperCase()}</Badge>
-                    </td>
-                    <td className="px-3 py-2">
-                      <Link href={`/company/${tx.symbol}`} className="flex items-center gap-2 font-mono text-[12px] font-semibold text-ink hover:text-white">
-                        <CompanyLogo symbol={tx.symbol} size="xs" />
-                        {tx.symbol}
-                      </Link>
-                    </td>
-                    <td className="num px-3 py-2 text-right text-ink-2">
-                      {quantity(tx.quantity)}
-                      {tx.split_factor && tx.split_factor !== 1 ? (
-                        <div className="text-[10.5px] text-faint" title="Restated in today's shares for stock splits since the trade">
-                          {quantity(tx.quantity / tx.split_factor)} before {splitLabel(tx.split_factor)} split
-                        </div>
-                      ) : null}
-                      {tx.kind === 'opening' ? <div className="text-[10.5px] text-faint">Opening balance</div> : null}
-                      {tx.kind === 'removal' ? <div className="text-[10.5px] text-faint">Balancing removal</div> : null}
-                    </td>
-                    <td className="num px-3 py-2 text-right text-ink-2">{price(tx.price)}</td>
-                    <td className="num px-3 py-2 text-right text-muted">{tx.fees ? (hidden ? MASK : price(tx.fees)) : '—'}</td>
-                    <td className="num px-3 py-2 text-right text-ink">{money(tx.quantity * tx.price + (tx.side === 'buy' ? tx.fees : -tx.fees), { digits: 2 })}</td>
-                    <td className="px-3 py-2 text-right">
-                      {tx.id.startsWith('balance:') ? null : (
-                        <button
-                          onClick={async () => {
-                            if (!window.confirm('Delete this trade? Holdings and P&L are recalculated.')) return;
-                            try {
-                              await api(`/api/portfolios/${selectedId}/transactions?id=${tx.id}`, { method: 'DELETE' });
-                              refresh();
-                            } catch (error) {
-                              toast.error((error as Error).message);
-                            }
-                          }}
-                          className="rounded-xs p-1 text-faint hover:bg-white/5 hover:text-ink"
-                          aria-label="Delete trade"
-                        >
-                          <Trash2 className="size-3.5" />
-                        </button>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          ) : (
-            <EmptyState title="No trades yet" action={<Button variant="primary" onClick={() => setTrading(true)}>Add trade</Button>} />
-          )}
-        </Panel>
+      {tab === 'transactions' && detail && selectedId ? (
+        <TransactionsPanel key={selectedId} portfolioId={selectedId} transactions={detail.transactions} onChanged={refresh} onAddTrade={() => setTrading(true)} />
       ) : null}
 
       <Modal open={trading} onClose={() => setTrading(false)} title="Record a trade" description="Holdings show average cost; the Tax tab tracks every lot (FIFO, LIFO or HIFO) with wash sales.">

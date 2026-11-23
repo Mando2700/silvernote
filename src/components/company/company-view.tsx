@@ -27,6 +27,7 @@ import { Button, Magnetic } from '@/components/ui/button';
 import { CompanyLogo } from '@/components/ui/company-logo';
 import { FullscreenOverlay } from '@/components/ui/fullscreen-overlay';
 import { Badge, Panel, PanelHeader, Segmented, Skeleton, Tabs } from '@/components/ui/primitives';
+import { SkeletonChart, SkeletonList, SkeletonPanel, SkeletonStats, SkeletonText } from '@/components/ui/skeletons';
 import { CompanyWorkspace, type WorkspaceData } from '@/components/workspace/company-workspace';
 import { getAsset } from '@/lib/data/assets';
 import type { Candle, CompanyProfile, NewsItem, Quote } from '@/lib/data/types';
@@ -67,7 +68,7 @@ function n(value: unknown) {
   return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }
 
-type NextEarningsPayload = { earnings: { date: string; time: 'pre' | 'post' | 'unknown'; fiscalQuarter: string | null; epsForecast: number | null; estimates: number | null; lastYearEps: number | null; estimated: boolean } | null };
+type NextEarningsPayload = { earnings: { date: string; time: 'pre' | 'post' | 'unknown'; fiscalQuarter: string | null; epsForecast: number | null; estimates: number | null; lastYearEps: number | null; estimated: boolean; revenueEstimate: number | null; epsLow: number | null; epsHigh: number | null } | null };
 
 /** Days from today (in the viewer's calendar) to a YYYY-MM-DD date. */
 function daysUntil(date: string) {
@@ -79,18 +80,28 @@ function daysUntil(date: string) {
 function NextEarnings({ symbol }: { symbol: string }) {
   const { data, isLoading } = useSWR<NextEarningsPayload>(`/api/company/${symbol}/earnings`, { revalidateOnFocus: false });
   const next = data?.earnings;
-  if (isLoading) return <Skeleton className="mx-4 mb-4 h-10" />;
+  if (isLoading) return <SkeletonText lines={2} className="mx-4 mb-4" />;
   const days = next ? daysUntil(next.date) : null;
   const when = days === null ? null : days === 0 ? 'today' : days === 1 ? 'tomorrow' : `in ${days} days`;
   const details = next
     ? [
         next.time === 'pre' ? 'Before open' : next.time === 'post' ? 'After close' : null,
         next.fiscalQuarter ? `Qtr ending ${next.fiscalQuarter}` : null,
-        next.epsForecast !== null ? `EPS est $${next.epsForecast.toFixed(2)}${next.estimates ? ` (${next.estimates} analysts)` : ''}` : null,
+        next.estimates ? `${next.estimates} analysts` : null,
       ].filter(Boolean)
     : [];
+  const expectations = next
+    ? [
+        {
+          label: 'EPS estimate',
+          value: next.epsForecast !== null ? `$${next.epsForecast.toFixed(2)}` : null,
+          note: [next.epsLow !== null && next.epsHigh !== null ? `Range $${next.epsLow.toFixed(2)}–${next.epsHigh.toFixed(2)}` : null, next.lastYearEps !== null ? `Year ago $${next.lastYearEps.toFixed(2)}` : null].filter(Boolean).join(' · '),
+        },
+        { label: 'Revenue estimate', value: next.revenueEstimate !== null ? `$${compactNumber(next.revenueEstimate, 2)}` : null, note: '' },
+      ].filter((item) => item.value)
+    : [];
   return (
-    <div className="border-t border-line px-4 py-3">
+    <div className="border-t border-line px-4 py-3 reveal">
       <div className="flex items-baseline justify-between gap-3">
         <span className="text-[11px] text-muted">Next earnings{next?.estimated ? ' (estimated)' : ''}</span>
         {next ? (
@@ -103,13 +114,29 @@ function NextEarnings({ symbol }: { symbol: string }) {
         )}
       </div>
       {details.length ? <div className="mt-1 text-right text-[11px] text-muted">{details.join(' · ')}</div> : null}
-      {next?.estimated ? <div className="mt-1 text-right text-[10.5px] text-faint">The company hasn’t announced a date; this is last year’s report date carried forward.</div> : null}
+      {expectations.length ? (
+        <div className="mt-2.5 grid grid-cols-2 gap-x-6">
+          {expectations.map((item) => (
+            <div key={item.label}>
+              <div className="text-[11px] text-muted">{item.label}</div>
+              <div className="num mt-0.5 text-[14px] font-medium text-ink">{item.value}</div>
+              {item.note ? <div className="text-[10.5px] text-faint">{item.note}</div> : null}
+            </div>
+          ))}
+        </div>
+      ) : null}
+      {next?.estimated ? <div className="mt-1 text-right text-[10.5px] text-faint">The company hasn’t confirmed a date; this is a projection.</div> : null}
     </div>
   );
 }
 
 function KeyStats({ data, profileLoading }: { data: CompanyPayload | null; profileLoading: boolean }) {
-  if (!data) return <Skeleton className="h-[236px] w-full" />;
+  if (!data)
+    return (
+      <SkeletonPanel>
+        <SkeletonStats count={8} />
+      </SkeletonPanel>
+    );
   const f = data.fundamentals ?? {};
   const marketCap = data.security?.market_cap ?? null;
   const netIncome = n(f.net_income);
@@ -142,7 +169,7 @@ function KeyStats({ data, profileLoading }: { data: CompanyPayload | null; profi
   const low = data.profile?.low52 ?? null;
   const position = high && low && priceNow && high > low ? Math.min(1, Math.max(0, (priceNow - low) / (high - low))) : null;
   return (
-    <Panel>
+    <Panel className="reveal">
       <PanelHeader kicker={`Fiscal ${f.fiscal_year ?? '—'} · latest price`} title="Key statistics" />
       <div className="grid grid-cols-2 gap-x-6 gap-y-3 px-4 pb-4 sm:grid-cols-3 lg:grid-cols-4">
         {stats.map((stat) => (
@@ -182,7 +209,7 @@ function Overview({ symbol, data, profile, profileLoading, descriptionLoading, o
   const { data: candles } = useSWR<{ candles: Candle[]; range: string }>(
     `/api/company/${symbol}/candles?range=${range}${pages > 1 ? `&pages=${pages}` : ''}`,
   );
-  const studies = useChartStudies(symbol, candles?.candles ?? [], range);
+  const studies = useChartStudies(symbol, candles?.candles ?? [], range, candles?.range);
   const loadOlder = useCallback(() => setHistory((current) => ({ view, pages: current.view === view ? Math.min(current.pages * 2, 32) : 2 })), [view]);
   const { data: workspace } = useSWR<WorkspaceData>(`/api/workspaces/${symbol}`);
   // Commodities and crypto have no filings or company news feed.
@@ -235,6 +262,7 @@ function Overview({ symbol, data, profile, profileLoading, descriptionLoading, o
             mode={mode}
             height={fullscreen ? 640 : 340}
             animationKey={symbol}
+            legendLabel={symbol}
             rangeKey={candles.range}
             intraday={['1d', '1w', '1m', '3m'].includes(candles.range)}
             onReachStart={loadOlder}
@@ -246,7 +274,7 @@ function Overview({ symbol, data, profile, profileLoading, descriptionLoading, o
             onPick={studies.onPick}
           />
         ) : (
-          <Skeleton className="h-[340px] w-full" />
+          <SkeletonChart height={340} />
         )}
         {markers.length || workspace?.meta?.target_price ? (
           <div className="mt-2 flex items-center gap-4 text-[11px] text-muted">
@@ -337,13 +365,9 @@ function Overview({ symbol, data, profile, profileLoading, descriptionLoading, o
             <PanelHeader kicker={[profile?.sector, profile?.industry].filter(Boolean).join(' · ') || 'Company'} title="About" />
             <div className="px-4 pb-4">
               {descriptionLoading ? (
-                <div className="flex flex-col gap-2">
-                  <Skeleton className="h-3 w-full" />
-                  <Skeleton className="h-3 w-full" />
-                  <Skeleton className="h-3 w-2/3" />
-                </div>
+                <SkeletonText lines={3} />
               ) : (
-                <p className="line-clamp-[10] text-[12.5px] leading-relaxed text-ink-2">{profile?.description ?? 'No description available.'}</p>
+                <p className="line-clamp-[10] text-[12.5px] leading-relaxed text-ink-2 reveal">{profile?.description ?? 'No description available.'}</p>
               )}
               <div className="mt-3 grid grid-cols-2 gap-x-4 gap-y-2 text-[12px]">
                 {[
@@ -384,11 +408,7 @@ function Overview({ symbol, data, profile, profileLoading, descriptionLoading, o
             {news ? (
               <NewsList items={news.news.slice(0, 5)} compact />
             ) : (
-              <div className="flex flex-col gap-3 px-4 pb-4">
-                <Skeleton className="h-3.5 w-full" />
-                <Skeleton className="h-3.5 w-5/6" />
-                <Skeleton className="h-3.5 w-full" />
-              </div>
+              <SkeletonList rows={4} className="px-4 pb-4" />
             )}
           </Panel>
         )}
