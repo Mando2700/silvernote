@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { marketSession } from '@/lib/session';
 
-import { aggregateCandles, resolutionForRange } from './candles';
+import { aggregateCandles, resolutionForRange, withLatestSession } from './candles';
 
 const day = (iso: string, o: number, h: number, l: number, c: number, v: number | null = 10) => ({
   t: Date.parse(`${iso}T00:00:00Z`) / 1000,
@@ -55,5 +55,22 @@ describe('marketSession', () => {
     expect(marketSession(Date.parse('2026-09-30T21:00:00Z'))).toBe('post');
     expect(marketSession(Date.parse('2026-09-30T02:00:00Z'))).toBe('closed');
     expect(marketSession(Date.parse('2026-10-03T15:00:00Z'))).toBe('closed'); // Saturday
+  });
+});
+
+describe('withLatestSession', () => {
+  const bar = (iso: string, c: number, v: number | null = 100) => ({ t: Date.parse(iso) / 1000, o: c, h: c + 1, l: c - 1, c, v });
+  const daily = [bar('2026-11-19T00:00:00Z', 340), bar('2026-11-20T00:00:00Z', 342)];
+
+  it("appends today's session rolled into one daily bar", () => {
+    const intraday = [bar('2026-11-20T20:55:00Z', 342), bar('2026-11-23T14:30:00Z', 345), bar('2026-11-23T15:00:00Z', 350), bar('2026-11-23T18:50:00Z', 348)];
+    const result = withLatestSession(daily, intraday);
+    expect(result).toHaveLength(3);
+    expect(result[2]).toEqual({ t: Date.parse('2026-11-23T00:00:00Z') / 1000, o: 345, h: 351, l: 344, c: 348, v: 300 });
+  });
+
+  it('leaves history alone when the latest session is already stored', () => {
+    expect(withLatestSession(daily, [bar('2026-11-20T20:55:00Z', 342)])).toBe(daily);
+    expect(withLatestSession(daily, [])).toBe(daily);
   });
 });
