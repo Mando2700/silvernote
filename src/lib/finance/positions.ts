@@ -46,3 +46,36 @@ export function buildPositions(transactions: PositionInput[]) {
   }
   return positions;
 }
+
+export type SaleResult = { costBasis: number; realized: number };
+
+/**
+ * Realized P&L of each sell under the same average-cost replay as `buildPositions`, keyed by id.
+ * Removals realize nothing and are left out.
+ */
+export function realizedBySale<T extends PositionInput & { id: string }>(transactions: T[]) {
+  const held = new Map<string, { shares: number; cost: number }>();
+  const sales = new Map<string, SaleResult>();
+  for (const tx of sortTrades(transactions)) {
+    const position = held.get(tx.symbol) ?? { shares: 0, cost: 0 };
+    if (tx.side === 'buy') {
+      position.cost += tx.quantity * tx.price + tx.fees;
+      position.shares += tx.quantity;
+    } else {
+      const quantity = Math.min(tx.quantity, position.shares);
+      const average = position.shares > 0 ? position.cost / position.shares : 0;
+      if (tx.kind !== 'removal') {
+        const fees = tx.quantity > 0 ? (tx.fees * quantity) / tx.quantity : 0;
+        sales.set(tx.id, { costBasis: average * quantity, realized: quantity * tx.price - fees - average * quantity });
+      }
+      position.cost -= average * quantity;
+      position.shares -= quantity;
+      if (position.shares < 1e-9) {
+        position.shares = 0;
+        position.cost = 0;
+      }
+    }
+    held.set(tx.symbol, position);
+  }
+  return sales;
+}
