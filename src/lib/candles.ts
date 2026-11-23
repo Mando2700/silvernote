@@ -102,3 +102,32 @@ export function aggregateCandles(candles: Candle[], resolution: CandleResolution
       return candles;
   }
 }
+
+/** New York trading date (YYYY-MM-DD) of a unix timestamp; a fixed 5-hour offset is close enough for session bars. */
+export function sessionDate(t: number) {
+  return new Date(t * 1000 - 5 * 3_600_000).toISOString().slice(0, 10);
+}
+
+/**
+ * Stored daily history only holds completed sessions. Rolls the latest session in `intraday` into
+ * one daily bar and appends it when it is newer than the last daily bar, so long-range charts reach today.
+ */
+export function withLatestSession(daily: Candle[], intraday: Candle[]): Candle[] {
+  const latest = intraday[intraday.length - 1];
+  if (!latest) return daily;
+  const date = sessionDate(latest.t);
+  const last = daily[daily.length - 1];
+  // Daily bars are stamped at 00:00 UTC of their trading date.
+  if (last && new Date(last.t * 1000).toISOString().slice(0, 10) >= date) return daily;
+  const session = intraday.filter((candle) => sessionDate(candle.t) === date);
+  const volumes = session.map((candle) => candle.v).filter((v): v is number => v !== null);
+  const bar: Candle = {
+    t: Date.parse(`${date}T00:00:00Z`) / 1000,
+    o: session[0].o,
+    h: Math.max(...session.map((candle) => candle.h)),
+    l: Math.min(...session.map((candle) => candle.l)),
+    c: latest.c,
+    v: volumes.length ? volumes.reduce((sum, v) => sum + v, 0) : null,
+  };
+  return [...daily, bar];
+}

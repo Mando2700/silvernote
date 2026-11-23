@@ -1,5 +1,5 @@
 import { route, searchParam, symbolSchema } from '@/lib/api';
-import { aggregateCandles, INTRADAY_SOURCE, resolutionForRange } from '@/lib/candles';
+import { aggregateCandles, INTRADAY_SOURCE, resolutionForRange, sessionDate, withLatestSession } from '@/lib/candles';
 import { memo } from '@/lib/data/http';
 import { fetchIntradayCandles, fetchYahooDay } from '@/lib/data/providers/yahoo';
 import { getCandles } from '@/lib/services/prices';
@@ -22,8 +22,8 @@ export const GET = route<{ symbol: string }>(async ({ request, params }) => {
     let candles = await memo(`candles:${symbol}:${intraday.interval}:${days}`, 60_000, () => fetchIntradayCandles(symbol, intraday.interval, days));
     if (range === '1d' && pages === 1 && candles.length) {
       // Only the latest session.
-      const lastDay = new Date(candles[candles.length - 1].t * 1000 - 5 * 3_600_000).toISOString().slice(0, 10);
-      candles = candles.filter((candle) => new Date(candle.t * 1000 - 5 * 3_600_000).toISOString().slice(0, 10) === lastDay);
+      const lastDay = sessionDate(candles[candles.length - 1].t);
+      candles = candles.filter((candle) => sessionDate(candle.t) === lastDay);
     }
     // The 1D trend is measured against the prior close, not the first bar of the session.
     const previousClose =
@@ -33,7 +33,13 @@ export const GET = route<{ symbol: string }>(async ({ request, params }) => {
 
   const years = YEARS[range] ?? 1.02;
   const spanYears = range === 'ytd' ? 1 : years;
-  let candles = await getCandles(symbol, Math.min(Math.max(spanYears * pages, 1.02), 40));
+  // Stored history ends at the last completed session: add today's (live during market hours) from
+  // the same 5-minute bars the 1D chart uses, so long ranges show the current price too.
+  const [stored, latest] = await Promise.all([
+    getCandles(symbol, Math.min(Math.max(spanYears * pages, 1.02), 40)),
+    memo(`candles:${symbol}:5m:5`, 60_000, () => fetchIntradayCandles(symbol, '5m', 5)).catch(() => []),
+  ]);
+  let candles = withLatestSession(stored, latest);
   const now = Date.now() / 1000;
   const rangeStart =
     range === 'ytd' ? Date.UTC(new Date().getUTCFullYear(), 0, 1) / 1000 : now - years * 365.25 * 86_400;
